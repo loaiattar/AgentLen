@@ -19,16 +19,26 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node.js
+        if: hashFiles('package.json') != ''
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        if: hashFiles('package.json') != ''
+        run: |
+          if [ -f package-lock.json ]; then npm ci
+          elif [ -f yarn.lock ]; then yarn --frozen-lockfile
+          else npm install
+          fi
 
       - name: Run linter
-        run: npm run lint
+        if: hashFiles('package.json') != ''
+        run: npm run lint --if-present
+
+      - name: No project files yet
+        if: hashFiles('package.json') == ''
+        run: echo "No package.json found — skipping lint until project is initialised."
 
   # ── Test ────────────────────────────────────────────────────────────────────
   test:
@@ -40,24 +50,34 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node.js
+        if: hashFiles('package.json') != ''
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        if: hashFiles('package.json') != ''
+        run: |
+          if [ -f package-lock.json ]; then npm ci
+          elif [ -f yarn.lock ]; then yarn --frozen-lockfile
+          else npm install
+          fi
 
       - name: Run tests
-        run: npm test
+        if: hashFiles('package.json') != ''
+        run: npm test --if-present
 
       - name: Upload coverage report
-        if: always()
+        if: hashFiles('package.json') != '' && always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage/
           retention-days: 7
+
+      - name: No project files yet
+        if: hashFiles('package.json') == ''
+        run: echo "No package.json found — skipping tests until project is initialised."
 
   # ── Build ───────────────────────────────────────────────────────────────────
   build:
@@ -69,16 +89,26 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node.js
+        if: hashFiles('package.json') != ''
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        if: hashFiles('package.json') != ''
+        run: |
+          if [ -f package-lock.json ]; then npm ci
+          elif [ -f yarn.lock ]; then yarn --frozen-lockfile
+          else npm install
+          fi
 
       - name: Build project
+        if: hashFiles('package.json') != ''
         run: npm run build --if-present
+
+      - name: No project files yet
+        if: hashFiles('package.json') == ''
+        run: echo "No package.json found — skipping build until project is initialised."
 
   # ── Summary ─────────────────────────────────────────────────────────────────
   ci-success:
