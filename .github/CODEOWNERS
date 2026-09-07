@@ -1,0 +1,6 @@
+# Global rule: every PR requires review from the repo owner.
+# Replace the usernames below with your actual GitHub handles.
+#
+# Format: <path-pattern>  <@github-username> [<@github-username> ...]
+
+* @loaiattar
