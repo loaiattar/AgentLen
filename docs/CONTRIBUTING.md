@@ -1,4 +1,4 @@
-# Conventions de travail — AgentScope
+# Conventions de travail — AgentLen
 
 > Ce document est **contraignant** pour tous les membres de l'équipe. Il est court volontairement : ce qui n'est pas écrit ici ne s'invente pas en cours de route, ça se discute et ça s'ajoute par PR.
 
@@ -226,7 +226,7 @@ git push -u origin feat/12-import-jsonl
 
 ```
 .
-├── src/agentscope/          # code applicatif (voir docs/architecture/)
+├── src/agentlen/          # code applicatif (voir docs/architecture/)
 ├── tests/{unit,integration,e2e}/
 ├── alembic/                 # migrations
 ├── docker/

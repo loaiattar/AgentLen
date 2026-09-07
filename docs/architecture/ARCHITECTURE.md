@@ -1,4 +1,4 @@
-# AgentScope — Architecture backend
+# AgentLen — Architecture backend
 
 > Document de référence pour l'équipe backend. Version 1 — à faire évoluer par PR.
 > Documents liés : [Modèle de données](DATA_MODEL.md) · [Contrat de mapping](MAPPING_CONTRACT.md) · [Contrat d'API](API.md) · [Décisions (ADR)](decisions.md)
@@ -7,7 +7,9 @@
 
 ## 1. Objet et périmètre
 
-AgentScope ingère des traces d'agents de développement IA (Claude Code, Codex, …) provenant de sources hétérogènes, les normalise dans un modèle relationnel commun, et expose des indicateurs exploitables.
+AgentLen ingère des traces d'agents de développement IA (Claude Code, Codex, …) provenant de sources hétérogènes, les normalise dans un modèle relationnel commun, et expose des indicateurs exploitables.
+
+> **Nommage.** L'énoncé désigne l'application sous le nom générique *AgentScope* ([docs/sujet](../sujet/AgentScope_v2.md)). Notre implémentation s'appelle **AgentLen** : c'est le nom du dépôt, du paquet Python (`src/agentlen/`) et de l'application. Le nom de l'énoncé n'apparaît nulle part dans le code.
 
 **Ce document couvre le backend uniquement.** Le frontend est réalisé par une autre équipe : le backend est donc une **API REST versionnée**, et le contrat d'API est un livrable de première classe (voir [API.md](API.md)). Toute évolution de contrat passe par une PR sur ce document avant implémentation.
 
@@ -122,8 +124,8 @@ Ces règles sont déclarées dans `pyproject.toml` sous `[tool.importlinter]` et
 ## 5. Arborescence
 
 ```
-agentscope/
-├── src/agentscope/
+agentlen/
+├── src/agentlen/
 │   ├── domain/                      # ZÉRO dépendance tierce
 │   │   ├── model/
 │   │   │   ├── session.py           # Session, SessionId
@@ -249,8 +251,8 @@ Les ports sont des `Protocol` typés dans `application/ports/`. Toute sortie du 
 ```python
 # application/ports/structure_analyzer.py
 from typing import Protocol
-from agentscope.domain.model.profile import FileProfile
-from agentscope.domain.model.mapping import MappingProposal
+from agentlen.domain.model.profile import FileProfile
+from agentlen.domain.model.mapping import MappingProposal
 
 class StructureAnalyzer(Protocol):
     """Port IA. Le domaine et les use cases ne connaissent que cette interface.

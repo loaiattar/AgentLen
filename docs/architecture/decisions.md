@@ -1,4 +1,4 @@
-# AgentScope — Décisions d'architecture (ADR)
+# AgentLen — Décisions d'architecture (ADR)
 
 > Format court : contexte → décision → conséquences. Une décision par section.
 > Une décision se révise par PR ; on ajoute alors une nouvelle ADR qui remplace l'ancienne plutôt que de réécrire l'historique.

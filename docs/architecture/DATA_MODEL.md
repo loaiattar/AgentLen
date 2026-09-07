@@ -1,4 +1,4 @@
-# AgentScope — Modèle de données
+# AgentLen — Modèle de données
 
 > Cible : **3NF justifiée**, provenance conservée ligne à ligne, réimport idempotent.
 > Voir aussi : [ARCHITECTURE.md](ARCHITECTURE.md) · [MAPPING_CONTRACT.md](MAPPING_CONTRACT.md)

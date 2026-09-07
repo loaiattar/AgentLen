@@ -1,4 +1,4 @@
-# Documentation d'architecture — AgentScope (backend)
+# Documentation d'architecture — AgentLen (backend)
 
 | Document | Contenu | Public |
 |---|---|---|

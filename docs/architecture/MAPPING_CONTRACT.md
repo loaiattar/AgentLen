@@ -1,4 +1,4 @@
-# AgentScope — Contrat de mapping
+# AgentLen — Contrat de mapping
 
 > C'est **le cœur du projet** : l'artefact qui permet d'intégrer une source inconnue *par configuration*, sans écrire de code ni redéployer.
 > Voir aussi : [ARCHITECTURE.md](ARCHITECTURE.md) · [DATA_MODEL.md](DATA_MODEL.md)
@@ -7,7 +7,7 @@
 
 ## 1. Principe
 
-Un **mapping** est un document JSON versionné, stocké en base, qui décrit comment transformer les enregistrements d'un fichier source en entités du modèle AgentScope.
+Un **mapping** est un document JSON versionné, stocké en base, qui décrit comment transformer les enregistrements d'un fichier source en entités du modèle AgentLen.
 
 ```
 Fichier source ──► profilage ──► [IA] proposition ──► validation ──► correction humaine

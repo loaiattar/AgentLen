@@ -1,4 +1,4 @@
-# AgentScope — Contrat d'API v1
+# AgentLen — Contrat d'API v1
 
 > **Ce document est le contrat avec l'équipe frontend.** Toute évolution passe par une PR sur ce fichier, relue par les deux équipes, **avant** implémentation.
 > L'OpenAPI généré par FastAPI est disponible sur `/docs` et `/openapi.json` et doit rester conforme à ce document.
