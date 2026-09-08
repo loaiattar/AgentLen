@@ -34,3 +34,16 @@ class ImportRunRepository(Protocol):
 class MappingProposalRepository(Protocol):
     async def save(self, proposal: MappingProposal, file_id: int) -> UUID: ...
     async def get(self, proposal_id: UUID) -> MappingProposal | None: ...
+
+
+class ReferentialRepository(Protocol):
+    """Persists the small reference tables (provider/model/agent/tool/repository).
+
+    One method for all five kinds, since they share the same upsert-by-name
+    shape (DATA_MODEL.md §4) — a mapping only ever supplies a *name*, never
+    a technical id.
+    """
+
+    async def resolve(self, kind: str, name: str) -> int:
+        """Return the id for (kind, name), creating the row if it doesn't exist yet."""
+        ...
