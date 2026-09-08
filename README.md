@@ -24,6 +24,7 @@ python -m pytest -v
 - `_apply_operator` now also receives the raw row, needed by `coalesce`/`concat`/`hash` since they read several source fields, not just the field's own pre-extracted value.
 - Added `google-re2` as a project dependency + a mypy override (it ships no type stubs).
 - Tests: one nominal + one failure case per operator, in `tests/unit/domain/test_transformation_engine_operators.py`.
+- **Rebased onto `develop`**, which had tightened `import-linter`'s contract in the meantime to forbid `re2` in `domain/` (previously not listed) — `regex_extract`'s original direct `import re2` now failed CI. Fixed by extracting a `RegexExtractor` Protocol in `transformation_engine.py` and moving the concrete re2 implementation to `infrastructure/text/re2_regex_extractor.py`, injected into the engine's constructor. Using `regex_extract` without one configured now fails clearly (`REGEX_EXTRACTOR_NOT_CONFIGURED`) instead of an import error.
 
 **Not done — `split_rows` is blocked on a design question, raised with the team rather than guessed:** every other operator is `value -> value`, but `split_rows` is described as "one source record produces N target rows" at the *field* level, which doesn't fit that contract (the engine already has an equivalent mechanism at the *entity* level via `entity_mapping.iterate`). Needs clarification on how a field-level operator is meant to fan out into multiple rows before implementing it.
 
@@ -39,5 +40,5 @@ python -m pytest -v
 
 ## Status
 
-- 52/52 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files issue #43 touches.
-- 5 of 6 transformation-engine operators done; `split_rows` pending a team decision (see above).
+- 142/142 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean, rebased onto latest `develop`.
+- 5 of 6 transformation-engine operators done; `split_rows` pending a team decision (see above) — opening the PR now for the 5 that are done rather than waiting.
