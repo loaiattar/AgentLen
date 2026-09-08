@@ -78,6 +78,59 @@ async def test_null_ratio_is_computed_precisely(tmp_path):
     assert value.null_ratio == pytest.approx(0.12)
 
 
+async def test_a_dotted_field_name_does_not_collide_with_a_nested_struct(tmp_path):
+    # {"a.b": 1, "a": {"b": 2}} are two distinct fields; naive dot-joining
+    # would render both as "$.a.b" and silently merge them into one.
+    import json
+
+    path = tmp_path / "dotted_name.jsonl"
+    path.write_text(json.dumps({"a.b": 1, "a": {"b": 2}}), encoding="utf-8")
+
+    profiler = PolarsFileProfiler()
+    profile = await profiler.profile(str(path))
+
+    paths = {f.path for f in profile.fields}
+    assert paths == {'$["a.b"]', "$.a.b"}
+
+
+async def test_a_field_appearing_after_row_100_still_reaches_the_profile(tmp_path):
+    # Polars' default schema-inference window is 100 rows. A field that only
+    # shows up later must not silently vanish from the profile just because
+    # infer_schema_length wasn't told to match sample_size.
+    import json
+
+    rows = []
+    for i in range(150):
+        row: dict[str, object] = {"a": i}
+        if i >= 120:
+            row["late_field"] = f"value-{i}"
+        rows.append(row)
+    path = tmp_path / "late_field.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+
+    profiler = PolarsFileProfiler()
+    profile = await profiler.profile(str(path), sample_size=150)
+
+    paths = {f.path for f in profile.fields}
+    assert "$.late_field" in paths
+
+
+async def test_distinct_ratio_reaches_1_0_for_a_unique_but_nullable_column(tmp_path):
+    # A key that's unique among the values actually present must read as a
+    # perfect natural-key candidate, regardless of how many rows are null —
+    # null_ratio already carries the "how much is missing" signal separately.
+    df = pl.DataFrame({"key": ["a", "b", "c", "d", "e", "f", "g", "h", "i", None]})
+    path = tmp_path / "unique_with_null.jsonl"
+    df.write_ndjson(path)
+
+    profiler = PolarsFileProfiler()
+    profile = await profiler.profile(str(path))
+
+    key = _field(profile, "$.key")
+    assert key.distinct_ratio == 1.0
+    assert key.null_ratio == pytest.approx(0.1)
+
+
 async def test_sample_size_bounds_memory_even_on_a_larger_file(tmp_path):
     # Stands in for the 500 MB acceptance criterion: proves record_count still
     # reflects the true total while the collected sample stays bounded, which is
