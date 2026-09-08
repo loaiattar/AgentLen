@@ -96,7 +96,8 @@ src/
 │   └── layouts/           # Layouts racine (AppLayout, AuthLayout...)
 │
 ├── components/
-│   ├── atoms/              # Composants UI élémentaires (souvent basés sur shadcn/ui)
+│   ├── ui/                 # Design system + primitives shadcn (Button, Bento, Kpi…)
+│   ├── atoms/              # Couche Atomic Design optionnelle au-dessus de ui/
 │   ├── molecules/          # Combinaisons simples d'atoms
 │   ├── organisms/          # Compositions complexes, génériques (non liées à une feature)
 │   └── templates/          # Structures de page réutilisables (layout de contenu)
@@ -112,6 +113,8 @@ src/
 │   ├── imports/
 │   ├── import-assistant/
 │   ├── mappings/
+│   ├── sources/
+│   ├── quality/
 │   └── dashboard/
 │
 ├── lib/
@@ -191,9 +194,9 @@ Les quatre premiers niveaux (Atoms à Templates) vivent dans `components/`. Le n
 
 ### Atoms
 
-Composants UI élémentaires, non composés d'autres composants métier, hautement réutilisables. Souvent des wrappers autour de primitives shadcn/ui.
+Composants UI élémentaires, non composés d'autres composants métier, hautement réutilisables. Les primitives du design system et shadcn/ui vivent dans `components/ui/` (voir [design-system.md](design-system.md)).
 
-Exemples : `Button`, `Input`, `Badge`, `Icon`, `Label`, `Checkbox`.
+Exemples : `Button`, `Input`, `Badge`, `Kpi`, `BentoModule`.
 
 Règles :
 - Pas d'appel API, pas de dépendance à une feature.
@@ -258,7 +261,9 @@ Un élément reste dans sa feature tant qu'il n'est utilisé que par elle. Il n'
 | `import-assistant/` | Agent IA d'aide au mapping : analyse du fichier, conversation avec l'IA, correction, preview du mapping en brouillon. |
 | `mappings/` | Mappings persistés et réutilisables, indépendants du flux d'analyse IA. |
 | `sessions/` | Détail d'une session (appels modèles, appels outils). |
-| `dashboard/` | Indicateurs, visualisations, filtres, qualité des données. |
+| `dashboard/` | Indicateurs, visualisations, filtres. |
+| `sources/` | Origines des datasets (TraceLab, SWE-chat, etc.). |
+| `quality/` | Intégrité des données importées, issues expliquées. |
 
 #### Cas particulier : `import-assistant/` vs `mappings/`
 
@@ -286,7 +291,7 @@ Les filtres du dashboard (source, agent, modèle, période) et le drill-down d'u
 
 ### Comment classer un composant : arbre de décision
 
-1. **Est-ce un composant shadcn/ui non modifié ou une primitive UI pure (pas de vocabulaire métier) ?** → `components/atoms/` ou `components/molecules/`.
+1. **Est-ce un composant shadcn/ui ou une primitive du design system (pas de vocabulaire métier) ?** → `components/ui/`.
 2. **Est-ce une composition d'UI générique réutilisable par plusieurs features, sans connaissance du métier ?** → `components/organisms/` ou `components/templates/`.
 3. **Est-ce utilisé uniquement par une feature, ou porte-t-il une connaissance du métier de cette feature (noms de champs, statuts, règles) ?** → `features/<feature>/components/`.
 4. **Est-ce un point d'entrée de route ?** → `features/<feature>/pages/`.
@@ -304,7 +309,7 @@ Les filtres du dashboard (source, agent, modèle, période) et le drill-down d'u
 
 shadcn/ui n'est pas une dépendance npm classique : les composants sont générés/copiés directement dans le code du projet, ce qui les rend éditables.
 
-- **Emplacement** : les composants générés par la CLI shadcn vivent dans `components/atoms/` (composants simples : `Button`, `Input`, `Badge`) ou `components/molecules/` (compositions déjà pré-assemblées par shadcn, ex. `Dialog`, `Combobox`) selon leur niveau de complexité au sens Atomic Design.
+- **Emplacement** : les composants générés par la CLI shadcn et les modules du design system vivent dans `components/ui/` (`Button`, `Input`, `Bento`, `Kpi`, `Modal`…). Config : `frontend/components.json`. Voir [design-system.md](design-system.md).
 - **Personnalisation** : la personnalisation visuelle passe par les tokens Tailwind/CSS variables (thème) et par les `class-variance-authority` (`cva`) variants déjà générés par shadcn — on édite le composant généré directement plutôt que de le surcharger depuis l'extérieur.
 - **Utilisation par les features** : une feature importe les composants shadcn depuis `components/`, elle ne doit jamais copier/dupliquer un composant shadcn dans son propre dossier.
 - **Créer un nouveau composant plutôt qu'utiliser shadcn tel quel** : quand le besoin ne correspond à aucun composant du catalogue shadcn, ou quand la composition nécessaire dépasse une simple variante (nouvel Atom/Molecule composé "from scratch", éventuellement à partir de primitives Radix si besoin).
@@ -443,7 +448,7 @@ Components (Atomic Design)
 - **Utilisation directe des classes utilitaires** : privilégiée pour tout style local, propre à un composant, non dupliqué ailleurs. C'est le mode par défaut.
 - **Créer un composant réutilisable** dès qu'une combinaison de classes se répète à l'identique dans plusieurs endroits, ou dès qu'un pattern visuel a une signification métier/UI stable (ex. "badge de statut"). La règle : dupliquer une combinaison de classes deux fois est acceptable, la dupliquer une troisième fois doit déclencher l'extraction en composant (Atom/Molecule).
 - **Responsive** : mobile-first, via les préfixes standards Tailwind (`sm:`, `md:`, `lg:`, `xl:`). Pas de media query CSS custom en dehors de Tailwind sauf cas exceptionnel documenté en commentaire.
-- **Thème** : géré via les tokens définis dans la configuration Tailwind (`tailwind.config.ts`) et les variables CSS de shadcn/ui (`--background`, `--foreground`, etc.), pour permettre le light/dark mode. Ne jamais coder une couleur en dur (`#fff`, `bg-[#123456]`) : toujours passer par un token de thème.
+- **Thème** : light mode uniquement. Tokens dans `app/styles/globals.css` (`@theme inline` Tailwind v4) : surfaces glass, typographie Kanit/Manrope, Bento, accents. Ne jamais coder une couleur en dur (`#fff`, `bg-[#123456]`) : toujours passer par un token. Détail : [design-system.md](design-system.md).
 - **Styles personnalisés** (CSS pur) : limités au strict nécessaire (ex. keyframes d'animation complexes non couvertes par Tailwind), centralisés dans un fichier global (`app/styles/globals.css` ou équivalent), jamais dans des fichiers `.css` dispersés par composant.
 - **Quand utiliser Tailwind directement vs créer un composant** :
   - Style ponctuel, non répété → classes Tailwind inline.
