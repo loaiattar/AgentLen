@@ -65,8 +65,23 @@ class TransformationEngine:
             issues.extend(field_issues)
 
             if value is None and field_rule.required:
-                # A required field that failed → the whole entity is rejected
+                # A required field that failed → the whole entity is rejected.
+                # If it failed silently (absent from the source, no operator
+                # exception), field_issues is empty — still record why.
                 rejected = True
+                if not field_issues:
+                    issues.append(
+                        ImportIssue(
+                            severity="rejected",
+                            code="MISSING_REQUIRED_FIELD",
+                            message=f"Required field '{field_rule.target}' is missing or null.",
+                            field_path=(
+                                f"entities[target={entity.target}]"
+                                f".fields[target={field_rule.target}]"
+                            ),
+                            line_number=line_number,
+                        )
+                    )
             elif value is not None:
                 data[field_rule.target] = value
 
