@@ -9,8 +9,8 @@ from uuid import UUID
 class FieldRule:
     """Describes how to map one source field to one target field."""
 
-    target: str                      # e.g. 'external_id', 'duration_ms'
-    source: str                      # JSONPath e.g. '$.session_id'
+    target: str  # e.g. 'external_id', 'duration_ms'
+    source: str  # JSONPath e.g. '$.session_id'
     required: bool = False
     operators: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
@@ -23,10 +23,10 @@ class FieldRule:
 class EntityMapping:
     """Describes how to extract one target entity from source records."""
 
-    target: str                      # 'session', 'model_call', 'tool_call'
-    natural_key: tuple[str, ...]     # field names used for deduplication
+    target: str  # 'session', 'model_call', 'tool_call'
+    natural_key: tuple[str, ...]  # field names used for deduplication
     fields: tuple[FieldRule, ...]
-    iterate: str | None = None       # JSONPath for nested lists (1 record → N rows)
+    iterate: str | None = None  # JSONPath for nested lists (1 record → N rows)
     parent: dict[str, Any] | None = None  # {'entity': 'session', 'via': 'external_id'}
 
     def __post_init__(self) -> None:
@@ -50,7 +50,7 @@ class Mapping:
     id: UUID
     name: str
     version: int
-    source_format: str               # 'jsonl', 'csv', 'parquet'
+    source_format: str  # 'jsonl', 'csv', 'parquet'
     entities: tuple[EntityMapping, ...]
 
     VALID_FORMATS = frozenset({"jsonl", "csv", "parquet"})
@@ -69,10 +69,14 @@ class MappingProposal:
     """A mapping document proposed by the AI agent, before user validation."""
 
     mapping: Mapping
-    rationale: tuple[dict[str, Any], ...]      # [{'target': ..., 'confidence': ..., 'explanation': ...}]
-    ambiguities: tuple[dict[str, Any], ...]    # [{'field': ..., 'question': ..., 'options': [...]}]
-    unmapped_fields: tuple[dict[str, Any], ...]  # [{'path': ..., 'reason': ...}]
-    analyzer_descriptor: dict[str, Any]        # {'provider': ..., 'model': ..., 'prompt_version': ...}
+    # [{'target': ..., 'confidence': ..., 'explanation': ...}]
+    rationale: tuple[dict[str, Any], ...]
+    # [{'field': ..., 'question': ..., 'options': [...]}]
+    ambiguities: tuple[dict[str, Any], ...]
+    # [{'path': ..., 'reason': ...}]
+    unmapped_fields: tuple[dict[str, Any], ...]
+    # {'provider': ..., 'model': ..., 'prompt_version': ...}
+    analyzer_descriptor: dict[str, Any]
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "rationale", tuple(self.rationale))
