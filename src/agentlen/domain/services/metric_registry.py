@@ -46,8 +46,7 @@ TOOL_ERROR_RATE = MetricDefinition(
     label="Taux d'erreur des appels d'outils",
     unit="ratio",
     formula=(
-        "COUNT(tool_call WHERE status='error') "
-        "/ COUNT(tool_call WHERE status IN ('ok','error'))"
+        "COUNT(tool_call WHERE status='error') / COUNT(tool_call WHERE status IN ('ok','error'))"
     ),
     scope="Appels d'outils avec statut connu (ok ou error) dans les sessions filtrées.",
     missing_policy=(

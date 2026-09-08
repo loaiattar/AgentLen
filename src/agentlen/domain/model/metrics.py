@@ -27,8 +27,8 @@ class MetricDefinition:
 class Coverage:
     """How many records actually contributed to a metric value."""
 
-    present: int   # records with a non-null value
-    total: int     # total records in scope
+    present: int  # records with a non-null value
+    total: int  # total records in scope
 
     @property
     def ratio(self) -> float:
@@ -43,7 +43,7 @@ class MetricValue:
     """
 
     key: str
-    value: float | int | None        # None = unavailable, not zero
+    value: float | int | None  # None = unavailable, not zero
     unit: str
     coverage: Coverage
-    warning: str | None = None       # shown when comparability is violated
+    warning: str | None = None  # shown when comparability is violated

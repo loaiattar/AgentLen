@@ -19,7 +19,7 @@ class StructureAnalyzer(Protocol):
     async def run_agent_loop(
         self,
         profile: FileProfile,
-        tool_executor: "ImportAgentToolExecutor",
+        tool_executor: ImportAgentToolExecutor,
         hint: str | None = None,
     ) -> MappingProposal:
         """Run the autonomous agentic loop.
@@ -34,7 +34,7 @@ class StructureAnalyzer(Protocol):
         self,
         proposal: MappingProposal,
         user_message: str,
-        tool_executor: "ImportAgentToolExecutor",
+        tool_executor: ImportAgentToolExecutor,
     ) -> MappingProposal:
         """Incorporate a user correction and re-validate via tools."""
         ...
