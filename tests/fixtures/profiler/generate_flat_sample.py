@@ -16,12 +16,28 @@ df = pl.DataFrame(
     {
         "id": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         "name": [
-            "alice", "bob", "carol", "dave", None,
-            "frank", "grace", "heidi", "ivan", "judy",
+            "alice",
+            "bob",
+            "carol",
+            "dave",
+            None,
+            "frank",
+            "grace",
+            "heidi",
+            "ivan",
+            "judy",
         ],
         "score": [
-            12.5, 8.0, None, 4.25, 19.0,
-            None, 7.75, 15.0, 3.5, 11.0,
+            12.5,
+            8.0,
+            None,
+            4.25,
+            19.0,
+            None,
+            7.75,
+            15.0,
+            3.5,
+            11.0,
         ],
     }
 )

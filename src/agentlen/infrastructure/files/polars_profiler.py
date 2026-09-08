@@ -24,8 +24,14 @@ _TYPE_NAMES: dict[type[pl.DataType], str] = {
     pl.Null: "null",
 }
 _INT_TYPES = (
-    pl.Int8, pl.Int16, pl.Int32, pl.Int64,
-    pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64,
+    pl.Int8,
+    pl.Int16,
+    pl.Int32,
+    pl.Int64,
+    pl.UInt8,
+    pl.UInt16,
+    pl.UInt32,
+    pl.UInt64,
 )
 _FLOAT_TYPES = (pl.Float32, pl.Float64)
 _NUMERIC_TYPES = _INT_TYPES + _FLOAT_TYPES
