@@ -1,0 +1,19 @@
+# Normalisation des fins de ligne : l'équipe travaille sous Windows et Unix.
+# Sans ce fichier, chaque aller-retour produit des diffs entiers illisibles.
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.sql   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.sh    text eol=lf
+
+*.ps1   text eol=crlf
+*.bat   text eol=crlf
+
+*.png   binary
+*.jpg   binary
+*.parquet binary
