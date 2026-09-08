@@ -14,7 +14,7 @@ class FieldProfile:
 def profile_fields(df: pl.DataFrame, *, max_examples: int = 3) -> list[FieldProfile]:
     row_count = df.height
     profiles = []
-    for name, dtype in zip(df.columns, df.dtypes):
+    for name, dtype in zip(df.columns, df.dtypes, strict=True):
         column = df[name]
         null_rate = column.null_count() / row_count if row_count else 0.0
         examples = [str(value) for value in column.drop_nulls().head(max_examples).to_list()]

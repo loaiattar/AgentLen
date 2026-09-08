@@ -1,7 +1,5 @@
 from uuid import uuid4
 
-import pytest
-
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.services.transformation_engine import TransformationEngine

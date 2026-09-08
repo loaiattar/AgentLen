@@ -1,7 +1,5 @@
 from uuid import uuid4
 
-import pytest
-
 from agentlen.domain.errors import UnknownTargetFieldError, UnsupportedOperatorError
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.services.mapping_validator import validate

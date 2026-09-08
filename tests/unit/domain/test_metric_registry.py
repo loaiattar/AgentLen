@@ -1,7 +1,6 @@
 import pytest
 
 from agentlen.domain.services.metric_registry import (
-    ALL_METRICS,
     all_definitions,
     get,
 )
