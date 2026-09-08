@@ -16,9 +16,18 @@ pip install -r requirements.txt
 python -m pytest -v
 ```
 
-## Changes and improvements in this branch
+## Changes and improvements
 
-### Added
+### Added — issue #43 (transformation engine operators)
+- `domain/services/transformation_engine.py`: implemented 5 of the 6 operators that were placeholders — `parse_datetime` (iso8601/unix_seconds/unix_millis/strptime, always UTC-aware, never falls back to a default date on failure), `coalesce` and `concat` (both resolve their own `sources` list of paths against the raw record, per `MAPPING_CONTRACT.md` §3), `hash` (sha256 over canonicalized `sources` values, same approach as `Deduplicator.content_hash` — stable regardless of key order), `regex_extract` (uses `google-re2`, not the stdlib `re`, so a pathological pattern like `(a+)+$` can't cause catastrophic backtracking — the timeout guarantee is structural).
+- `domain/errors.py`: added `OperatorFailedError` (carries a stable `ImportIssue` code, e.g. `DATETIME_PARSE_FAILED`) and `InvalidOperatorParamError` (e.g. an uncompilable regex).
+- `_apply_operator` now also receives the raw row, needed by `coalesce`/`concat`/`hash` since they read several source fields, not just the field's own pre-extracted value.
+- Added `google-re2` as a project dependency + a mypy override (it ships no type stubs).
+- Tests: one nominal + one failure case per operator, in `tests/unit/domain/test_transformation_engine_operators.py`.
+
+**Not done — `split_rows` is blocked on a design question, raised with the team rather than guessed:** every other operator is `value -> value`, but `split_rows` is described as "one source record produces N target rows" at the *field* level, which doesn't fit that contract (the engine already has an equivalent mechanism at the *entity* level via `entity_mapping.iterate`). Needs clarification on how a field-level operator is meant to fan out into multiple rows before implementing it.
+
+### Added — issue #3 (original ingestion utilities)
 - Real sample extract from TraceLab (`data/samples/tracelab_example_session.jsonl`), 19 rows, sanitized public example pulled from `uw-syfi/TraceLab` (`example_sessions/sanitized/round_trace.jsonl`).
 - JSONL reader (`src/agentlen/infrastructure/files/polars_reader.py`): `read_jsonl(path)` loads a JSONL file into a Polars DataFrame.
 - Field profiler (`src/agentlen/infrastructure/files/polars_profiler.py`): `profile_fields(df)` returns, per column, the detected dtype, the null rate, and a few example values.
@@ -30,5 +39,5 @@ python -m pytest -v
 
 ## Status
 
-- 3/3 tests passing.
-- Standalone utility only — not yet wired into any use case or port (those depend on the domain layer, not implemented yet).
+- 52/52 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files issue #43 touches.
+- 5 of 6 transformation-engine operators done; `split_rows` pending a team decision (see above).
