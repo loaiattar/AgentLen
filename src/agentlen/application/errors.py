@@ -1,0 +1,54 @@
+"""Application-layer errors.
+
+The domain owns rule violations (`domain/errors.py`). These three describe
+situations the *application* runs into while orchestrating: something asked for
+does not exist, something conflicts with what is already stored, or an outbound
+adapter misbehaved.
+
+They carry a stable machine-readable `code` because the API contract promises
+one on every error (API.md §1). Keeping them here rather than in
+`interfaces/http/` means a CLI or a worker reports the same codes as the API.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class ApplicationError(Exception):
+    """Base class for application-layer failures."""
+
+    code = "APPLICATION_ERROR"
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        self.message = message
+        self.details: dict[str, Any] = details or {}
+        super().__init__(message)
+
+
+class NotFoundError(ApplicationError):
+    """A requested resource does not exist. -> 404"""
+
+    code = "NOT_FOUND"
+
+    def __init__(self, resource: str, identifier: object) -> None:
+        super().__init__(
+            f"{resource} '{identifier}' does not exist.",
+            details={"resource": resource, "id": str(identifier)},
+        )
+
+
+class ConflictError(ApplicationError):
+    """The request conflicts with stored state. -> 409"""
+
+    code = "CONFLICT"
+
+
+class AnalyzerError(ApplicationError):
+    """The AI provider failed or returned a non-conforming response. -> 502
+
+    Deliberately distinct from a 500: the fault is upstream, not ours, and the
+    front is expected to offer a retry rather than report a bug.
+    """
+
+    code = "ANALYZER_FAILED"
