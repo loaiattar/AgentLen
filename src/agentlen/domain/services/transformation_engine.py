@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -172,7 +174,7 @@ class TransformationEngine:
             case "concat":
                 return self._concat(row, op["sources"], op.get("separator", ""))
             case "hash":
-                return None  # placeholder — implemented in Lot C
+                return self._hash(row, op["sources"], op.get("algorithm", "sha256"))
             case "regex_extract":
                 return None  # placeholder — implemented in Lot C (with re2)
             case "split_rows":
@@ -224,6 +226,17 @@ class TransformationEngine:
         """
         parts = [str(v) for s in sources if (v := self._extract(row, s)) is not None]
         return separator.join(parts) if parts else None
+
+    def _hash(self, row: dict[str, Any], sources: list[str], algorithm: str) -> str:
+        """SHA-256 of the resolved `sources` values, canonicalized the same way
+        as Deduplicator.content_hash (sorted keys, stable regardless of the
+        order values were collected in) — used as a synthetic natural key.
+        """
+        if algorithm != "sha256":
+            raise ValueError(f"Unsupported hash algorithm '{algorithm}'")
+        values = {source: self._extract(row, source) for source in sources}
+        canonical = json.dumps(values, sort_keys=True, ensure_ascii=False, default=str)
+        return hashlib.sha256(canonical.encode()).hexdigest()
 
     @staticmethod
     def _cast(value: object, to: str, on_error: str) -> object:

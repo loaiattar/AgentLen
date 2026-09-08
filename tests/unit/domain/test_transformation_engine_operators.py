@@ -188,3 +188,46 @@ def test_concat_skips_null_sources_and_returns_none_if_all_null():
 
     assert issues == []
     assert "outcome" not in results[0]["data"]
+
+
+# ---------------------------------------------------------------------------
+# hash
+# ---------------------------------------------------------------------------
+
+
+def _hash_mapping(sources: list[str]) -> Mapping:
+    return _make_mapping(
+        FieldRule(
+            target="external_id",
+            source="$.unused",
+            required=True,
+            operators=[{"op": "hash", "algorithm": "sha256", "sources": sources}],
+        )
+    )
+
+
+def test_hash_is_stable_regardless_of_sources_declaration_order():
+    engine = TransformationEngine()
+    raw = {"a": "x", "b": "y"}
+
+    results_ab, _ = engine.apply(_hash_mapping(["$.a", "$.b"]), raw)
+    results_ba, _ = engine.apply(_hash_mapping(["$.b", "$.a"]), raw)
+
+    assert results_ab[0]["data"]["external_id"] == results_ba[0]["data"]["external_id"]
+
+
+def test_hash_unsupported_algorithm_is_rejected():
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        FieldRule(
+            target="external_id",
+            source="$.unused",
+            required=True,
+            operators=[{"op": "hash", "algorithm": "md5", "sources": ["$.a"]}],
+        )
+    )
+    results, issues = engine.apply(mapping, {"a": "x"})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].severity == "rejected"
