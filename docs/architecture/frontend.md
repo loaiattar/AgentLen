@@ -110,6 +110,7 @@ src/
 │   │   ├── types.ts          # Types métier de la feature
 │   │   └── pages/           # Pages associées aux routes de la feature
 │   ├── imports/
+│   ├── import-assistant/
 │   ├── mappings/
 │   └── dashboard/
 │
@@ -249,6 +250,40 @@ features/
 
 Un élément reste dans sa feature tant qu'il n'est utilisé que par elle. Il n'est promu vers `components/` que lorsqu'il devient réellement réutilisable ailleurs — jamais de manière anticipée ("on en aura peut-être besoin ailleurs").
 
+### Features du projet
+
+| Feature | Périmètre |
+|---|---|
+| `imports/` | Import des fichiers source (upload, liste des imports, statut). |
+| `import-assistant/` | Agent IA d'aide au mapping : analyse du fichier, conversation avec l'IA, correction, preview du mapping en brouillon. |
+| `mappings/` | Mappings persistés et réutilisables, indépendants du flux d'analyse IA. |
+| `sessions/` | Détail d'une session (appels modèles, appels outils). |
+| `dashboard/` | Indicateurs, visualisations, filtres, qualité des données. |
+
+#### Cas particulier : `import-assistant/` vs `mappings/`
+
+Ce sont deux features distinctes plutôt qu'une seule, chacune avec sa propre responsabilité :
+
+- `import-assistant/` porte la conversation avec l'IA et le mapping **en brouillon** — un état client, généralement géré par un [store Zustand de feature](#10-state-management--zustand) (`features/import-assistant/store/`).
+- `mappings/` porte les mappings **validés/persistés**, consultables et réutilisables indépendamment du flux IA — géré via TanStack Query comme toute donnée serveur.
+- La validation d'un mapping dans `import-assistant/` délègue la sauvegarde à l'API de `mappings/` (appel à une mutation exposée par `features/mappings/api/`). Cela matérialise côté frontend la règle métier « l'IA propose, elle ne modifie jamais la base directement ».
+
+> Si cette séparation s'avère artificielle à l'usage (couplage constant entre les deux features), il est acceptable de fusionner en une seule feature avec un sous-dossier `assistant/`, plutôt que de forcer la séparation. Documenter ce choix dans la PR concernée le cas échéant.
+
+#### Pas de feature « analytics » séparée
+
+Le calcul des indicateurs (définition, unité, gestion des valeurs manquantes) est une responsabilité du **domaine backend**, testable indépendamment de l'UI — donc hors périmètre de ce document. `dashboard/` ne fait qu'**afficher** des indicateurs déjà calculés via l'API ; il ne doit jamais recalculer un indicateur côté client.
+
+#### `dashboard/` vs `sessions/`
+
+La vue détaillée d'une session est isolée dans sa propre feature `sessions/`, car elle est consommée à la fois par le drill-down du dashboard et potentiellement par une liste de sessions indépendante — cela évite de dupliquer la logique de récupération (queries) et d'affichage entre les deux features.
+
+Le lien entre `dashboard/` et `sessions/` doit rester un **drill-down en lecture seule** géré par la navigation (le dashboard redirige vers une route de `sessions/` via `useNavigate`/un `Link`), et non un import direct de composants entre les deux features — ce qui respecterait la règle « pas d'import croisé entre features » de la [section 13](#13-règles-de-dépendances).
+
+#### Filtres du dashboard : search params, pas Zustand
+
+Les filtres du dashboard (source, agent, modèle, période) et le drill-down d'un graphique vers `sessions/` doivent passer par les **search params de TanStack Router** ([section 11](#11-routing--tanstack-router)), pas par un store Zustand, afin de rester partageables par lien et navigables (bouton précédent/suivant). Voir la règle de décision de la [section 10](#10-state-management--zustand).
+
 ### Comment classer un composant : arbre de décision
 
 1. **Est-ce un composant shadcn/ui non modifié ou une primitive UI pure (pas de vocabulaire métier) ?** → `components/atoms/` ou `components/molecules/`.
@@ -320,16 +355,16 @@ Règle stricte : `fetch`/`axios` n'apparaît **jamais** dans `components/` ni di
 |---|---|---|
 | Donnée serveur (vient du backend) | **TanStack Query** | Liste des imports, détail d'une session, statut d'un job |
 | État client global, partagé entre plusieurs features/routes | **Zustand** (`store/`) | Sidebar ouverte/fermée, thème choisi, filtres persistants inter-pages, panier/sélection multi-pages |
-| État client local à une feature, partagé entre plusieurs composants de cette feature | **Zustand** (`features/<feature>/store/`) | Étape courante d'un wizard d'import, sélection multiple dans un tableau, brouillon de formulaire multi-étapes |
+| État client local à une feature, partagé entre plusieurs composants de cette feature | **Zustand** (`features/<feature>/store/`) | Conversation et mapping en brouillon de `import-assistant/`, sélection multiple dans un tableau, brouillon de formulaire multi-étapes |
 | État purement local à un composant | `useState` / `useReducer` | Ouverture d'un menu, valeur d'un champ contrôlé, hover |
-| État dérivé de l'URL, partageable par lien | Search params **TanStack Router** | Filtres de liste, pagination, onglet actif — voir [section 11](#11-routing--tanstack-router) |
+| État dérivé de l'URL, partageable par lien | Search params **TanStack Router** | Filtres de liste, pagination, onglet actif, filtres du dashboard (source, agent, modèle, période) — voir [section 11](#11-routing--tanstack-router) |
 
 Règle de décision : avant de créer un store Zustand, se demander si l'état peut rester local (`useState`) ou s'il devrait plutôt vivre dans l'URL (search params, partageable et navigable). Zustand est réservé aux cas où l'état est réellement partagé entre composants distants dans l'arbre et n'a pas vocation à être dans l'URL ni à venir du serveur. **Une donnée qui existe côté backend ne doit jamais être recopiée dans un store Zustand** — elle reste la responsabilité de TanStack Query, y compris pour un cache "optimiste" (géré via `queryClient.setQueryData`, pas via un store parallèle).
 
 ### Emplacement et granularité des stores
 
 - **Stores globaux** (utilisés par plusieurs features, ou par `app/`) : `store/<nom>.store.ts` à la racine de `src/`, ex. `store/ui.store.ts`, `store/preferences.store.ts`.
-- **Stores de feature** (utilisés uniquement à l'intérieur d'une feature) : `features/<feature>/store/<nom>.store.ts`, ex. `features/imports/store/import-wizard.store.ts`.
+- **Stores de feature** (utilisés uniquement à l'intérieur d'une feature) : `features/<feature>/store/<nom>.store.ts`, ex. `features/import-assistant/store/import-assistant.store.ts` (conversation IA + mapping en brouillon).
 - Un store par domaine d'état cohérent (pas un store géant unique type "state global de l'app"). Plusieurs petits stores ciblés sont préférés à un store monolithique, pour limiter les re-renders et garder chaque store lisible.
 - Un store de feature ne doit jamais être importé par une autre feature ; s'il devient nécessaire ailleurs, il est promu vers `store/` à la racine (même logique de promotion que pour les composants, [section 7](#7-organisation-par-feature)).
 
@@ -377,7 +412,7 @@ Pour un store découpé en plusieurs responsabilités, préférer le pattern de 
 
 - Les composants génériques (`components/`) **ne doivent pas** dépendre directement d'un store métier de feature (`features/<feature>/store/`). Ils reçoivent l'état et les actions nécessaires via props, comme pour toute autre logique métier.
 - Un composant générique peut en revanche consommer un store **global** (`store/`) s'il s'agit d'un état d'UI transverse assumé comme tel (ex. un composant `Sidebar` générique qui lit `useUiStore`).
-- Une Page ou un composant de feature consomme le store de sa propre feature directement via le hook généré par `create()` (`useImportWizardStore`), sans passer par une couche d'abstraction supplémentaire.
+- Une Page ou un composant de feature consomme le store de sa propre feature directement via le hook généré par `create()` (`useImportAssistantStore`), sans passer par une couche d'abstraction supplémentaire.
 - Comme pour les queries/mutations, aucun composant ne doit accéder à `localStorage`/`sessionStorage` directement pour de l'état partagé : cela passe par un store Zustand avec middleware `persist`.
 
 ## 11. Routing & TanStack Router
@@ -457,7 +492,7 @@ Ces règles peuvent être renforcées via une règle ESLint de type `import/no-r
 - Fonctions/utilitaires : `camelCase.ts` (`formatDate.ts`).
 - Types : `types.ts` par feature, ou `<domaine>.types.ts` si plusieurs fichiers de types dans une même feature.
 - Queries/Mutations : `<feature>.queries.ts` / `<feature>.mutations.ts`.
-- Stores Zustand : `<domaine>.store.ts` (`ui.store.ts`, `import-wizard.store.ts`).
+- Stores Zustand : `<domaine>.store.ts` (`ui.store.ts`, `import-assistant.store.ts`).
 - Routes (file-based) : suivent la convention TanStack Router (`imports.index.tsx`, `imports.$importId.tsx`).
 
 ### Composants React
@@ -495,7 +530,7 @@ Ces règles peuvent être renforcées via une règle ESLint de type `import/no-r
 
 ### Stores Zustand
 
-- Hook exporté par le store nommé `use<Domaine>Store` — `useUiStore`, `useImportWizardStore`.
+- Hook exporté par le store nommé `use<Domaine>Store` — `useUiStore`, `useImportAssistantStore`.
 - Un store expose son état et ses actions dans une seule interface (`<Domaine>State`), pas de logique métier complexe dans les actions : une action modifie l'état, elle n'appelle pas l'API (cela reste le rôle de TanStack Query, éventuellement orchestré depuis un hook de feature qui combine store + mutation).
 - Toute consommation d'un store en dehors du fichier qui le définit passe par un sélecteur (`useStore((s) => s.field)`), jamais par une déstructuration de l'état complet.
 
