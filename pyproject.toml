@@ -43,6 +43,10 @@ exclude = ["tests/", "src/agentlen/infrastructure/"]
 module = "agentlen.infrastructure.*"
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+module = "re2"
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------------------
 # import-linter — enforces the dependency rule mechanically
 # ---------------------------------------------------------------------------

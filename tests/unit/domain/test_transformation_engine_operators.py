@@ -3,6 +3,7 @@ concat, hash, regex_extract, split_rows. One nominal + one failure case each,
 as required by the ticket.
 """
 
+import time
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.services.transformation_engine import TransformationEngine
 
 EXPECTED_FAILURE_LINE_NUMBER = 7
+CATASTROPHIC_BACKTRACKING_TIMEOUT_SECONDS = 0.1
 
 
 def _make_mapping(field: FieldRule, *, target: str = "session") -> Mapping:
@@ -231,3 +233,63 @@ def test_hash_unsupported_algorithm_is_rejected():
     assert results == []
     assert len(issues) == 1
     assert issues[0].severity == "rejected"
+
+
+# ---------------------------------------------------------------------------
+# regex_extract
+# ---------------------------------------------------------------------------
+
+
+def test_regex_extract_returns_the_requested_group():
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        FieldRule(
+            target="external_id",
+            source="$.raw",
+            required=True,
+            operators=[{"op": "regex_extract", "pattern": r"session-(\d+)", "group": 1}],
+        )
+    )
+    results, issues = engine.apply(mapping, {"raw": "session-42"})
+
+    assert issues == []
+    assert results[0]["data"]["external_id"] == "42"
+
+
+def test_regex_extract_invalid_pattern_produces_import_issue_with_a_readable_message():
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        FieldRule(
+            target="external_id",
+            source="$.raw",
+            required=True,
+            operators=[{"op": "regex_extract", "pattern": "(unclosed", "group": 0}],
+        )
+    )
+    results, issues = engine.apply(mapping, {"raw": "anything"})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].code == "INVALID_OPERATOR_PARAM"
+    assert issues[0].message
+
+
+def test_regex_extract_does_not_suffer_catastrophic_backtracking():
+    # (a+)+$ is the textbook pattern that makes Python's stdlib `re` hang
+    # exponentially on a long non-matching input. re2 must stay linear.
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        FieldRule(
+            target="external_id",
+            source="$.raw",
+            required=True,
+            operators=[{"op": "regex_extract", "pattern": "(a+)+$", "group": 0}],
+        )
+    )
+    pathological_input = "a" * 100 + "!"
+
+    started = time.perf_counter()
+    engine.apply(mapping, {"raw": pathological_input})
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < CATASTROPHIC_BACKTRACKING_TIMEOUT_SECONDS

@@ -5,7 +5,9 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-from agentlen.domain.errors import OperatorFailedError
+import re2
+
+from agentlen.domain.errors import InvalidOperatorParamError, OperatorFailedError
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 
@@ -94,7 +96,7 @@ class TransformationEngine:
         for op in rule.operators:
             try:
                 value = self._apply_operator(op, value, row)
-            except OperatorFailedError as exc:
+            except (OperatorFailedError, InvalidOperatorParamError) as exc:
                 issue = ImportIssue(
                     severity="rejected" if rule.required else "warning",
                     code=exc.code,
@@ -176,7 +178,7 @@ class TransformationEngine:
             case "hash":
                 return self._hash(row, op["sources"], op.get("algorithm", "sha256"))
             case "regex_extract":
-                return None  # placeholder — implemented in Lot C (with re2)
+                return self._regex_extract(value, op["pattern"], op.get("group", 0))
             case "split_rows":
                 return None  # placeholder
             case _:
@@ -237,6 +239,26 @@ class TransformationEngine:
         values = {source: self._extract(row, source) for source in sources}
         canonical = json.dumps(values, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(canonical.encode()).hexdigest()
+
+    @staticmethod
+    def _regex_extract(value: object, pattern: str, group: int) -> str | None:
+        """Extract `group` from the first match of `pattern` in `value`.
+
+        Uses re2, not the stdlib `re`: re2's matching is linear in input size
+        by construction, so a pathological pattern like `(a+)+$` can't cause
+        catastrophic backtracking — the timeout guarantee from
+        MAPPING_CONTRACT.md §3 is structural, not a fragile signal.alarm.
+        """
+        if value is None:
+            return None
+        try:
+            compiled = re2.compile(pattern)
+        except re2.error as exc:
+            raise InvalidOperatorParamError(
+                field_path="", message=f"Invalid regex pattern: {exc}"
+            ) from exc
+        match = compiled.search(str(value))
+        return match.group(group) if match else None
 
     @staticmethod
     def _cast(value: object, to: str, on_error: str) -> object:
