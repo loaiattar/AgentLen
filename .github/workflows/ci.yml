@@ -106,7 +106,19 @@ jobs:
           alembic upgrade head
 
       - name: pytest tests/integration tests/e2e
-        run: pytest tests/integration tests/e2e -q
+        # A skipped test still exits 0. The database fixtures skip when they
+        # decide Postgres is out of reach, so without this check the job could
+        # report success having exercised no database at all — the same class
+        # of silent pass this workflow replaces. Today the Alembic step above
+        # would fail first, but that guard is accidental: it depends on step
+        # order, and would vanish the day someone reorders them.
+        run: |
+          set -o pipefail
+          pytest tests/integration tests/e2e -q | tee pytest-db.out
+          if grep -qE '[0-9]+ skipped' pytest-db.out; then
+            echo "::error::Database tests were skipped — the Postgres service was not reached."
+            exit 1
+          fi
 
   # ── Guards · secrets and hardcoded model identifiers ───────────────────────
   guards:
@@ -179,13 +191,19 @@ jobs:
         # Always runs, so it can always report a status. That is what makes it
         # safe to mark as a required check: a job that is skipped or cancelled
         # never leaves a PR waiting forever on a status that never arrives.
+        #
+        # Demand `success` rather than enumerating failure modes. Listing
+        # 'failure' and 'cancelled' would let `skipped` through — which is
+        # precisely the "every job skips, the pipeline is green" bug this
+        # workflow exists to kill. It also stays correct when someone adds a
+        # sixth job or puts an `if:` on an existing one.
         run: |
-          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
-            echo "::error::One or more CI jobs failed."
-            exit 1
-          fi
-          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
-            echo "::error::One or more CI jobs were cancelled."
-            exit 1
-          fi
+          failed=0
+          for result in ${{ join(needs.*.result, ' ') }}; do
+            if [[ "$result" != "success" ]]; then
+              echo "::error::A required job reported '$result'."
+              failed=1
+            fi
+          done
+          [[ "$failed" -eq 0 ]] || exit 1
           echo "All CI checks passed."

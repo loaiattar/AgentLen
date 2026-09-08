@@ -19,9 +19,12 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
-    "mypy>=1.10",
-    "import-linter>=2.0",
-    "ruff>=0.4",
+    # Pinned for the duration of the sprint. These three decide whether a PR
+    # merges, so a new release turning a rule on by default would redden an
+    # unrelated PR on some random morning. Relax after the release.
+    "mypy==2.3.1",
+    "import-linter==2.15",
+    "ruff==0.16.6",
     # Integration tests run against a real, throwaway Postgres 16.
     "testcontainers[postgres]>=4.0",
     "psycopg[binary]>=3.1",
