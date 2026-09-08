@@ -41,7 +41,7 @@ async def test_returns_exactly_the_registered_indicators() -> None:
     """Four is the brief's minimum; the registry is the single source of truth."""
     metrics = await build([]).execute(ALL)
 
-    assert [m.key for m in metrics] == [d.key for d in metric_registry.all_definitions()]
+    assert [m.key for m in metrics] == [d.key for d in metric_registry.overview_definitions()]
     assert len(metrics) == 4
 
 
@@ -51,7 +51,7 @@ async def test_registry_is_fully_mapped() -> None:
     sessions = [{"id": 1, "data_source_id": 1, "started_at": DAY, "duration_ms": 10}]
     metrics = by_key(await build(sessions).execute(ALL))
 
-    for definition in metric_registry.all_definitions():
+    for definition in metric_registry.overview_definitions():
         assert definition.key in metrics
         assert metrics[definition.key].unit == definition.unit
 

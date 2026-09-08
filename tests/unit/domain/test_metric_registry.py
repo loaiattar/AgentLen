@@ -3,11 +3,15 @@ import pytest
 from agentlen.domain.services.metric_registry import (
     all_definitions,
     get,
+    overview_definitions,
 )
 
 
-def test_registry_exposes_four_metrics():
-    assert len(all_definitions()) == 4
+def test_overview_exposes_exactly_four_metrics():
+    """The brief requires at least four headline indicators, and the dashboard
+    header shows exactly these. Documenting an extra chart figure must not add
+    a fifth tile — hence the split from `all_definitions()`."""
+    assert len(overview_definitions()) == 4
 
 
 def test_all_required_keys_present():
@@ -17,7 +21,10 @@ def test_all_required_keys_present():
         "avg_session_duration_ms",
         "tool_error_rate",
     }
-    assert {m.key for m in all_definitions()} == expected_keys
+    # The four are a subset: all_definitions() also publishes the figures the
+    # chart routes return, so every number the API shows has a definition.
+    assert expected_keys <= {m.key for m in all_definitions()}
+    assert {m.key for m in overview_definitions()} == expected_keys
 
 
 def test_get_returns_correct_definition():
@@ -31,10 +38,19 @@ def test_get_raises_for_unknown_key():
         get("nonexistent_metric")
 
 
-def test_no_metric_has_cross_source_comparability_with_cache_fields():
-    """Cache token metrics must be per_source_only — not in this registry."""
+def test_cache_metrics_are_declared_per_source_only():
+    """Cache metrics must never be comparable across sources.
+
+    Some sources publish no cache figures at all, so a total spanning several
+    of them measures "the sources that bothered", not "all sources".
+
+    Previously this asserted no cache metric existed in the registry at all,
+    which was a proxy for the same rule while none had been defined. Now that
+    `cache_read_tokens` is published, the rule itself is asserted.
+    """
     for m in all_definitions():
-        assert "cache" not in m.key, (
-            f"Metric '{m.key}' mentions cache tokens but is in the "
-            "cross-source registry. It should be per_source_only."
-        )
+        if "cache" in m.key:
+            assert m.comparability == "per_source_only", (
+                f"Metric '{m.key}' concerns cache tokens and must be "
+                "per_source_only, so the API warns when it is aggregated."
+            )

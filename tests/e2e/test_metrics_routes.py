@@ -67,7 +67,14 @@ async def test_definitions_needs_no_database(client: AsyncClient) -> None:
     response = await client.get("/api/v1/metrics/definitions")
 
     assert response.status_code == 200
-    assert len(response.json()["definitions"]) == 4
+    keys = {d["key"] for d in response.json()["definitions"]}
+    # At least the headline four; the chart routes add their own definitions.
+    assert {
+        "session_count",
+        "avg_tokens_per_session",
+        "avg_session_duration_ms",
+        "tool_error_rate",
+    } <= keys
 
 
 async def test_every_definition_is_readable(client: AsyncClient) -> None:
