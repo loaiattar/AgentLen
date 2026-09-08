@@ -1,2 +1,3 @@
 polars
 pytest
+google-re2

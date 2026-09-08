@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
+from agentlen.domain.errors import OperatorFailedError
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 
@@ -81,13 +83,24 @@ class TransformationEngine:
     ) -> tuple[object | None, list[ImportIssue]]:
         field_path = f"entities[target={entity_target}].fields[target={rule.target}]"
 
-        # Extract raw value from the record using the source path
+        # Extract raw value from the record using the source path. Operators that
+        # combine several source fields (coalesce/concat/hash) ignore this and
+        # resolve their own `sources` list against `row` instead.
         value = self._extract(row, rule.source)
 
         # Apply operators in order
         for op in rule.operators:
             try:
-                value = self._apply_operator(op, value)
+                value = self._apply_operator(op, value, row)
+            except OperatorFailedError as exc:
+                issue = ImportIssue(
+                    severity="rejected" if rule.required else "warning",
+                    code=exc.code,
+                    message=str(exc.message),
+                    field_path=field_path,
+                    line_number=line_number,
+                )
+                return None, [issue]
             except Exception as exc:  # noqa: BLE001
                 issue = ImportIssue(
                     severity="rejected" if rule.required else "warning",
@@ -130,7 +143,9 @@ class TransformationEngine:
             return [item for item in value if isinstance(item, dict)]
         return []
 
-    def _apply_operator(self, op: dict[str, Any], value: object) -> object:  # noqa: PLR0911
+    def _apply_operator(  # noqa: PLR0911, PLR0912
+        self, op: dict[str, Any], value: object, row: dict[str, Any]
+    ) -> object:
         op_name = op.get("op")
 
         match op_name:
@@ -150,13 +165,13 @@ class TransformationEngine:
                 return self._map_values(value, op)
             case "json_passthrough":
                 return value  # kept as-is, stored in JSONB
+            case "parse_datetime":
+                return self._parse_datetime(value, op["format"])
             case "concat":
                 return None  # placeholder — implemented in Lot C
             case "hash":
                 return None  # placeholder — implemented in Lot C
             case "coalesce":
-                return None  # placeholder — implemented in Lot C
-            case "parse_datetime":
                 return None  # placeholder — implemented in Lot C
             case "regex_extract":
                 return None  # placeholder — implemented in Lot C (with re2)
@@ -164,6 +179,34 @@ class TransformationEngine:
                 return None  # placeholder
             case _:
                 raise ValueError(f"Unknown operator '{op_name}'")
+
+    @staticmethod
+    def _parse_datetime(value: object, fmt: str) -> datetime | None:
+        """Parse `value` into a UTC-aware datetime, or raise DATETIME_PARSE_FAILED.
+
+        `fmt` is one of the built-in tokens ('iso8601', 'unix_seconds',
+        'unix_millis') or a strptime pattern. Never falls back to a default
+        date on failure — that's the caller's job via ImportIssue.
+        """
+        if value is None:
+            return None
+        try:
+            if fmt == "iso8601":
+                text = str(value).replace("Z", "+00:00")
+                parsed = datetime.fromisoformat(text)
+            elif fmt == "unix_seconds":
+                parsed = datetime.fromtimestamp(float(value), tz=UTC)  # type: ignore[arg-type]
+            elif fmt == "unix_millis":
+                parsed = datetime.fromtimestamp(float(value) / 1000, tz=UTC)  # type: ignore[arg-type]
+            else:
+                parsed = datetime.strptime(str(value), fmt)  # noqa: DTZ007
+        except (ValueError, TypeError, OSError, OverflowError) as exc:
+            raise OperatorFailedError(
+                code="DATETIME_PARSE_FAILED",
+                message=f"Cannot parse {value!r} with format {fmt!r}: {exc}",
+            ) from exc
+
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
     @staticmethod
     def _cast(value: object, to: str, on_error: str) -> object:
