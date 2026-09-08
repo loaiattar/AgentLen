@@ -65,6 +65,37 @@ async def test_the_three_formats_produce_equivalent_field_profiles(filename):
     assert score.max_value == "19.0"
 
 
+async def test_the_three_formats_actually_agree_with_each_other():
+    # The parametrized test above checks each format against fixed values
+    # independently — it would still pass if CSV and Parquet silently
+    # disagreed with each other on null_ratio or types, since neither is
+    # asserted there. Compare the three FileProfiles directly instead.
+    profiler = PolarsFileProfiler()
+    profiles = {
+        fmt: await profiler.profile(str(FLAT_FIXTURES / f"flat_sample.{fmt}"))
+        for fmt in ("jsonl", "csv", "parquet")
+    }
+
+    reference = profiles["jsonl"]
+    reference_paths = {f.path for f in reference.fields}
+
+    for fmt, profile in profiles.items():
+        assert profile.record_count == reference.record_count, fmt
+        assert profile.sampled_records == reference.sampled_records, fmt
+        assert {f.path for f in profile.fields} == reference_paths, fmt
+
+        for field in profile.fields:
+            ref_field = _field(reference, field.path)
+            assert field.types == ref_field.types, (fmt, field.path)
+            assert field.null_ratio == pytest.approx(ref_field.null_ratio), (fmt, field.path)
+            assert field.distinct_ratio == pytest.approx(ref_field.distinct_ratio), (
+                fmt,
+                field.path,
+            )
+            assert field.min_value == ref_field.min_value, (fmt, field.path)
+            assert field.max_value == ref_field.max_value, (fmt, field.path)
+
+
 async def test_null_ratio_is_computed_precisely(tmp_path):
     # 3 nulls out of 25 rows = exactly 0.12, matching the ticket's stated example.
     df = pl.DataFrame({"value": [1] * 22 + [None] * 3})
