@@ -24,7 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agentlen.application.errors import ApplicationError
 from agentlen.application.ports.clock import Clock, SystemClock
+from agentlen.application.ports.dashboard_queries import DashboardQueries
 from agentlen.infrastructure.persistence.engine import create_engine, get_database_url
+from agentlen.infrastructure.persistence.read_models import SqlDashboardQueries
 
 
 class DependencyNotWiredError(ApplicationError):
@@ -66,6 +68,11 @@ def get_engine(request: Request) -> AsyncEngine:
     return _engine_singleton(get_database_url())
 
 
+def get_dashboard_queries(engine: EngineDep) -> DashboardQueries:
+    """The read side. Holds only the engine, so one per request is fine."""
+    return SqlDashboardQueries(engine)
+
+
 async def get_clock() -> AsyncIterator[Clock]:
     """Real time in production, frozen in tests via dependency_overrides."""
     yield SystemClock()
@@ -79,7 +86,6 @@ get_unit_of_work = _not_wired("UnitOfWork", "#45")
 get_session_repository = _not_wired("SessionRepository", "#45")
 get_mapping_repository = _not_wired("MappingRepository", "#45")
 get_import_run_repository = _not_wired("ImportRunRepository", "#45")
-get_dashboard_queries = _not_wired("DashboardQueries", "#57")
 get_file_storage = _not_wired("FileStorage", "#47")
 get_file_reader = _not_wired("FileReader", "#48")
 get_file_profiler = _not_wired("FileProfiler", "#48")
@@ -89,3 +95,4 @@ get_structure_analyzer = _not_wired("StructureAnalyzer", "#49")
 #: Inject with `clock: ClockDep` in a route signature.
 ClockDep = Annotated[Clock, Depends(get_clock)]
 EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
+DashboardQueriesDep = Annotated[DashboardQueries, Depends(get_dashboard_queries)]
