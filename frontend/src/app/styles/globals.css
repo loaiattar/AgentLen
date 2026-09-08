@@ -1,16 +1,146 @@
+/*
+ * Design tokens — AgentScope
+ * Unique source of hex values for the frontend. Components and features
+ * must use Tailwind utilities (bg-primary, text-foreground-muted, …)
+ * or var(--color-xxx). Never hard-code a hex outside this file.
+ *
+ * Brand primitives (do not change):
+ *   #00F7FF  vivid cyan     → --color-primary-emphasis (charts, live indicators, glows)
+ *   #B0FFFA  mint           → --color-accent-cyan-light (gradients, decorative fills)
+ *   #FF0087  vivid magenta  → --color-accent-magenta (charts, hot markers)
+ *   #FF7DB0  light rose     → --color-accent-magenta-light (gradients, decorative fills)
+ *   #FFFFFF  white          → --color-background / --color-surface
+ *
+ * Readability (WCAG AA): #00F7FF is 1.33:1 on white — unusable as text, icon,
+ * or button fill. --color-primary (#007A82) is the same hue, darkened, for UI
+ * chrome (5.11:1 both ways with white). #FF0087 is 3.75:1 on white — fail for
+ * normal text; --color-accent-magenta-ink (#C7006B) is the text/icon variant
+ * (5.77:1). White text on magenta also fails AA (3.75:1); use --color-foreground
+ * on a magenta fill. #B0FFFA and #FF7DB0 are fill-only; text on them uses
+ * --color-foreground.
+ *
+ * When to use which cyan:
+ *   primary            CTA, links, icons, focus
+ *   primary-soft       badges, selected rows, tinted hover
+ *   primary-emphasis   data viz, live dots, 1px accent, glow — never text
+ *   accent-cyan-light  wide decorative / gradient fills — never text
+ *
+ * When to use which magenta:
+ *   accent-magenta        data viz, hot markers — never text
+ *   accent-magenta-light  gradient partner — never text
+ *   accent-magenta-ink    magenta label/icon on a light surface
+ *
+ * Status colors are independent of brand so success ≠ primary teal and
+ * error ≠ magenta.
+ */
+
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Light theme is the only theme. :root and .dark share the same values so
+ * ThemeProvider toggling .dark cannot invent an unscoped dark palette.
+ */
+:root,
+.dark {
+  /* --- Surfaces --- */
+  --background: #FFFFFF;
+  --surface: #FFFFFF;
+  --surface-sunken: #F3F6F8;
+
+  /* --- Borders --- */
+  --border: #E2E8EB;
+  --border-strong: #7E8F96;
+
+  /* --- Foreground --- */
+  --foreground: #0B1A1C;
+  --foreground-muted: #4A5C60;
+  --foreground-subtle: #5C7277;
+  --on-emphasis: #FFFFFF;
+
+  /*
+   * Primary: darkened #00F7FF (rgb(0, 247, 255) → rgb(0, 122, 130)).
+   * primary-emphasis keeps the imposed vivid cyan for non-text emphasis.
+   * primary-soft = 10% #00F7FF on white.
+   */
+  --primary: #007A82;
+  --primary-emphasis: #00F7FF;
+  --primary-soft: #E6FEFF;
+  --primary-foreground: var(--on-emphasis);
+  --accent-cyan-light: #B0FFFA;
+
+  /*
+   * Magenta: imposed fills + ink variant rgb(255, 0, 135) → rgb(199, 0, 107)
+   * for text/icons on light backgrounds.
+   */
+  --accent-magenta: #FF0087;
+  --accent-magenta-light: #FF7DB0;
+  --accent-magenta-ink: #C7006B;
+
+  /* --- Status --- */
+  --success: #157A42;
+  --success-soft: #E7F7EE;
+  --warning: #B45309;
+  --warning-soft: #FEF4E6;
+  --error: #B91C1C;
+  --error-soft: #FDECEC;
+  --info: #0369A1;
+  --info-soft: #E6F4FB;
+
+  /* --- Radius base (shadcn --radius consumers) --- */
+  --radius: 0.75rem;
+
+  /* --- shadcn aliases → semantic tokens (do not introduce new hex) --- */
+  --card: var(--surface);
+  --card-foreground: var(--foreground);
+  --popover: var(--surface);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--surface-sunken);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--surface-sunken);
+  --muted-foreground: var(--foreground-muted);
+  --accent: var(--primary-soft);
+  --accent-foreground: var(--primary);
+  --destructive: var(--error);
+  --destructive-foreground: var(--on-emphasis);
+  --input: var(--border-strong);
+  --ring: var(--primary);
+}
+
 @theme inline {
+  /* Semantic color utilities */
   --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
   --color-foreground: var(--foreground);
+  --color-foreground-muted: var(--foreground-muted);
+  --color-foreground-subtle: var(--foreground-subtle);
+  --color-on-emphasis: var(--on-emphasis);
+  --color-primary: var(--primary);
+  --color-primary-emphasis: var(--primary-emphasis);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent-cyan-light: var(--accent-cyan-light);
+  --color-accent-magenta: var(--accent-magenta);
+  --color-accent-magenta-light: var(--accent-magenta-light);
+  --color-accent-magenta-ink: var(--accent-magenta-ink);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-error: var(--error);
+  --color-error-soft: var(--error-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+
+  /* shadcn utilities already consumed by components */
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -19,58 +149,19 @@
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-}
 
-:root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-}
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --shadow-card: 0 1px 2px rgb(11 26 28 / 0.04), 0 4px 16px rgb(11 26 28 / 0.06);
+  --shadow-pop: 0 4px 8px rgb(11 26 28 / 0.06), 0 12px 32px rgb(11 26 28 / 0.12);
+
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
 }
 
 @layer base {
@@ -78,6 +169,6 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background font-sans text-foreground;
   }
 }
