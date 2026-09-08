@@ -8,6 +8,9 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "polars>=1.0",
+    "sqlalchemy[asyncio]>=2.0",
+    "alembic>=1.13",
+    "asyncpg>=0.29",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +20,9 @@ dev = [
     "mypy>=1.10",
     "import-linter>=2.0",
     "ruff>=0.4",
+    # Integration tests run against a real, throwaway Postgres 16.
+    "testcontainers[postgres]>=4.0",
+    "psycopg[binary]>=3.1",
 ]
 
 [tool.setuptools.packages.find]
@@ -29,6 +35,9 @@ where = ["src"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: needs a real Postgres (skipped when Docker is unavailable)",
+]
 
 # ---------------------------------------------------------------------------
 # Mypy — strict on domain and application only
@@ -36,10 +45,10 @@ asyncio_mode = "auto"
 [tool.mypy]
 python_version = "3.12"
 strict = true
-exclude = ["tests/", "src/agentlen/infrastructure/"]
+exclude = ["tests/", "alembic/"]
 
 [[tool.mypy.overrides]]
-module = "agentlen.infrastructure.*"
+module = "agentlen.infrastructure.files.*"
 ignore_errors = true
 
 # ---------------------------------------------------------------------------
@@ -87,3 +96,9 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "S", "BLE", "PLR"]
 ignore = ["S101"]   # allow assert in tests
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic writes these; reflowing machine output on every regeneration is noise.
+"alembic/versions/*" = ["E501"]
+# Literal expectations are the point of a test, not a magic number to extract.
+"tests/*" = ["PLR2004"]
