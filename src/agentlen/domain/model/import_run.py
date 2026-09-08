@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 class ImportIssue:
     """One problem encountered during import for a specific source record."""
 
-    severity: str              # 'rejected', 'duplicate', 'warning'
-    code: str                  # stable machine-readable code e.g. 'CAST_FAILED'
-    message: str               # human-readable explanation
-    field_path: str | None = None   # e.g. '$.usage.input_tokens'
+    severity: str  # 'rejected', 'duplicate', 'warning'
+    code: str  # stable machine-readable code e.g. 'CAST_FAILED'
+    message: str  # human-readable explanation
+    field_path: str | None = None  # e.g. '$.usage.input_tokens'
     line_number: int | None = None  # position in the source file
 
     VALID_SEVERITIES = frozenset({"rejected", "duplicate", "warning"})

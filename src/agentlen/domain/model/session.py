@@ -16,18 +16,17 @@ class Session:
 
     id: UUID
     data_source_id: int
-    external_id: str                     # identifier as found in the source
+    external_id: str  # identifier as found in the source
     agent_name: str | None = None
-    started_at: datetime | None = None   # None = information absent
+    started_at: datetime | None = None  # None = information absent
     ended_at: datetime | None = None
-    duration_ms: int | None = None       # None ≠ 0 ms
-    outcome: str | None = None           # 'completed','error','aborted','unknown'
+    duration_ms: int | None = None  # None ≠ 0 ms
+    outcome: str | None = None  # 'completed','error','aborted','unknown'
 
     VALID_OUTCOMES = frozenset({"completed", "error", "aborted", "unknown"})
 
     def __post_init__(self) -> None:
         if self.outcome is not None and self.outcome not in self.VALID_OUTCOMES:
             raise ValueError(
-                f"Invalid outcome '{self.outcome}'. "
-                f"Must be one of {sorted(self.VALID_OUTCOMES)}."
+                f"Invalid outcome '{self.outcome}'. Must be one of {sorted(self.VALID_OUTCOMES)}."
             )

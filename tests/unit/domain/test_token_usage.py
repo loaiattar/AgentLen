@@ -1,5 +1,3 @@
-import pytest
-
 from agentlen.domain.model.model_call import TokenUsage
 
 

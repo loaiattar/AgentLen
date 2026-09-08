@@ -2,6 +2,7 @@
 
 Subject requirement: "une donnée indisponible ne doit pas devenir un zéro".
 """
+
 from agentlen.domain.model.metrics import Coverage, MetricValue
 
 

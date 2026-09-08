@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from agentlen.domain.errors import UnknownTargetFieldError, UnsupportedOperatorError, ValidationError
+from agentlen.domain.errors import (
+    UnknownTargetFieldError,
+    UnsupportedOperatorError,
+    ValidationError,
+)
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 
 # Fields accepted per target entity.

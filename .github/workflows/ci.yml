@@ -3,126 +3,189 @@ name: CI
 on:
   pull_request:
   push:
+    branches: [main, develop]
   workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # The pipeline must never need a real provider key. Any job that touches the
+  # AI port runs against the test double. See ADR-006.
+  AI_PROVIDER: fake
+  PYTHON_VERSION: '3.12'
+
 jobs:
-  # ── Lint ────────────────────────────────────────────────────────────────────
-  lint:
-    name: Lint
+  # ── Backend · style, types and the dependency rule ──────────────────────────
+  backend-lint:
+    name: Backend · lint & types
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        if: hashFiles('package.json') != ''
-        uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install project
+        run: pip install -e ".[dev]"
+
+      - name: Format check
+        run: ruff format --check .
+
+      - name: Lint (S rules forbid eval/exec)
+        run: ruff check .
+
+      - name: Type check — strict on domain and application
+        run: mypy --strict src/agentlen/domain src/agentlen/application
+
+      - name: Dependency rule (import-linter)
+        # The automated proof of the Clean Architecture. A PR that imports
+        # sqlalchemy from domain/ dies here, not in review.
+        run: lint-imports
+
+  # ── Backend · unit tests, no infrastructure ────────────────────────────────
+  backend-unit:
+    name: Backend · unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install project
+        run: pip install -e ".[dev]"
+
+      - name: pytest tests/unit
+        # Deliberately without a database service: if a domain or application
+        # rule needs Postgres to be tested, that is an architecture defect.
+        run: pytest tests/unit -q
+
+  # ── Backend · integration, e2e and migrations against a real Postgres ──────
+  backend-db:
+    name: Backend · integration & e2e
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: agentlen
+          POSTGRES_PASSWORD: agentlen
+          POSTGRES_DB: agentlen
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentlen"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      DATABASE_URL: postgresql+asyncpg://agentlen:agentlen@localhost:5432/agentlen
+      TEST_DATABASE_URL: postgresql+asyncpg://agentlen:agentlen@localhost:5432/agentlen
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install project
+        run: pip install -e ".[dev]"
+
+      - name: Migration round trip
+        # A migration that cannot be undone is a migration nobody dares to fix.
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: pytest tests/integration tests/e2e
+        run: pytest tests/integration tests/e2e -q
+
+  # ── Guards · secrets and hardcoded model identifiers ───────────────────────
+  guards:
+    name: Guards · secrets & model ids
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install gitleaks
+        run: |
+          VERSION=8.28.0
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Secret scan
+        # --no-git scans the tree as it stands, so a pre-existing finding in
+        # old history cannot make every future PR red.
+        run: gitleaks detect --no-git --no-banner --redact --exit-code 1 --source .
+
+      - name: No hardcoded model identifiers
+        # ADR-006: provider and model come from configuration. An id written
+        # into src/ silently defeats the interchangeability requirement.
+        # Matches model families only — "claude-code" is an agent name and is
+        # legitimate in the data model.
+        run: |
+          PATTERN='claude-(opus|sonnet|haiku)|claude-[0-9]|gpt-[0-9]|text-davinci'
+          if grep -rnE "$PATTERN" src/; then
+            echo "::error::Hardcoded model identifier in src/. Model ids come from configuration (ADR-006)."
+            exit 1
+          fi
+          echo "No hardcoded model identifier."
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend · lint & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
-        if: hashFiles('package.json') != ''
-        run: |
-          if [ -f package-lock.json ]; then npm ci
-          elif [ -f yarn.lock ]; then yarn --frozen-lockfile
-          else npm install
-          fi
+        run: npm ci
 
-      - name: Run linter
-        if: hashFiles('package.json') != ''
+      - name: Lint
         run: npm run lint --if-present
 
-      - name: No project files yet
-        if: hashFiles('package.json') == ''
-        run: echo "No package.json found — skipping lint until project is initialised."
-
-  # ── Test ────────────────────────────────────────────────────────────────────
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    needs: lint
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        if: hashFiles('package.json') != ''
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        if: hashFiles('package.json') != ''
-        run: |
-          if [ -f package-lock.json ]; then npm ci
-          elif [ -f yarn.lock ]; then yarn --frozen-lockfile
-          else npm install
-          fi
-
-      - name: Run tests
-        if: hashFiles('package.json') != ''
-        run: npm test --if-present
-
-      - name: Upload coverage report
-        if: hashFiles('package.json') != '' && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: coverage/
-          retention-days: 7
-
-      - name: No project files yet
-        if: hashFiles('package.json') == ''
-        run: echo "No package.json found — skipping tests until project is initialised."
-
-  # ── Build ───────────────────────────────────────────────────────────────────
-  build:
-    name: Build
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        if: hashFiles('package.json') != ''
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        if: hashFiles('package.json') != ''
-        run: |
-          if [ -f package-lock.json ]; then npm ci
-          elif [ -f yarn.lock ]; then yarn --frozen-lockfile
-          else npm install
-          fi
-
-      - name: Build project
-        if: hashFiles('package.json') != ''
+      - name: Build
         run: npm run build --if-present
 
-      - name: No project files yet
-        if: hashFiles('package.json') == ''
-        run: echo "No package.json found — skipping build until project is initialised."
+      - name: Test
+        run: npm test --if-present
 
-  # ── Summary ─────────────────────────────────────────────────────────────────
+  # ── Aggregate — this is the check to require in branch protection ──────────
   ci-success:
     name: CI Passed
     runs-on: ubuntu-latest
-    needs: [lint, test, build]
+    needs: [backend-lint, backend-unit, backend-db, guards, frontend]
     if: always()
     steps:
-      - name: Check all jobs passed
+      - name: Verify every job succeeded
+        # Always runs, so it can always report a status. That is what makes it
+        # safe to mark as a required check: a job that is skipped or cancelled
+        # never leaves a PR waiting forever on a status that never arrives.
         run: |
-          if [[ "${{ needs.lint.result }}" != "success" || \
-                "${{ needs.test.result }}" != "success" || \
-                "${{ needs.build.result }}" != "success" ]]; then
-            echo "One or more CI jobs failed."
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "::error::One or more CI jobs failed."
+            exit 1
+          fi
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "::error::One or more CI jobs were cancelled."
             exit 1
           fi
           echo "All CI checks passed."
