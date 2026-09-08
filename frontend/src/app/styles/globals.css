@@ -1,117 +1,151 @@
 /*
  * Design tokens — AgentScope
- * Unique source of hex values for the frontend. Components and features
- * must use Tailwind utilities (bg-primary, text-foreground-muted, …)
- * or var(--color-xxx). Never hard-code a hex outside this file.
+ * Unique source of visual values for the frontend.
+ * Components must use Tailwind utilities or var(--token).
+ * Never hard-code a hex, rgba, radius, shadow or spacing outside this file.
  *
- * Brand primitives (do not change):
- *   #00F7FF  vivid cyan     → --color-primary-emphasis (charts, live indicators, glows)
- *   #B0FFFA  mint           → --color-accent-cyan-light (gradients, decorative fills)
- *   #FF0087  vivid magenta  → --color-accent-magenta (charts, hot markers)
- *   #FF7DB0  light rose     → --color-accent-magenta-light (gradients, decorative fills)
- *   #FFFFFF  white          → --color-background / --color-surface
+ * Balance: 80% light neutrals / 15% liquid glass / 5% accents.
  *
- * Readability (WCAG AA): #00F7FF is 1.33:1 on white — unusable as text, icon,
- * or button fill. --color-primary (#007A82) is the same hue, darkened, for UI
- * chrome (5.11:1 both ways with white). #FF0087 is 3.75:1 on white — fail for
- * normal text; --color-accent-magenta-ink (#C7006B) is the text/icon variant
- * (5.77:1). White text on magenta also fails AA (3.75:1); use --color-foreground
- * on a magenta fill. #B0FFFA and #FF7DB0 are fill-only; text on them uses
- * --color-foreground.
- *
- * When to use which cyan:
- *   primary            CTA, links, icons, focus
- *   primary-soft       badges, selected rows, tinted hover
- *   primary-emphasis   data viz, live dots, 1px accent, glow — never text
- *   accent-cyan-light  wide decorative / gradient fills — never text
- *
- * When to use which magenta:
- *   accent-magenta        data viz, hot markers — never text
- *   accent-magenta-light  gradient partner — never text
- *   accent-magenta-ink    magenta label/icon on a light surface
- *
- * Status colors are independent of brand so success ≠ primary teal and
- * error ≠ magenta.
+ * Brand primitives:
+ *   Cyan     #00F7FF  → --primary-emphasis (fills, charts, glow — never body text)
+ *   Dark cyan#008B94  → --primary (links, focus, ink on light surfaces)
+ *   Mint     #B0FFFA  → --accent-mint (healthy / decorative)
+ *   Magenta  #FF0087  → --accent-magenta (AI, charts)
+ *   Pink     #FF7DB0  → --accent-pink (errors, warnings, decorative)
+ *   Blue     #7DB0FF  → --accent-blue (charts)
+ *   Success  #72F2C5
+ *   Warning  #FFD38A
+ *   Error    #FF4F91
  */
 
 @import "tailwindcss";
 
 @custom-variant dark (&:is(.dark *));
 
-/*
- * Light theme is the only theme. :root and .dark share the same values so
- * ThemeProvider toggling .dark cannot invent an unscoped dark palette.
- */
 :root,
 .dark {
+  /* --- Atmosphere --- */
+  --background: #f5f8f9;
+  --background-alt: #f8fafa;
+  --background-bright: #fbfdfd;
+  --atmosphere-cyan: #00f7ff;
+  --atmosphere-mint: #b0fffa;
+  --atmosphere-blue: #7db0ff;
+  --atmosphere-magenta: #ff0087;
+  --atmosphere-pink: #ff7db0;
+
+  /* --- Liquid glass --- */
+  --glass: rgb(255 255 255 / 0.55);
+  --glass-strong: rgb(255 255 255 / 0.7);
+  --glass-soft: rgb(255 255 255 / 0.45);
+  --glass-highlight: rgb(255 255 255 / 0.85);
+  --glass-border: rgb(255 255 255 / 0.65);
+  --glass-border-strong: rgb(255 255 255 / 0.85);
+  --glass-blur: 28px;
+  --glass-refract-cyan: rgb(0 247 255 / 0.1);
+  --glass-refract-magenta: rgb(255 0 135 / 0.07);
+  --glass-refract-blue: rgb(125 176 255 / 0.08);
+
   /* --- Surfaces --- */
-  --background: #FFFFFF;
-  --surface: #FFFFFF;
-  --surface-sunken: #F3F6F8;
+  --surface: var(--glass);
+  --surface-solid: var(--background-bright);
+  --surface-sunken: rgb(24 34 40 / 0.04);
 
   /* --- Borders --- */
-  --border: #E2E8EB;
-  --border-strong: #7E8F96;
+  --border: rgb(30 45 50 / 0.1);
+  --border-strong: rgb(30 45 50 / 0.18);
 
   /* --- Foreground --- */
-  --foreground: #0B1A1C;
-  --foreground-muted: #4A5C60;
-  --foreground-subtle: #5C7277;
-  --on-emphasis: #FFFFFF;
+  --foreground: #182228;
+  --foreground-muted: #526169;
+  --foreground-subtle: #7a878d;
+  --on-emphasis: #182228;
+  --on-dark: #fbfdfd;
 
-  /*
-   * Primary: darkened #00F7FF (rgb(0, 247, 255) → rgb(0, 122, 130)).
-   * primary-emphasis keeps the imposed vivid cyan for non-text emphasis.
-   * primary-soft = 10% #00F7FF on white.
-   */
-  --primary: #007A82;
-  --primary-emphasis: #00F7FF;
-  --primary-soft: #E6FEFF;
+  /* --- Primary --- */
+  --primary: #008b94;
+  --primary-emphasis: #00f7ff;
+  --primary-soft: rgb(0 247 255 / 0.14);
   --primary-foreground: var(--on-emphasis);
-  --accent-cyan-light: #B0FFFA;
 
-  /*
-   * Magenta: imposed fills + ink variant rgb(255, 0, 135) → rgb(199, 0, 107)
-   * for text/icons on light backgrounds.
-   */
-  --accent-magenta: #FF0087;
-  --accent-magenta-light: #FF7DB0;
-  --accent-magenta-ink: #C7006B;
+  /* --- Accents --- */
+  --accent-mint: #b0fffa;
+  --accent-magenta: #ff0087;
+  --accent-magenta-soft: rgb(255 0 135 / 0.12);
+  --accent-pink: #ff7db0;
+  --accent-blue: #7db0ff;
 
   /* --- Status --- */
-  --success: #157A42;
-  --success-soft: #E7F7EE;
-  --warning: #B45309;
-  --warning-soft: #FEF4E6;
-  --error: #B91C1C;
-  --error-soft: #FDECEC;
-  --info: #0369A1;
-  --info-soft: #E6F4FB;
+  --success: #72f2c5;
+  --success-soft: rgb(114 242 197 / 0.18);
+  --warning: #ffd38a;
+  --warning-soft: rgb(255 211 138 / 0.22);
+  --error: #ff4f91;
+  --error-soft: rgb(255 79 145 / 0.14);
+  --info: var(--accent-blue);
+  --info-soft: rgb(125 176 255 / 0.16);
 
-  /* --- Radius base (shadcn --radius consumers) --- */
+  /* --- Motion --- */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast: 140ms;
+  --duration-base: 220ms;
+  --duration-slow: 420ms;
+
+  /* --- Layout --- */
+  --sidebar-width: 15.5rem;
+  --header-height: 3.75rem;
+  --bento-gutter: 1rem;
+  --bento-gutter-mobile: 0.75rem;
+  --space-1: 0.5rem;
+  --space-2: 1rem;
+  --space-3: 1.5rem;
+  --space-4: 2rem;
+  --space-5: 3rem;
+  --space-6: 4rem;
+
+  /* --- Radius --- */
   --radius: 0.75rem;
+  --radius-module: 1.5rem;
+  --radius-control: 0.75rem;
+  --radius-pill: 999px;
 
-  /* --- shadcn aliases → semantic tokens (do not introduce new hex) --- */
-  --card: var(--surface);
+  /* --- shadcn aliases --- */
+  --card: var(--glass);
   --card-foreground: var(--foreground);
-  --popover: var(--surface);
+  --popover: var(--glass-strong);
   --popover-foreground: var(--foreground);
-  --secondary: var(--surface-sunken);
+  --secondary: var(--glass-soft);
   --secondary-foreground: var(--foreground);
   --muted: var(--surface-sunken);
   --muted-foreground: var(--foreground-muted);
   --accent: var(--primary-soft);
-  --accent-foreground: var(--primary);
+  --accent-foreground: var(--foreground);
   --destructive: var(--error);
   --destructive-foreground: var(--on-emphasis);
-  --input: var(--border-strong);
+  --input: var(--border);
   --ring: var(--primary);
 }
 
 @theme inline {
-  /* Semantic color utilities */
   --color-background: var(--background);
+  --color-background-alt: var(--background-alt);
+  --color-background-bright: var(--background-bright);
+  --color-atmosphere-cyan: var(--atmosphere-cyan);
+  --color-atmosphere-mint: var(--atmosphere-mint);
+  --color-atmosphere-blue: var(--atmosphere-blue);
+  --color-atmosphere-magenta: var(--atmosphere-magenta);
+  --color-atmosphere-pink: var(--atmosphere-pink);
+  --color-glass: var(--glass);
+  --color-glass-strong: var(--glass-strong);
+  --color-glass-soft: var(--glass-soft);
+  --color-glass-highlight: var(--glass-highlight);
+  --color-glass-border: var(--glass-border);
+  --color-glass-border-strong: var(--glass-border-strong);
+  --color-glass-refract-cyan: var(--glass-refract-cyan);
+  --color-glass-refract-magenta: var(--glass-refract-magenta);
+  --color-glass-refract-blue: var(--glass-refract-blue);
   --color-surface: var(--surface);
+  --color-surface-solid: var(--surface-solid);
   --color-surface-sunken: var(--surface-sunken);
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
@@ -119,14 +153,16 @@
   --color-foreground-muted: var(--foreground-muted);
   --color-foreground-subtle: var(--foreground-subtle);
   --color-on-emphasis: var(--on-emphasis);
+  --color-on-dark: var(--on-dark);
   --color-primary: var(--primary);
   --color-primary-emphasis: var(--primary-emphasis);
   --color-primary-soft: var(--primary-soft);
   --color-primary-foreground: var(--primary-foreground);
-  --color-accent-cyan-light: var(--accent-cyan-light);
+  --color-accent-mint: var(--accent-mint);
   --color-accent-magenta: var(--accent-magenta);
-  --color-accent-magenta-light: var(--accent-magenta-light);
-  --color-accent-magenta-ink: var(--accent-magenta-ink);
+  --color-accent-magenta-soft: var(--accent-magenta-soft);
+  --color-accent-pink: var(--accent-pink);
+  --color-accent-blue: var(--accent-blue);
   --color-success: var(--success);
   --color-success-soft: var(--success-soft);
   --color-warning: var(--warning);
@@ -135,8 +171,6 @@
   --color-error-soft: var(--error-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
-
-  /* shadcn utilities already consumed by components */
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
@@ -152,23 +186,222 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
+  --radius-sm: 0.5rem;
+  --radius-md: var(--radius-control);
+  --radius-lg: var(--radius);
+  --radius-xl: var(--radius-module);
+  --radius-pill: var(--radius-pill);
 
-  --shadow-card: 0 1px 2px rgb(11 26 28 / 0.04), 0 4px 16px rgb(11 26 28 / 0.06);
-  --shadow-pop: 0 4px 8px rgb(11 26 28 / 0.06), 0 12px 32px rgb(11 26 28 / 0.12);
+  --shadow-glass: 0 1px 1px rgb(24 34 40 / 0.03), 0 8px 28px rgb(24 34 40 / 0.05);
+  --shadow-glass-hover: 0 2px 2px rgb(24 34 40 / 0.04), 0 16px 40px rgb(24 34 40 / 0.08);
+  --shadow-pop: 0 8px 32px rgb(24 34 40 / 0.12);
+  --shadow-card: var(--shadow-glass);
 
-  --font-sans: ui-sans-serif, system-ui, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-sans: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Kanit", ui-sans-serif, system-ui, sans-serif;
   --font-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+
+  --text-display: 3.75rem;
+  --text-display--line-height: 1.05;
+  --text-display--font-weight: 300;
+  --text-hero: 3rem;
+  --text-hero--line-height: 1.08;
+  --text-hero--font-weight: 300;
+  --text-page: 2.375rem;
+  --text-page--line-height: 1.1;
+  --text-page--font-weight: 300;
+  --text-section: 1.625rem;
+  --text-section--line-height: 1.2;
+  --text-section--font-weight: 400;
+  --text-kpi: 2.5rem;
+  --text-kpi--line-height: 1;
+  --text-kpi--font-weight: 300;
+  --text-card: 1rem;
+  --text-card--line-height: 1.35;
+  --text-card--font-weight: 500;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.5;
+  --text-body--font-weight: 400;
+  --text-secondary: 0.8125rem;
+  --text-secondary--line-height: 1.45;
+  --text-secondary--font-weight: 400;
+  --text-meta: 0.75rem;
+  --text-meta--line-height: 1.4;
+  --text-meta--font-weight: 500;
+
+  --spacing-bento: var(--bento-gutter);
+  --spacing-sidebar: var(--sidebar-width);
+  --spacing-header: var(--header-height);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
-  body {
-    @apply bg-background font-sans text-foreground;
+
+  html {
+    @apply bg-background;
   }
+
+  body {
+    @apply min-h-dvh bg-background font-sans text-body text-foreground antialiased;
+  }
+
+  h1,
+  .font-display {
+    font-family: var(--font-display);
+    font-style: italic;
+    font-weight: 300;
+    letter-spacing: -0.03em;
+  }
+
+  ::selection {
+    background: var(--primary-soft);
+    color: var(--foreground);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--primary-emphasis);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .atmosphere {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(ellipse 80% 55% at 8% 12%, rgb(0 247 255 / 0.16), transparent 58%),
+      radial-gradient(ellipse 55% 45% at 92% 8%, rgb(255 0 135 / 0.08), transparent 55%),
+      radial-gradient(ellipse 50% 40% at 78% 78%, rgb(125 176 255 / 0.14), transparent 60%),
+      radial-gradient(ellipse 45% 40% at 18% 88%, rgb(176 255 250 / 0.18), transparent 58%),
+      radial-gradient(ellipse 35% 30% at 52% 42%, rgb(255 125 176 / 0.06), transparent 62%);
+  }
+
+  .glass-surface,
+  .glass-module {
+    position: relative;
+    overflow: hidden;
+    background: var(--glass);
+    background-image:
+      linear-gradient(180deg, var(--glass-highlight) 0%, transparent 28%),
+      radial-gradient(120% 80% at 12% 0%, var(--glass-refract-cyan), transparent 46%),
+      radial-gradient(90% 70% at 100% 100%, var(--glass-refract-magenta), transparent 52%),
+      radial-gradient(70% 50% at 80% 20%, var(--glass-refract-blue), transparent 48%);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass);
+  }
+
+  .glass-module {
+    border-radius: var(--radius-module);
+    isolation: isolate;
+    transition:
+      transform var(--duration-base) var(--ease-out),
+      background var(--duration-base) var(--ease-out),
+      border-color var(--duration-base) var(--ease-out),
+      box-shadow var(--duration-base) var(--ease-out);
+  }
+
+  .glass-module[data-interactive="true"]:hover {
+    transform: translateY(-2px);
+    background-color: var(--glass-strong);
+    border-color: var(--glass-border-strong);
+    box-shadow: var(--shadow-glass-hover);
+  }
+
+  .glass-module[data-interactive="true"]:active {
+    transform: translateY(0) scale(0.995);
+  }
+
+  .glass-module[data-state="selected"] {
+    background-color: var(--glass-strong);
+  }
+
+  .bento-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--bento-gutter-mobile);
+  }
+
+  @media (min-width: 768px) {
+    .bento-grid {
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: var(--bento-gutter);
+    }
+  }
+
+  @media (min-width: 1280px) {
+    .bento-grid {
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+    }
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes atmosphere-drift {
+  0%,
+  100% {
+    background-position:
+      0% 0%,
+      100% 0%,
+      80% 100%,
+      0% 100%,
+      50% 50%;
+  }
+  50% {
+    background-position:
+      8% 6%,
+      92% 8%,
+      74% 82%,
+      12% 90%,
+      54% 46%;
+  }
+}
+
+.atmosphere-motion {
+  background-size:
+    140% 140%,
+    140% 140%,
+    140% 140%,
+    140% 140%,
+    160% 160%;
+  animation: atmosphere-drift 28s var(--ease-out) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .atmosphere-motion,
+  .skeleton-shimmer {
+    animation: none;
+  }
+
+  .glass-module[data-interactive="true"]:hover,
+  .glass-module[data-interactive="true"]:active {
+    transform: none;
+  }
+}
+
+.skeleton-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    rgb(255 255 255 / 0.15) 0%,
+    rgb(255 255 255 / 0.55) 50%,
+    rgb(255 255 255 / 0.15) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
 }

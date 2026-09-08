@@ -1,0 +1,77 @@
+import type { ComponentProps } from 'react'
+import { Slot } from 'radix-ui'
+import { cva, type VariantProps } from 'class-variance-authority'
+import { LoaderCircle } from 'lucide-react'
+
+import { cn } from '@/lib/utils/cn'
+
+const buttonVariants = cva(
+  "relative inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-body font-medium transition-[transform,background,border,box-shadow,opacity] duration-[var(--duration-fast)] ease-[var(--ease-out)] outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-40 aria-disabled:pointer-events-none aria-disabled:opacity-40 data-[loading=true]:pointer-events-none [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  {
+    variants: {
+      variant: {
+        primary:
+          'bg-primary-emphasis text-foreground shadow-glass hover:brightness-[1.04] active:scale-[0.98] active:brightness-[0.98]',
+        secondary:
+          'glass-surface text-foreground hover:bg-glass-strong hover:border-glass-border-strong active:scale-[0.98]',
+        ghost:
+          'bg-transparent text-foreground-muted hover:bg-primary-soft hover:text-foreground active:scale-[0.98]',
+        text: 'bg-transparent px-0 text-primary underline-offset-4 hover:underline active:opacity-80',
+        ai: 'bg-accent-magenta-soft text-foreground ring-1 ring-accent-magenta/25 hover:ring-accent-magenta/45 active:scale-[0.98]',
+        danger:
+          'bg-error-soft text-foreground ring-1 ring-error/30 hover:bg-error/20 active:scale-[0.98]',
+      },
+      size: {
+        sm: 'h-8 px-3 text-secondary',
+        default: 'h-9 px-4',
+        lg: 'h-11 px-5 text-card',
+        icon: 'size-9',
+      },
+    },
+    defaultVariants: {
+      variant: 'primary',
+      size: 'default',
+    },
+  },
+)
+
+export interface ButtonProps extends ComponentProps<'button'>, VariantProps<typeof buttonVariants> {
+  asChild?: boolean
+  loading?: boolean
+}
+
+export function Button({
+  className,
+  variant,
+  size,
+  asChild = false,
+  loading = false,
+  disabled,
+  children,
+  ...props
+}: ButtonProps) {
+  const Comp = asChild ? Slot.Root : 'button'
+  const content = asChild ? (
+    children
+  ) : (
+    <>
+      {loading ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
+      <span className={cn(loading && 'opacity-70')}>{children}</span>
+    </>
+  )
+
+  return (
+    <Comp
+      data-slot="button"
+      data-loading={loading || undefined}
+      data-disabled={disabled || undefined}
+      disabled={asChild ? undefined : disabled || loading}
+      className={cn(buttonVariants({ variant, size, className }))}
+      {...props}
+    >
+      {content}
+    </Comp>
+  )
+}
+
+export { buttonVariants }
