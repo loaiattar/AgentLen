@@ -28,7 +28,7 @@ class TokenUsage:
         """
         parts = [self.input_tokens, self.output_tokens]
         if all(p is None for p in parts):
-            return None          # unknown ≠ zero
+            return None  # unknown ≠ zero
         return sum(p or 0 for p in parts)
 
 
@@ -38,13 +38,13 @@ class ModelCall:
 
     id: UUID
     session_id: UUID
-    sequence_index: int              # order within the session
+    sequence_index: int  # order within the session
     token_usage: TokenUsage
-    status: str                      # 'ok','error','unknown'
+    status: str  # 'ok','error','unknown'
     model_name: str | None = None
     provider_name: str | None = None
     started_at: datetime | None = None
-    duration_ms: int | None = None   # None ≠ 0 ms
+    duration_ms: int | None = None  # None ≠ 0 ms
     stop_reason: str | None = None
     error_code: str | None = None
 
@@ -53,6 +53,5 @@ class ModelCall:
     def __post_init__(self) -> None:
         if self.status not in self.VALID_STATUSES:
             raise ValueError(
-                f"Invalid status '{self.status}'. "
-                f"Must be one of {sorted(self.VALID_STATUSES)}."
+                f"Invalid status '{self.status}'. Must be one of {sorted(self.VALID_STATUSES)}."
             )
