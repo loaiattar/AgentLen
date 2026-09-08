@@ -167,11 +167,11 @@ class TransformationEngine:
                 return value  # kept as-is, stored in JSONB
             case "parse_datetime":
                 return self._parse_datetime(value, op["format"])
-            case "concat":
-                return None  # placeholder — implemented in Lot C
-            case "hash":
-                return None  # placeholder — implemented in Lot C
             case "coalesce":
+                return self._coalesce(row, op["sources"])
+            case "concat":
+                return self._concat(row, op["sources"], op.get("separator", ""))
+            case "hash":
                 return None  # placeholder — implemented in Lot C
             case "regex_extract":
                 return None  # placeholder — implemented in Lot C (with re2)
@@ -207,6 +207,23 @@ class TransformationEngine:
             ) from exc
 
         return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+    def _coalesce(self, row: dict[str, Any], sources: list[str]) -> object:
+        """First non-null value among `sources`, or None if all are null."""
+        for source in sources:
+            resolved = self._extract(row, source)
+            if resolved is not None:
+                return resolved
+        return None
+
+    def _concat(self, row: dict[str, Any], sources: list[str], separator: str) -> str | None:
+        """Join the non-null values of `sources` with `separator`.
+
+        A null source is skipped. If every source is null, returns None
+        rather than an empty string.
+        """
+        parts = [str(v) for s in sources if (v := self._extract(row, s)) is not None]
+        return separator.join(parts) if parts else None
 
     @staticmethod
     def _cast(value: object, to: str, on_error: str) -> object:
