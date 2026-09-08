@@ -1,6 +1,9 @@
 # AgentLen
 
-AgentLen ingests traces from AI coding agents (Claude Code, Codex, ...), normalizes them into a common relational model, and exposes them through a dashboard. See `docs/architecture/` (branch `docs/2-architecture-foundations`) for the full architecture, data model, and mapping contract once merged.
+AgentLen ingests traces from AI coding agents (Claude Code, Codex, ...), normalizes them into a common relational model, and exposes them through a dashboard.
+
+- Architecture : [`docs/architecture/`](docs/architecture/README.md)
+- Datasets : [`docs/datasets.md`](docs/datasets.md)
 
 > This README currently documents the ingestion work in progress on `feat/jsonl-reader-profiler` (issue #3). It will be replaced by the full project README once the core setup lands.
 
