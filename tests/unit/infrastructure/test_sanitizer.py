@@ -112,7 +112,10 @@ def test_connection_string_password_is_redacted() -> None:
         "API_KEY=s3cr3tvalue123",
         "password: hunter2hunter2",
         "AUTH_TOKEN = abcdefghijkl",
-        "aws_secret_access_key=wJalrXUtnFEMIK7MDENGbPxRfiCY",
+        # Low-entropy placeholder on purpose: a realistic-looking value trips
+        # our own gitleaks scan, and the rule under test keys on the name and
+        # the separator, not on how random the value is.
+        "aws_secret_access_key=EXAMPLEEXAMPLEEXAMPLEEXAMPLE",
     ],
 )
 def test_assignment_form_keeps_the_name_and_drops_the_value(line: str) -> None:
