@@ -36,7 +36,9 @@ where = ["src"]
 # Pytest
 # ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+# "." puts the repository root on sys.path so tests/e2e/conftest.py can
+# import the shared Postgres fixtures from tests/integration/conftest.py.
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
