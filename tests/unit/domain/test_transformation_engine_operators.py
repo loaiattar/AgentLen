@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.services.transformation_engine import TransformationEngine
+from agentlen.infrastructure.text.re2_regex_extractor import Re2RegexExtractor
 
 EXPECTED_FAILURE_LINE_NUMBER = 7
 CATASTROPHIC_BACKTRACKING_TIMEOUT_SECONDS = 0.1
@@ -165,9 +166,7 @@ def test_concat_joins_non_null_sources_with_separator():
             target="external_id",
             source="$.unused",
             required=True,
-            operators=[
-                {"op": "concat", "sources": ["$.project", "$.session"], "separator": ":"}
-            ],
+            operators=[{"op": "concat", "sources": ["$.project", "$.session"], "separator": ":"}],
         )
     )
     results, issues = engine.apply(mapping, {"project": "p1", "session": "s1"})
@@ -241,7 +240,7 @@ def test_hash_unsupported_algorithm_is_rejected():
 
 
 def test_regex_extract_returns_the_requested_group():
-    engine = TransformationEngine()
+    engine = TransformationEngine(regex_extractor=Re2RegexExtractor())
     mapping = _make_mapping(
         FieldRule(
             target="external_id",
@@ -257,7 +256,7 @@ def test_regex_extract_returns_the_requested_group():
 
 
 def test_regex_extract_invalid_pattern_produces_import_issue_with_a_readable_message():
-    engine = TransformationEngine()
+    engine = TransformationEngine(regex_extractor=Re2RegexExtractor())
     mapping = _make_mapping(
         FieldRule(
             target="external_id",
@@ -277,7 +276,7 @@ def test_regex_extract_invalid_pattern_produces_import_issue_with_a_readable_mes
 def test_regex_extract_does_not_suffer_catastrophic_backtracking():
     # (a+)+$ is the textbook pattern that makes Python's stdlib `re` hang
     # exponentially on a long non-matching input. re2 must stay linear.
-    engine = TransformationEngine()
+    engine = TransformationEngine(regex_extractor=Re2RegexExtractor())
     mapping = _make_mapping(
         FieldRule(
             target="external_id",
@@ -293,3 +292,23 @@ def test_regex_extract_does_not_suffer_catastrophic_backtracking():
     elapsed = time.perf_counter() - started
 
     assert elapsed < CATASTROPHIC_BACKTRACKING_TIMEOUT_SECONDS
+
+
+def test_regex_extract_without_a_configured_extractor_produces_a_clear_issue():
+    # domain/ can't import re2 (import-linter) — the engine depends on the
+    # RegexExtractor port instead. Using the operator without one configured
+    # must fail clearly, not with an AttributeError deep in the call stack.
+    engine = TransformationEngine()  # no regex_extractor injected
+    mapping = _make_mapping(
+        FieldRule(
+            target="external_id",
+            source="$.raw",
+            required=True,
+            operators=[{"op": "regex_extract", "pattern": r"(\d+)", "group": 1}],
+        )
+    )
+    results, issues = engine.apply(mapping, {"raw": "session-42"})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].code == "REGEX_EXTRACTOR_NOT_CONFIGURED"

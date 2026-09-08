@@ -3,22 +3,39 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
-from typing import Any
-
-import re2
+from typing import Any, Protocol
 
 from agentlen.domain.errors import InvalidOperatorParamError, OperatorFailedError
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 
 
+class RegexExtractor(Protocol):
+    """Extracts one capture group from a string using a compiled pattern.
+
+    A port, not a stdlib call: `domain/` is not allowed to import `re2`
+    (import-linter — re2 usage is meant to stay centralized in
+    `infrastructure/`, same as the sanitizer's). The concrete
+    implementation (infra/text/re2_regex_extractor.py) is injected by
+    whoever constructs the engine.
+    """
+
+    def extract(self, value: str, pattern: str, group: int) -> str | None: ...
+
+
 class TransformationEngine:
     """Applies a Mapping to a raw source record and produces entity dicts.
 
-    Pure function: no I/O, no database, no network.
+    Pure function: no I/O, no database, no network — `regex_extract` is the
+    one operator that needs a capability domain/ can't provide itself
+    (linear-time regex matching), so it's injected via `RegexExtractor`
+    rather than imported directly.
     On operator failure for a required field → returns an ImportIssue.
     Processing continues for other entities even when one fails.
     """
+
+    def __init__(self, regex_extractor: RegexExtractor | None = None) -> None:
+        self._regex_extractor = regex_extractor
 
     def apply(
         self,
@@ -238,25 +255,24 @@ class TransformationEngine:
         canonical = json.dumps(values, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(canonical.encode()).hexdigest()
 
-    @staticmethod
-    def _regex_extract(value: object, pattern: str, group: int) -> str | None:
+    def _regex_extract(self, value: object, pattern: str, group: int) -> str | None:
         """Extract `group` from the first match of `pattern` in `value`.
 
-        Uses re2, not the stdlib `re`: re2's matching is linear in input size
-        by construction, so a pathological pattern like `(a+)+$` can't cause
-        catastrophic backtracking — the timeout guarantee from
-        MAPPING_CONTRACT.md §3 is structural, not a fragile signal.alarm.
+        Delegates to the injected RegexExtractor (re2 in production: matching
+        is linear in input size by construction, so a pathological pattern
+        like `(a+)+$` can't cause catastrophic backtracking — the timeout
+        guarantee from MAPPING_CONTRACT.md §3 is structural, not a fragile
+        signal.alarm). `domain/` itself never imports re2 (import-linter).
         """
         if value is None:
             return None
-        try:
-            compiled = re2.compile(pattern)
-        except re2.error as exc:
-            raise InvalidOperatorParamError(
-                field_path="", message=f"Invalid regex pattern: {exc}"
-            ) from exc
-        match = compiled.search(str(value))
-        return match.group(group) if match else None
+        if self._regex_extractor is None:
+            raise OperatorFailedError(
+                code="REGEX_EXTRACTOR_NOT_CONFIGURED",
+                message="regex_extract was used but no RegexExtractor was injected "
+                "into this TransformationEngine.",
+            )
+        return self._regex_extractor.extract(str(value), pattern, group)
 
     @staticmethod
     def _cast(value: object, to: str, on_error: str) -> object:
