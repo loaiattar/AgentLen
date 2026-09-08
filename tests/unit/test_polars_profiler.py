@@ -78,6 +78,25 @@ async def test_null_ratio_is_computed_precisely(tmp_path):
     assert value.null_ratio == pytest.approx(0.12)
 
 
+async def test_examples_are_sanitized_before_leaving_the_profiler(tmp_path):
+    df = pl.DataFrame(
+        {
+            "cmd": ["export KEY=sk-ant-api03-AAAABBBBCCCCDDDD"],
+            "home": ["/home/loai/x"],
+        }
+    )
+    path = tmp_path / "secrets.jsonl"
+    df.write_ndjson(path)
+
+    profiler = PolarsFileProfiler()
+    profile = await profiler.profile(str(path))
+
+    cmd_examples = " ".join(_field(profile, "$.cmd").examples)
+    home_examples = " ".join(_field(profile, "$.home").examples)
+    assert "sk-ant-api03-AAAABBBBCCCCDDDD" not in cmd_examples
+    assert "loai" not in home_examples
+
+
 async def test_a_dotted_field_name_does_not_collide_with_a_nested_struct(tmp_path):
     # {"a.b": 1, "a": {"b": 2}} are two distinct fields; naive dot-joining
     # would render both as "$.a.b" and silently merge them into one.

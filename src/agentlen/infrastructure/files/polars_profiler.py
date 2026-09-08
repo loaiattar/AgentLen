@@ -6,6 +6,7 @@ import re
 import polars as pl
 
 from agentlen.domain.model.profile import FieldProfile, FileProfile
+from agentlen.infrastructure.ai.sanitizer import sanitize_value
 from agentlen.infrastructure.files.polars_reader import (
     DEFAULT_INFER_SCHEMA_LENGTH,
     infer_format,
@@ -102,7 +103,10 @@ def _profile_leaf(path: str, series: pl.Series) -> FieldProfile:
     if not types:
         types.append(_type_name(series.dtype))
 
-    examples = [str(v) for v in non_null.head(_MAX_EXAMPLES).to_list()]
+    # The profile travels straight into the agent's prompt (MAPPING_CONTRACT.md
+    # §5, file_profile.fields[].examples) — same redaction as sample_records,
+    # or a secret sitting in a raw value leaks through the other door.
+    examples = [sanitize_value(str(v)) for v in non_null.head(_MAX_EXAMPLES).to_list()]
 
     min_value: str | None = None
     max_value: str | None = None
