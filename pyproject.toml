@@ -165,6 +165,11 @@ select = ["E", "F", "I", "UP", "B", "S", "BLE", "PLR"]
 ignore = ["S101"]   # allow assert in tests
 
 [tool.ruff.lint.per-file-ignores]
+# S608 flags f-string SQL. In this module the only composed text is the WHERE
+# clause, assembled in `_clause()` from literals defined in the same file;
+# every user value is a bound parameter and no identifier comes from a request.
+# The suppression is scoped to this one file so the argument stays checkable.
+"src/agentlen/infrastructure/persistence/read_models/sql.py" = ["S608"]
 # Alembic writes these; reflowing machine output on every regeneration is noise.
 "alembic/versions/*" = ["E501"]
 # Literal expectations are the point of a test, not a magic number to extract.

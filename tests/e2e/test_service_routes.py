@@ -75,7 +75,10 @@ async def test_version_reports_the_revision_applied_to_the_database(
     body = (await live_client.get("/api/v1/version")).json()
 
     assert body["version"] == "0.1.0"
-    assert body["alembic_revision"] == "0001"
+    # Asserted against head rather than a literal: pinning "0001" here made
+    # this test fail the moment a second migration landed, which says nothing
+    # about the endpoint.
+    assert body["alembic_revision"] is not None
     assert body["alembic_revision"] == body["alembic_head"]
 
 
@@ -88,7 +91,8 @@ async def test_version_reports_null_revision_when_database_is_down(
 
     assert body["version"] == "0.1.0"
     assert body["alembic_revision"] is None
-    assert body["alembic_head"] == "0001"
+    # head still comes from disk, so it is known even with no database.
+    assert body["alembic_head"] is not None
 
 
 @requires_postgres
