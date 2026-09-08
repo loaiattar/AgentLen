@@ -29,6 +29,17 @@ python -m pytest -v
 - Test coverage: lazy reading per format, format inference, nested-field flattening on the real TraceLab sample, exact `null_ratio` computation, `record_count` vs `sampled_records` distinction, no-Polars-type-leak check, cross-format equivalence.
 - `pyproject.toml` dev extras (`pytest-asyncio`, `mypy`, `import-linter`, `ruff`) — verified locally: `mypy --strict` and `import-linter` both pass on `domain/`/`application/`.
 
+### Fixed — review findings on PR #66 (loaiattar)
+- **`examples` reached the mapping agent's prompt unsanitized** — a raw API key or home path in a source file leaked straight through `file_profile.fields[].examples` (MAPPING_CONTRACT.md §5), even though `sample_records` was already redacted. Now goes through `sanitize_value` (the `SampleSanitizer` from #44), same as everything else that reaches a provider.
+- **A field appearing after row 100 silently vanished from the profile** — `scan_ndjson`/`scan_csv` only infer the schema from their first `infer_schema_length` rows (Polars default: 100), independently of `sample_size` (default: 500). `infer_schema_length` now follows `sample_size` (floored at 100).
+- **`distinct_ratio` could never reach `1.0` on a nullable column** — it divided unique non-null values by the *total* row count instead of the non-null count, capping a fully-unique-but-nullable key below the 1.0 threshold `MAPPING_CONTRACT.md` §5 uses as the natural-key signal.
+- **JSONPath collisions on dotted field names** — a raw field literally named `"a.b"` rendered identically to a nested field `a.b` from a struct (`$.a.b` either way). Segments are now escaped to `$["a.b"]` when the raw name isn't a plain identifier.
+- **`profile()` blocked the event loop** — both `collect()` calls were synchronous inside an `async def`; on `POST /files/{id}/profile` that would stall every other concurrent FastAPI request for the duration of the profile. Now runs via `asyncio.to_thread`.
+- `_type_name`'s fallback (`str(dtype).lower()`) leaked raw Polars reprs (e.g. `"decimal(precision=38, scale=2)"`) across the port boundary — the exact leak the port exists to prevent. `Decimal`/`Duration` are now named explicitly; anything else reports `"unknown"`. `Decimal` also now gets `min`/`max` like other numeric types.
+- `sample_size <= 0` now raises a clear `ValueError` instead of silently profiling nothing (`0`) or leaking a raw Polars `ValueError` (`-1`).
+- An empty (0-byte) file now returns a `record_count=0` profile instead of crashing with a raw Polars `ComputeError` during schema inference.
+- The cross-format test checked each of jsonl/csv/parquet against fixed values independently — a real divergence between two formats would have passed silently. Added a direct three-way comparison of the `FileProfile`s.
+
 ### Added — issue #3 (original ingestion utilities)
 - Real sample extract from TraceLab (`data/samples/tracelab_example_session.jsonl`), 19 rows, sanitized public example pulled from `uw-syfi/TraceLab` (`example_sessions/sanitized/round_trace.jsonl`).
 - Project scaffolding: `pyproject.toml` (pytest config, `pythonpath = ["src"]`), `requirements.txt` (polars, pytest), `.gitignore`.
@@ -38,5 +49,6 @@ python -m pytest -v
 
 ## Status
 
-- 60/60 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files this issue touches.
+- 158/158 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files this issue touches.
 - `infrastructure/files/` now implements the `FileReader`-adjacent scanning helpers and the `FileProfiler` port, and is wired into `application/use_cases/profile_file.py`. Not yet wired into an HTTP route or a persisted `file_upload` (that's Lot E / #47 / #50).
+- All findings from loaiattar's review on PR #66 addressed (see changelog above).
