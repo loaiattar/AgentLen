@@ -1,0 +1,307 @@
+# AgentLen — Contrat d'API v1
+
+> **Ce document est le contrat avec l'équipe frontend.** Toute évolution passe par une PR sur ce fichier, relue par les deux équipes, **avant** implémentation.
+> L'OpenAPI généré par FastAPI est disponible sur `/docs` et `/openapi.json` et doit rester conforme à ce document.
+
+Préfixe : `/api/v1` · Format : JSON · Horodatages : ISO 8601 UTC · Durées : millisecondes
+
+---
+
+## 1. Conventions
+
+### Erreurs
+
+Toutes les erreurs partagent la même enveloppe :
+
+```json
+{
+  "error": {
+    "code": "MAPPING_UNKNOWN_TARGET",
+    "message": "Le champ cible 'session.user_email' n'existe pas dans le schéma.",
+    "field_path": "entities[0].fields[3].target",
+    "details": {}
+  }
+}
+```
+
+| HTTP | Signification |
+|---|---|
+| `400` | Requête malformée |
+| `404` | Ressource inexistante |
+| `409` | Conflit (fichier déjà importé avec ce mapping) |
+| `422` | Validation métier échouée (mapping invalide, format non supporté) |
+| `502` | Le fournisseur IA a échoué ou renvoyé une réponse non conforme |
+
+### Pagination
+
+`?limit=50&offset=0` — réponses enveloppées : `{ "items": [...], "total": 1240, "limit": 50, "offset": 0 }`
+
+### Valeurs absentes
+
+Une valeur inconnue est **`null`**, jamais `0`. Les agrégats sont accompagnés d'un objet `coverage` :
+
+```json
+{ "value": 184203, "unit": "tokens",
+  "coverage": { "present": 812, "total": 1000, "ratio": 0.812 } }
+```
+
+Le front doit afficher un indicateur de couverture partielle lorsque `ratio < 1`.
+
+---
+
+## 2. Sources et fichiers
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `GET` | `/data-sources` | Liste des sources avec version et date de récupération |
+| `POST` | `/data-sources` | Déclare une nouvelle source |
+| `POST` | `/files` | Dépose un fichier (`multipart/form-data`) |
+| `GET` | `/files/{id}` | Métadonnées d'un fichier |
+| `POST` | `/files/{id}/profile` | Profilage : types, cardinalité, taux de null, exemples |
+
+**`POST /files` → `201`**
+
+```json
+{ "id": 12, "original_name": "tracelab_sample.jsonl", "format": "jsonl",
+  "size_bytes": 4823110, "content_hash": "9f2c…",
+  "already_seen": false, "previous_import_run_ids": [] }
+```
+
+`already_seen: true` signale que le même contenu a déjà été déposé — le front doit avertir l'utilisateur avant de relancer un import.
+
+**`POST /files/{id}/profile` → `200`**
+
+```json
+{
+  "file_id": 12, "record_count": 12483, "sampled_records": 500,
+  "fields": [
+    { "path": "$.session_id", "types": ["string"], "null_ratio": 0.0,
+      "distinct_ratio": 1.0, "examples": ["a3f2…"] },
+    { "path": "$.usage.input_tokens", "types": ["integer", "null"],
+      "null_ratio": 0.12, "min": 12, "max": 184203, "examples": [1204] }
+  ]
+}
+```
+
+---
+
+## 3. Agent d'import IA
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `GET` | `/ai/providers` | Fournisseurs et modèles disponibles selon la configuration |
+| `POST` | `/mappings/proposals` | Demande une proposition de mapping à l'IA |
+| `GET` | `/mappings/proposals/{id}` | État d'une proposition |
+| `POST` | `/mappings/proposals/{id}/messages` | Échange conversationnel : correction, question |
+| `PATCH` | `/mappings/proposals/{id}` | Correction manuelle directe du document |
+
+**`GET /ai/providers` → `200`** — permet au front de proposer un sélecteur sans rien coder en dur :
+
+```json
+{ "active": { "provider": "anthropic", "model": "claude-opus-4-8" },
+  "available": [
+    { "provider": "anthropic", "configured": true },
+    { "provider": "openai",    "configured": true },
+    { "provider": "fake",      "configured": true }
+  ] }
+```
+
+**`POST /mappings/proposals`** — corps : `{ "file_id": 12, "data_source_id": 3, "provider": null, "model": null, "hint": null }`. `provider`/`model` à `null` = configuration active du serveur.
+
+Réponse `200` :
+
+```json
+{
+  "proposal_id": 41,
+  "analyzer": { "provider": "anthropic", "model": "claude-opus-4-8",
+                "prompt_version": "v3" },
+  "mapping": { /* document — voir MAPPING_CONTRACT.md */ },
+  "validation": { "valid": true, "errors": [] },
+  "rationale": [
+    { "target": "session.external_id", "source": "$.session_id",
+      "confidence": "high", "explanation": "Unique sur 100 % des enregistrements." }
+  ],
+  "ambiguities": [
+    { "field": "$.duration",
+      "question": "Secondes ou millisecondes ?",
+      "options": ["unit_convert s→ms", "aucune conversion"] }
+  ],
+  "unmapped_fields": [
+    { "path": "$.internal.debug_flags",
+      "reason": "Aucun équivalent dans le modèle cible." }
+  ]
+}
+```
+
+> `validation.valid` peut être `false` : la proposition est alors **quand même renvoyée**, avec ses erreurs localisées, pour que l'utilisateur la corrige. On n'échoue pas silencieusement.
+
+---
+
+## 4. Mappings
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `GET` | `/mappings` | Liste, filtrable par source et statut |
+| `POST` | `/mappings` | Enregistre un mapping (validé avant écriture) |
+| `GET` | `/mappings/{id}` | Document complet |
+| `PUT` | `/mappings/{id}` | Crée une **nouvelle version** (l'ancienne passe `superseded`) |
+| `POST` | `/mappings/validate` | Valide un document sans l'enregistrer |
+
+`POST /mappings` renvoie `422` avec la liste complète des erreurs si le document est invalide — jamais un enregistrement partiel.
+
+---
+
+## 5. Imports
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `POST` | `/imports/preview` | **Dry-run** : transforme N enregistrements, n'écrit rien |
+| `POST` | `/imports` | Lance un import (asynchrone) |
+| `GET` | `/imports` | Historique des imports |
+| `GET` | `/imports/{id}` | Statut et bilan |
+| `GET` | `/imports/{id}/issues` | Rejets, doublons et avertissements, paginés |
+
+**`POST /imports/preview` → `200`**
+
+```json
+{
+  "sampled": 20,
+  "would_import": { "session": 20, "model_call": 143, "tool_call": 271 },
+  "would_reject": 2,
+  "entities": [ { "target": "session", "rows": [ { "external_id": "a3f2…" } ] } ],
+  "issues": [
+    { "line_number": 42, "severity": "rejected", "code": "CAST_FAILED",
+      "field_path": "$.usage.input_tokens",
+      "message": "Impossible de convertir \"n/a\" en entier." }
+  ]
+}
+```
+
+**`POST /imports` → `202`** : `{ "import_run_id": 88, "status": "pending" }`.
+Le front interroge ensuite `GET /imports/{id}` (intervalle suggéré : 1 s).
+
+**`GET /imports/{id}` → `200`**
+
+```json
+{
+  "id": 88, "status": "partial",
+  "data_source": { "id": 3, "slug": "tracelab" },
+  "file": { "id": 12, "original_name": "tracelab_sample.jsonl" },
+  "mapping": { "id": 7, "name": "tracelab-jsonl", "version": 2 },
+  "report": {
+    "records_read": 12483, "records_imported": 12310,
+    "records_duplicate": 150, "records_rejected": 23,
+    "fields_missing": { "model_call.cache_read_tokens": 12483 }
+  },
+  "started_at": "2026-09-07T09:12:03Z", "finished_at": "2026-09-07T09:12:41Z"
+}
+```
+
+`fields_missing` alimente directement la vue « qualité des données » du dashboard.
+
+---
+
+## 6. Exploration
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `GET` | `/sessions` | Liste filtrable — **cible du drill-down** |
+| `GET` | `/sessions/{id}` | Vue détaillée : chronologie des appels modèles et outils |
+| `GET` | `/sessions/{id}/timeline` | Événements ordonnés |
+| `GET` | `/records/{raw_record_id}` | **Enregistrement source brut** d'un fait normalisé |
+
+Filtres communs à `/sessions` et à toutes les routes de métriques :
+
+`data_source_id` · `agent_id` · `model_id` · `tool_id` · `import_run_id` · `date_from` · `date_to` · `status`
+
+> **Contrat de drill-down.** Toute réponse de graphique inclut, pour chaque point, un objet `filters` directement rejouable sur `GET /sessions`. Le front n'a aucune logique de traduction à écrire, et le backend n'a aucun état à conserver.
+
+---
+
+## 7. Métriques et dashboard
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `GET` | `/metrics/definitions` | **Définition de chaque indicateur** : calcul, unité, périmètre, valeurs manquantes |
+| `GET` | `/metrics/overview` | Les indicateurs de tête (≥ 4) |
+| `GET` | `/metrics/activity` | Série temporelle |
+| `GET` | `/metrics/tools` | Répartition et taux d'erreur par outil |
+| `GET` | `/metrics/models` | Volumétrie par modèle et fournisseur |
+| `GET` | `/metrics/quality` | Qualité des données importées |
+
+**`GET /metrics/definitions` → `200`** — répond à l'exigence « chaque indicateur doit avoir une définition accessible » :
+
+```json
+{
+  "definitions": [
+    {
+      "key": "total_output_tokens",
+      "label": "Tokens produits",
+      "unit": "tokens",
+      "formula": "SUM(model_call.output_tokens)",
+      "scope": "Appels modèles des sessions retenues par les filtres actifs",
+      "missing_policy": "Les appels sans information de tokens sont exclus du numérateur et signalés par le champ coverage. Une absence n'est jamais comptée comme zéro.",
+      "comparability": "cross_source"
+    },
+    {
+      "key": "cache_read_ratio",
+      "label": "Part de lecture de cache",
+      "unit": "ratio",
+      "formula": "SUM(cache_read_tokens) / NULLIF(SUM(input_tokens), 0)",
+      "scope": "Sources fournissant les métriques de cache",
+      "missing_policy": "Renvoie null si aucune donnée de cache n'est disponible.",
+      "comparability": "per_source_only"
+    }
+  ]
+}
+```
+
+**`GET /metrics/overview` → `200`**
+
+```json
+{
+  "filters_applied": { "data_source_id": 3, "date_from": "2026-08-01" },
+  "metrics": [
+    { "key": "session_count", "value": 1240, "unit": "sessions",
+      "coverage": { "present": 1240, "total": 1240, "ratio": 1.0 } },
+    { "key": "total_output_tokens", "value": 8412903, "unit": "tokens",
+      "coverage": { "present": 1090, "total": 1240, "ratio": 0.879 } },
+    { "key": "cache_read_ratio", "value": null, "unit": "ratio",
+      "coverage": { "present": 0, "total": 1240, "ratio": 0.0 },
+      "warning": "Indicateur non disponible pour cette source." }
+  ]
+}
+```
+
+**`GET /metrics/tools` → `200`** — chaque point porte ses filtres de drill-down :
+
+```json
+{
+  "points": [
+    { "label": "Bash", "tool_id": 4, "call_count": 3820,
+      "error_count": 210, "error_ratio": 0.055,
+      "filters": { "tool_id": 4, "data_source_id": 3 } }
+  ]
+}
+```
+
+---
+
+## 8. Service
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `GET` | `/health` | Vivacité |
+| `GET` | `/health/ready` | Base accessible, migrations à jour, worker actif |
+| `GET` | `/version` | Version applicative et révision Alembic |
+
+---
+
+## 9. Points d'attention pour l'équipe frontend
+
+1. **Les imports sont asynchrones.** `POST /imports` renvoie `202` ; l'état s'obtient par polling sur `GET /imports/{id}`.
+2. **`null` n'est pas `0`.** Un indicateur `null` avec `coverage.ratio = 0` signifie *non disponible* et doit s'afficher comme tel, pas comme une valeur nulle.
+3. **`comparability: per_source_only`** interdit l'agrégation multi-sources. L'API renvoie un `warning` que le front doit rendre visible.
+4. **Le drill-down est fourni clé en main** via l'objet `filters` de chaque point.
+5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé API ne quitte le serveur, aucune n'est livrée au navigateur.
+6. **Toujours proposer la prévisualisation avant l'import.** `POST /imports/preview` n'écrit rien et sert de garde-fou avant validation.

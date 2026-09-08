@@ -1,0 +1,222 @@
+# AgentLen — Contrat de mapping
+
+> C'est **le cœur du projet** : l'artefact qui permet d'intégrer une source inconnue *par configuration*, sans écrire de code ni redéployer.
+> Voir aussi : [ARCHITECTURE.md](ARCHITECTURE.md) · [DATA_MODEL.md](DATA_MODEL.md)
+
+---
+
+## 1. Principe
+
+Un **mapping** est un document JSON versionné, stocké en base, qui décrit comment transformer les enregistrements d'un fichier source en entités du modèle AgentLen.
+
+```
+Fichier source ──► profilage ──► [IA] proposition ──► validation ──► correction humaine
+                                                                          │
+                                                                          ▼
+                                                              mapping enregistré (versionné)
+                                                                          │
+                                          moteur de transformation ◄───────┘
+                                                     │
+                                                     ▼
+                                        entités du domaine + rejets expliqués
+```
+
+Trois règles non négociables :
+
+1. **L'IA produit ce document, rien d'autre.** Elle n'écrit jamais en base, ne génère jamais de SQL, ne produit jamais de code.
+2. **Le document est validé avant toute application.** Schéma JSON strict + whitelist d'opérateurs + vérification des champs cibles contre le schéma réel de la base.
+3. **Le moteur n'exécute que des opérateurs déclarés.** Il n'y a ni `eval`, ni `exec`, ni import dynamique, ni expression arbitraire. Un opérateur inconnu est une **erreur de validation**, jamais une tentative d'exécution.
+
+---
+
+## 2. Structure d'un mapping
+
+```jsonc
+{
+  "mapping_version": "1.0",
+  "name": "tracelab-jsonl",
+  "source_format": "jsonl",              // jsonl | csv | parquet
+  "description": "Traces Claude Code et Codex publiées par TraceLab",
+
+  "record": {
+    "mode": "per_line",                  // per_line | per_row
+    "root": "$"                          // racine de l'enregistrement
+  },
+
+  "entities": [
+    {
+      "target": "session",
+      "natural_key": ["external_id"],    // base de l'idempotence
+      "fields": [
+        { "target": "external_id", "source": "$.session_id", "required": true,
+          "operators": [{ "op": "cast", "to": "string" }] },
+
+        { "target": "agent_name", "source": "$.agent",
+          "operators": [{ "op": "map_values",
+                          "table": { "claude_code": "claude-code", "codex_cli": "codex" },
+                          "on_unknown": "passthrough" }] },
+
+        { "target": "started_at", "source": "$.start_time",
+          "operators": [{ "op": "parse_datetime", "format": "unix_seconds",
+                          "timezone": "UTC" }] },
+
+        { "target": "repository_url", "source": "$.repo.url", "required": false }
+      ]
+    },
+    {
+      "target": "model_call",
+      "iterate": "$.events[?(@.type=='llm_call')]",   // 1 enregistrement -> N lignes
+      "parent": { "entity": "session", "via": "external_id" },
+      "natural_key": ["session_external_id", "sequence_index"],
+      "fields": [
+        { "target": "sequence_index", "source": "$.index" },
+        { "target": "model_name",     "source": "$.model" },
+        { "target": "provider_name",  "source": "$.provider",
+          "operators": [{ "op": "default", "value": "unknown" }] },
+        { "target": "input_tokens",   "source": "$.usage.input_tokens",
+          "operators": [{ "op": "cast", "to": "integer", "on_error": "reject" }] },
+        { "target": "output_tokens",  "source": "$.usage.output_tokens",
+          "operators": [{ "op": "cast", "to": "integer", "on_error": "reject" }] },
+        { "target": "duration_ms",    "source": "$.latency_s",
+          "operators": [{ "op": "unit_convert", "from": "s", "to": "ms" }] }
+      ]
+    },
+    {
+      "target": "tool_call",
+      "iterate": "$.events[?(@.type=='tool_use')]",
+      "parent": { "entity": "session", "via": "external_id" },
+      "natural_key": ["session_external_id", "sequence_index"],
+      "fields": [
+        { "target": "sequence_index", "source": "$.index" },
+        { "target": "tool_name",      "source": "$.name", "required": true },
+        { "target": "status",         "source": "$.error",
+          "operators": [{ "op": "map_values",
+                          "table": { "null": "ok" }, "on_unknown": "constant",
+                          "constant": "error" }] },
+        { "target": "arguments",      "source": "$.input",
+          "operators": [{ "op": "json_passthrough", "max_bytes": 8192 }] }
+      ]
+    }
+  ],
+
+  "unmapped_policy": "keep_raw",   // le brut reste dans raw_record.payload
+  "notes": "Le champ 'cache_read_tokens' est absent de cette source : laissé NULL."
+}
+```
+
+---
+
+## 3. Whitelist d'opérateurs
+
+**Aucun autre opérateur n'existe.** Chacun est une classe implémentant `Operator` dans le domaine, avec ses propres tests unitaires.
+
+| Opérateur | Paramètres | Effet |
+|---|---|---|
+| `cast` | `to` ∈ `string · integer · float · boolean`, `on_error` ∈ `reject · null` | Conversion typée |
+| `parse_datetime` | `format` (ISO8601, `unix_seconds`, `unix_millis`, ou motif `strptime`), `timezone` | Produit un instant UTC |
+| `default` | `value` | Valeur si la source est absente ou `null` |
+| `coalesce` | `sources: [chemin, …]` | Premier chemin non nul (sources incohérentes entre versions) |
+| `unit_convert` | `from`, `to` (`s`→`ms`, `min`→`ms`, `ns`→`ms`, `KB`→`B`…) | Conversion d'unité déclarée |
+| `map_values` | `table`, `on_unknown` ∈ `passthrough · null · reject · constant` | Table de correspondance fermée |
+| `trim`, `lower`, `upper` | — | Normalisation de chaîne |
+| `regex_extract` | `pattern`, `group` | Extraction bornée (motif compilé, **timeout imposé**) |
+| `concat` | `sources`, `separator` | Concaténation de chemins |
+| `hash` | `algorithm: sha256`, `sources` | Clé naturelle synthétique quand la source n'a pas d'identifiant |
+| `json_passthrough` | `max_bytes` | Conserve un sous-arbre JSON tel quel (colonnes JSONB) |
+| `split_rows` | `path` | Un enregistrement source produit N lignes cibles |
+
+**Rejeté à la validation :** tout opérateur hors de cette liste, tout paramètre non déclaré, tout champ `target` inconnu du schéma, toute expression libre. `regex_extract` n'accepte que des motifs compilables avec une longueur bornée, pour écarter le *catastrophic backtracking*.
+
+---
+
+## 4. Validation
+
+`MappingValidator` (domaine, sans I/O) applique quatre niveaux :
+
+| Niveau | Vérifie | Exemple d'erreur |
+|---|---|---|
+| **Syntaxique** | Conformité au JSON Schema du mapping | `entities[1].fields[0].target` manquant |
+| **Sémantique** | Champs cibles existants, types compatibles, opérateurs whitelistés | `MAPPING_UNKNOWN_TARGET: 'session.user_email' n'existe pas dans le schéma` |
+| **Structurel** | `natural_key` complète, `parent` résoluble, pas de cycle | `MAPPING_MISSING_NATURAL_KEY: 'model_call' n'a pas de clé naturelle` |
+| **Exécution à blanc** | Application sur un échantillon réel | `CAST_FAILED ligne 42, $.usage.input_tokens = "n/a"` |
+
+Une erreur retourne **toujours** : un `code` stable, le `field_path` fautif, et un message explicatif. C'est le test d'acceptation « un mapping invalide est refusé avec une explication ».
+
+---
+
+## 5. Ce que l'IA reçoit et ce qu'elle rend
+
+### Entrée (jamais le fichier entier)
+
+```jsonc
+{
+  "file_profile": {
+    "format": "jsonl",
+    "record_count": 12483,
+    "fields": [
+      { "path": "$.session_id", "types": ["string"], "null_ratio": 0.0,
+        "distinct_ratio": 1.0, "examples": ["a3f2…", "b91c…"] },
+      { "path": "$.usage.input_tokens", "types": ["integer","null"],
+        "null_ratio": 0.12, "min": 12, "max": 184203, "examples": [1204, 8891] }
+    ]
+  },
+  "sample_records": [ /* N enregistrements passés par le SampleSanitizer */ ],
+  "target_schema": { /* description des entités et champs cibles */ },
+  "allowed_operators": [ /* la whitelist, transmise explicitement */ ]
+}
+```
+
+Le `SampleSanitizer` s'exécute avant tout appel : troncature des valeurs longues, masquage des motifs sensibles (clés API, jetons, e-mails, chemins absolus), limitation du nombre d'enregistrements. **Les statistiques du profil sont calculées par Polars, jamais estimées par le modèle.**
+
+### Sortie
+
+```jsonc
+{
+  "mapping": { /* le document décrit en §2 */ },
+  "rationale": [
+    { "target": "session.external_id", "source": "$.session_id",
+      "confidence": "high",
+      "explanation": "Chaîne unique sur 100 % des enregistrements, granularité session." }
+  ],
+  "ambiguities": [
+    { "field": "$.duration",
+      "question": "Secondes ou millisecondes ? Les valeurs (0.4–320) suggèrent des secondes.",
+      "options": ["unit_convert s→ms", "unit_convert ms→ms"] }
+  ],
+  "unmapped_fields": [
+    { "path": "$.internal.debug_flags",
+      "reason": "Aucun équivalent dans le modèle cible ; conservé dans raw_record." }
+  ]
+}
+```
+
+`ambiguities` et `unmapped_fields` sont **obligatoires** dans le contrat : ils remplissent l'exigence « l'application doit expliquer ce qu'elle ne sait pas interpréter ». Un adaptateur qui n'en renvoie pas est considéré comme incomplet.
+
+---
+
+## 6. Cycle de vie d'un mapping
+
+```
+draft ──► validated ──► active ──► superseded
+   │                       │
+   └──► rejected           └──► archived
+```
+
+- Un mapping est **versionné** : modifier un mapping actif crée une nouvelle version. `import_run.mapping_id` référence la version exacte utilisée, donc un import passé reste explicable même après évolution du mapping.
+- Un mapping est **réutilisable** : un nouveau fichier de la même source réutilise le mapping existant sans repasser par l'IA.
+- Un mapping est **portable entre modèles** : le document ne contient aucune référence au fournisseur qui l'a produit. Le descripteur du modèle est conservé à part, dans `mapping_proposal`, à des fins de traçabilité uniquement.
+
+---
+
+## 7. Séquence de transformation
+
+Pour chaque enregistrement source, le moteur :
+
+1. extrait la racine (`record.root`) ;
+2. persiste le `raw_record` (payload intact + hash) ;
+3. pour chaque entité : résout `iterate` s'il existe, puis pour chaque champ applique les opérateurs **dans l'ordre déclaré** ;
+4. sur échec : produit un `ImportIssue` avec code, chemin et message ; l'entité est rejetée, mais **le reste de l'enregistrement continue d'être traité** (un import partiel expliqué vaut mieux qu'un échec global) ;
+5. calcule la clé naturelle, insère avec `ON CONFLICT DO NOTHING` ;
+6. incrémente les compteurs du bilan.
+
+Le moteur est **pur** : il prend un mapping et un dictionnaire, il rend des entités ou des issues. Aucune I/O, aucune base, aucun réseau — donc entièrement testable unitairement, comme l'exige le sujet.

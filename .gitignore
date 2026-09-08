@@ -1,25 +1,63 @@
-# Editor / IDE
-.idea/
-.vscode/*
-!.vscode/extensions.json
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-.DS_Store
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# --- Secrets ---------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
 
-# Dependencies / build output (safety net; frontend/ has its own too)
-node_modules/
+# --- Python ----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
 dist/
-dist-ssr/
-*.local
+*.egg-info/
+.eggs/
 
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# --- Environnements virtuels ------------------------------------------------
+.venv/
+venv/
+env/
+
+# --- Outils ----------------------------------------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# --- Données locales --------------------------------------------------------
+# Les datasets ne sont pas versionnés : voir docs/datasets.md pour la
+# provenance et la méthode de récupération.
+data/
+storage/
+uploads/
+*.jsonl
+*.parquet
+*.duckdb
+!tests/fixtures/**/*.jsonl
+!tests/fixtures/**/*.parquet
+
+# --- Base / conteneurs ------------------------------------------------------
+pgdata/
+docker/volumes/
+
+# --- IDE et OS --------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Notes privées (non versionnées) ----------------------------------------
+ISSUES.md
