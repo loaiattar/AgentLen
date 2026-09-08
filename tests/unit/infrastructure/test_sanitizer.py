@@ -7,6 +7,8 @@ second or third kind.
 
 The fake credentials below are assembled from parts rather than written as
 literals, so the repository's own secret scanner does not flag its own tests.
+That includes the PEM markers: gitleaks matches the header on sight, and a
+path allowlist for tests/ would blind it exactly where fake secrets live.
 """
 
 from __future__ import annotations
@@ -32,6 +34,9 @@ FAKE_GITHUB_TOKEN = "ghp_" + "0123456789abcdefghij"
 FAKE_AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
 FAKE_SLACK_TOKEN = "xoxb-" + "111111111111-abcdefghij"
 FAKE_JWT = "eyJ" + "hbGciOiJIUzI1NiJ9." + "eyJzdWIiOiIxMjM0NTY3ODkwIn0." + "dBjftJeZ4CVPmB92K27u"
+PEM_BEGIN_RSA = "-----BEGIN RSA PRIVATE" + " KEY-----"
+PEM_END_RSA = "-----END RSA PRIVATE" + " KEY-----"
+PEM_BEGIN_OPENSSH = "-----BEGIN OPENSSH PRIVATE" + " KEY-----"
 
 
 # ── What it catches ────────────────────────────────────────────────────────────
@@ -76,7 +81,7 @@ def test_email_is_redacted() -> None:
 def test_whole_private_key_block_is_redacted_not_only_its_header() -> None:
     """The header alone is not the secret. The base64 body is."""
     body = "MIIEpAIBAAKCAQEA7xQZ9K2mNvBcXwFhTgY3pLsRdEuVwQaZnMkJhGfDcBaXyWvUt"
-    blob = f"-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----"
+    blob = f"{PEM_BEGIN_RSA}\n{body}\n{PEM_END_RSA}"
 
     [out] = sanitize_samples([{"blob": blob}])
 
@@ -87,7 +92,7 @@ def test_whole_private_key_block_is_redacted_not_only_its_header() -> None:
 
 def test_dangling_private_key_header_still_redacted() -> None:
     """A block truncated upstream has no END marker. Redact what we can see."""
-    [out] = sanitize_samples([{"blob": "-----BEGIN OPENSSH PRIVATE KEY-----\nMIIEpAIB"}])
+    [out] = sanitize_samples([{"blob": f"{PEM_BEGIN_OPENSSH}\nMIIEpAIB"}])
 
     assert "PRIVATE KEY" not in out["blob"]
 
