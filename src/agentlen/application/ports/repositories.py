@@ -39,11 +39,16 @@ class MappingProposalRepository(Protocol):
 class ReferentialRepository(Protocol):
     """Persists the small reference tables (provider/model/agent/tool/repository).
 
-    One method for all five kinds, since they share the same upsert-by-name
-    shape (DATA_MODEL.md §4) — a mapping only ever supplies a *name*, never
-    a technical id.
+    One method for all five kinds — but they do NOT all share the same key
+    shape (DATA_MODEL.md §4): `provider` and `tool` are unique on `name`
+    alone; `model` is unique on `(provider_id, name)`; `repository` is
+    unique on `(host, owner, name)`. `context` carries whatever extra key
+    components a kind needs beyond `name`, e.g. for `model`:
+    `context={"provider_name": "anthropic"}`. The implementation is
+    responsible for resolving/creating any referenced-by-context row too
+    (e.g. the provider) before inserting the row that depends on it.
     """
 
-    async def resolve(self, kind: str, name: str) -> int:
-        """Return the id for (kind, name), creating the row if it doesn't exist yet."""
+    async def resolve(self, kind: str, name: str, *, context: dict[str, str] | None = None) -> int:
+        """Return the id for (kind, name, context), creating the row if needed."""
         ...

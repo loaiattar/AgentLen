@@ -42,9 +42,7 @@ class TransformationEngine:
                 rows = [raw_record]
 
             for source_index, row in enumerate(rows):
-                entity_data, entity_issues = self._apply_entity(
-                    entity_mapping, row, line_number
-                )
+                entity_data, entity_issues = self._apply_entity(entity_mapping, row, line_number)
                 issues.extend(entity_issues)
                 if entity_data is not None:
                     results.append(

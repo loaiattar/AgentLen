@@ -6,6 +6,10 @@ from agentlen.domain.services.record_normalizer import RecordNormalizer
 DATA_SOURCE_ID = 1
 EXPECTED_MODEL_CALL_COUNT = 3
 EXPECTED_TOOL_CALL_COUNT = 5
+EXPECTED_PARENT_MISSING_ISSUE_COUNT = (
+    2  # one per affected entity type (model_call, tool_call), not per child
+)
+EXPECTED_SURVIVING_MODEL_CALLS_AFTER_ONE_BAD_STATUS = 2
 
 RAW_RECORD = {
     "id": "sess-1",
@@ -166,3 +170,242 @@ def test_children_are_rejected_when_their_session_is_rejected():
     assert result.tool_calls == ()
     codes = {issue.code for issue in result.issues}
     assert "PARENT_SESSION_MISSING" in codes
+
+
+def test_parent_session_missing_is_reported_once_per_entity_type_not_once_per_child():
+    # A rejected session with 3 model_calls + 5 tool_calls must not inflate
+    # ImportReport.issues to 8 entries (one per child) for what is really one
+    # root cause — one issue per affected entity type instead.
+    mapping = _full_mapping()
+    raw = {**RAW_RECORD, "id": None}
+
+    normalizer = RecordNormalizer()
+    result = normalizer.normalize(mapping, raw, data_source_id=DATA_SOURCE_ID)
+
+    parent_missing_issues = [i for i in result.issues if i.code == "PARENT_SESSION_MISSING"]
+    assert len(parent_missing_issues) == EXPECTED_PARENT_MISSING_ISSUE_COUNT
+
+
+def test_reimport_after_fixing_a_bad_row_does_not_shift_sequence_index():
+    # The exact scenario from the review: a malformed row in the middle gets
+    # fixed and the file is reimported. Every OTHER row's sequence_index
+    # (its natural key) must stay exactly what it was on the first import,
+    # or the fixed reimport inserts duplicates instead of matching them.
+    mapping = _full_mapping()
+    broken = {
+        **RAW_RECORD,
+        "tool_uses": [{"name": "Bash"}, {}, {"name": "Write"}],  # index 1 is malformed
+    }
+    fixed = {
+        **RAW_RECORD,
+        "tool_uses": [{"name": "Bash"}, {"name": "Read"}, {"name": "Write"}],
+    }
+
+    normalizer = RecordNormalizer()
+    first_import = normalizer.normalize(mapping, broken, data_source_id=DATA_SOURCE_ID)
+    second_import = normalizer.normalize(mapping, fixed, data_source_id=DATA_SOURCE_ID)
+
+    expected_write_index = 2  # 3rd source row, whether or not row 2 was rejected
+    write_before = next(tc for tc in first_import.tool_calls if tc.tool_name == "Write")
+    write_after = next(tc for tc in second_import.tool_calls if tc.tool_name == "Write")
+    assert write_before.sequence_index == expected_write_index
+    assert write_after.sequence_index == expected_write_index
+
+
+def test_missing_optional_field_indexed_directly_produces_an_issue_not_a_crash():
+    # external_id isn't in natural_key here (a plausible AI-authored mapping
+    # that forgot to mark it required/key) and is absent from the source —
+    # this must not raise a raw KeyError out of normalize().
+    mapping = Mapping(
+        id=uuid4(),
+        name="test",
+        version=1,
+        source_format="jsonl",
+        entities=[
+            EntityMapping(
+                target="session",
+                natural_key=(),
+                fields=[
+                    FieldRule(target="external_id", source="$.does_not_exist", required=False),
+                ],
+            ),
+        ],
+    )
+    normalizer = RecordNormalizer()
+    result = normalizer.normalize(mapping, {"id": "sess-1"}, data_source_id=DATA_SOURCE_ID)
+
+    assert result.sessions == ()
+    assert len(result.issues) == 1
+    assert result.issues[0].code == "ENTITY_CONSTRUCTION_FAILED"
+
+
+def test_tool_name_missing_and_not_in_natural_key_produces_an_issue_not_a_crash():
+    mapping = Mapping(
+        id=uuid4(),
+        name="test",
+        version=1,
+        source_format="jsonl",
+        entities=[
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=[FieldRule(target="external_id", source="$.id", required=True)],
+            ),
+            EntityMapping(
+                target="tool_call",
+                natural_key=(),  # forgot to key on sequence_index too
+                iterate="$.tool_uses",
+                parent={"entity": "session", "via": "external_id"},
+                fields=[FieldRule(target="tool_name", source="$.name", required=False)],
+            ),
+        ],
+    )
+    raw = {"id": "sess-1", "tool_uses": [{}]}  # no 'name' key at all
+
+    normalizer = RecordNormalizer()
+    result = normalizer.normalize(mapping, raw, data_source_id=DATA_SOURCE_ID)
+
+    assert result.tool_calls == ()
+    construction_issues = [i for i in result.issues if i.code == "ENTITY_CONSTRUCTION_FAILED"]
+    assert len(construction_issues) == 1
+
+
+def test_invalid_status_value_rejects_only_that_model_call_not_the_whole_import():
+    # A source writing "success" instead of "ok"/"error"/"unknown" is the
+    # ordinary case for an AI-proposed mapping without a map_values operator
+    # — not an edge case that's allowed to take the whole run down.
+    mapping = Mapping(
+        id=uuid4(),
+        name="test",
+        version=1,
+        source_format="jsonl",
+        entities=[
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=[FieldRule(target="external_id", source="$.id", required=True)],
+            ),
+            EntityMapping(
+                target="model_call",
+                natural_key=("sequence_index",),
+                iterate="$.calls",
+                parent={"entity": "session", "via": "external_id"},
+                fields=[FieldRule(target="status", source="$.status")],
+            ),
+        ],
+    )
+    raw = {
+        "id": "sess-1",
+        "calls": [{"status": "ok"}, {"status": "success"}, {"status": "error"}],
+    }
+
+    normalizer = RecordNormalizer()
+    result = normalizer.normalize(mapping, raw, data_source_id=DATA_SOURCE_ID)
+
+    assert len(result.model_calls) == EXPECTED_SURVIVING_MODEL_CALLS_AFTER_ONE_BAD_STATUS
+    assert {mc.status for mc in result.model_calls} == {"ok", "error"}
+    construction_issues = [i for i in result.issues if i.code == "ENTITY_CONSTRUCTION_FAILED"]
+    assert len(construction_issues) == 1
+
+
+def test_invalid_outcome_value_produces_an_issue_not_a_crash():
+    mapping = Mapping(
+        id=uuid4(),
+        name="test",
+        version=1,
+        source_format="jsonl",
+        entities=[
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=[
+                    FieldRule(target="external_id", source="$.id", required=True),
+                    FieldRule(target="outcome", source="$.status"),
+                ],
+            ),
+        ],
+    )
+    raw = {"id": "sess-1", "status": "finished"}  # not in Session.VALID_OUTCOMES
+
+    normalizer = RecordNormalizer()
+    result = normalizer.normalize(mapping, raw, data_source_id=DATA_SOURCE_ID)
+
+    assert result.sessions == ()
+    assert len(result.issues) == 1
+    assert result.issues[0].code == "ENTITY_CONSTRUCTION_FAILED"
+
+
+def test_multiple_session_rows_keeps_the_first_and_warns_about_the_rest():
+    # Nothing in EntityMapping/MappingValidator forbids `iterate` on the
+    # session entity — the normalizer must not drop the extra sessions with
+    # zero trace of why.
+    mapping = Mapping(
+        id=uuid4(),
+        name="test",
+        version=1,
+        source_format="jsonl",
+        entities=[
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                iterate="$.sessions",
+                fields=[FieldRule(target="external_id", source="$.id", required=True)],
+            ),
+        ],
+    )
+    raw = {"sessions": [{"id": "sess-1"}, {"id": "sess-2"}]}
+
+    normalizer = RecordNormalizer()
+    result = normalizer.normalize(mapping, raw, data_source_id=DATA_SOURCE_ID)
+
+    assert len(result.sessions) == 1
+    assert result.sessions[0].external_id == "sess-1"
+    warnings = [i for i in result.issues if i.code == "MULTIPLE_SESSIONS_IGNORED"]
+    assert len(warnings) == 1
+    assert warnings[0].severity == "warning"
+
+
+def test_model_reference_request_carries_provider_as_context():
+    # 'model' is unique on (provider_id, name) — without the provider in
+    # context, ResolveReferences has nothing to link the model to.
+    normalizer = RecordNormalizer()
+    result = normalizer.normalize(_full_mapping(), RAW_RECORD, data_source_id=DATA_SOURCE_ID)
+
+    model_request = next(r for r in result.reference_requests if r.kind == "model")
+    assert model_request.context == (("provider_name", "anthropic"),)
+
+
+def test_sequence_index_from_a_mapped_string_field_is_cast_to_int():
+    # If a mapping targets 'sequence_index' directly without a cast operator,
+    # the raw string must not silently end up in a field typed int.
+    mapping = Mapping(
+        id=uuid4(),
+        name="test",
+        version=1,
+        source_format="jsonl",
+        entities=[
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=[FieldRule(target="external_id", source="$.id", required=True)],
+            ),
+            EntityMapping(
+                target="tool_call",
+                natural_key=("sequence_index",),
+                iterate="$.tool_uses",
+                parent={"entity": "session", "via": "external_id"},
+                fields=[
+                    FieldRule(target="tool_name", source="$.name", required=True),
+                    FieldRule(target="sequence_index", source="$.idx"),  # no cast operator
+                ],
+            ),
+        ],
+    )
+    expected_index = 7
+    raw = {"id": "sess-1", "tool_uses": [{"name": "Bash", "idx": str(expected_index)}]}
+
+    normalizer = RecordNormalizer()
+    result = normalizer.normalize(mapping, raw, data_source_id=DATA_SOURCE_ID)
+
+    assert result.tool_calls[0].sequence_index == expected_index
+    assert isinstance(result.tool_calls[0].sequence_index, int)
