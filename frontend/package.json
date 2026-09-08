@@ -16,13 +16,11 @@
     "@tanstack/router-plugin": "^1.168.36",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "lucide-react": "^1.42.0",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.3",
-    "zod": "^4.5.4",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
