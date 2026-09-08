@@ -38,8 +38,11 @@ jobs:
       - name: Lint (S rules forbid eval/exec)
         run: ruff check .
 
-      - name: Type check — strict on domain and application
-        run: mypy --strict src/agentlen/domain src/agentlen/application
+      - name: Type check — strict on domain, application and the AI adapters
+        # infrastructure/ai is in scope so the SanitizedSamples NewType is
+        # actually binding: handing raw records to the prompt builder has to
+        # fail here, not in review.
+        run: mypy --strict src/agentlen/domain src/agentlen/application src/agentlen/infrastructure/ai
 
       - name: Dependency rule (import-linter)
         # The automated proof of the Clean Architecture. A PR that imports

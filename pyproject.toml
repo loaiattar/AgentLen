@@ -13,6 +13,10 @@ dependencies = [
     "asyncpg>=0.29",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    # Linear-time regex. The sanitizer applies patterns to unbounded strings
+    # taken straight from trace files; RE2 cannot backtrack, so no future
+    # edit to those patterns can reintroduce a quadratic blow-up.
+    "google-re2>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -60,6 +64,12 @@ exclude = ["tests/", "alembic/"]
 module = "agentlen.infrastructure.files.*"
 ignore_errors = true
 
+[[tool.mypy.overrides]]
+# RE2 ships no py.typed marker. The wrapper functions in the sanitizer are
+# annotated, so the untyped surface stops at the import.
+module = "re2"
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------------------
 # import-linter — enforces the dependency rule mechanically
 # ---------------------------------------------------------------------------
@@ -96,6 +106,7 @@ forbidden_modules = [
     "requests",
     "testcontainers",
     "pytest",
+    "re2",
 ]
 
 [[tool.importlinter.contracts]]
@@ -117,6 +128,7 @@ forbidden_modules = [
     "polars",
     "anthropic",
     "openai",
+    "re2",
 ]
 
 [[tool.importlinter.contracts]]
