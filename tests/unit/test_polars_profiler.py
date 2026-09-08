@@ -78,6 +78,41 @@ async def test_null_ratio_is_computed_precisely(tmp_path):
     assert value.null_ratio == pytest.approx(0.12)
 
 
+@pytest.mark.parametrize("bad_sample_size", [0, -1])
+async def test_non_positive_sample_size_is_rejected_with_a_clear_error(bad_sample_size):
+    profiler = PolarsFileProfiler()
+    with pytest.raises(ValueError, match="sample_size"):
+        await profiler.profile(str(SAMPLE_FILE), sample_size=bad_sample_size)
+
+
+async def test_empty_file_returns_a_zero_record_profile_instead_of_crashing(tmp_path):
+    path = tmp_path / "empty.jsonl"
+    path.touch()
+
+    profiler = PolarsFileProfiler()
+    profile = await profiler.profile(str(path))
+
+    assert profile.record_count == 0
+    assert profile.sampled_records == 0
+    assert profile.fields == ()
+
+
+async def test_decimal_column_is_named_and_gets_min_max_not_a_raw_polars_repr(tmp_path):
+    df = pl.DataFrame({"amount": ["1.50", "2.75", "0.10"]}).with_columns(
+        pl.col("amount").cast(pl.Decimal(scale=2))
+    )
+    path = tmp_path / "decimal.parquet"
+    df.write_parquet(path)
+
+    profiler = PolarsFileProfiler()
+    profile = await profiler.profile(str(path))
+
+    amount = _field(profile, "$.amount")
+    assert amount.types == ("decimal",)
+    assert amount.min_value == "0.10"
+    assert amount.max_value == "2.75"
+
+
 async def test_examples_are_sanitized_before_leaving_the_profiler(tmp_path):
     df = pl.DataFrame(
         {

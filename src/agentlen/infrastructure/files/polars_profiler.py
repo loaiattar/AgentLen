@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from pathlib import Path
 
 import polars as pl
 
@@ -30,17 +31,28 @@ _FLOAT_TYPES = (pl.Float32, pl.Float64)
 _NUMERIC_TYPES = _INT_TYPES + _FLOAT_TYPES
 
 
-def _type_name(dtype: pl.DataType) -> str:
+def _type_name(dtype: pl.DataType) -> str:  # noqa: PLR0911
     if dtype in _INT_TYPES:
         return "integer"
     if dtype in _FLOAT_TYPES:
         return "float"
+    if isinstance(dtype, pl.Decimal):
+        return "decimal"
     if isinstance(dtype, pl.Datetime):
         return "datetime"
+    if isinstance(dtype, pl.Duration):
+        return "duration"
     for base, name in _TYPE_NAMES.items():
         if dtype == base:
             return name
-    return str(dtype).lower()
+    # Never leak a raw Polars repr (e.g. "categorical(ordering='physical')")
+    # across the port boundary — an unhandled type is reported as "unknown"
+    # rather than whatever str(dtype) happens to produce.
+    return "unknown"
+
+
+def _is_numeric(dtype: pl.DataType) -> bool:
+    return dtype in _NUMERIC_TYPES or isinstance(dtype, pl.Decimal)
 
 
 _SAFE_UNQUOTED_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -110,7 +122,7 @@ def _profile_leaf(path: str, series: pl.Series) -> FieldProfile:
 
     min_value: str | None = None
     max_value: str | None = None
-    if series.dtype in _NUMERIC_TYPES and len(non_null) > 0:
+    if _is_numeric(series.dtype) and len(non_null) > 0:
         min_value = str(non_null.min())
         max_value = str(non_null.max())
 
@@ -135,7 +147,20 @@ class PolarsFileProfiler:
     """Implements the `FileProfiler` port. Format is inferred from the path suffix."""
 
     async def profile(self, path: str, *, sample_size: int = 500) -> FileProfile:
+        if sample_size <= 0:
+            raise ValueError(f"sample_size must be positive, got {sample_size!r}.")
+
         format_ = infer_format(path)
+
+        # An empty file has no data to infer a schema from — scan_ndjson in
+        # particular raises a raw Polars ComputeError rather than a sensible
+        # profile. A zero-byte file always means zero records regardless of
+        # format, so short-circuit before Polars ever sees it.
+        if Path(path).stat().st_size == 0:
+            return FileProfile(
+                file_id=0, format=format_, record_count=0, sampled_records=0, fields=()
+            )
+
         # Schema inference must see at least as many rows as we're about to
         # sample, or a field that only appears later silently vanishes from
         # the profile (see infra/files/polars_reader.py). Floored at Polars'
