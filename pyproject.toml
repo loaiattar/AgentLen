@@ -1,3 +1,89 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentlen"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "polars>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "import-linter>=2.0",
+    "ruff>=0.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+
+# ---------------------------------------------------------------------------
+# Mypy — strict on domain and application only
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+exclude = ["tests/", "src/agentlen/infrastructure/"]
+
+[[tool.mypy.overrides]]
+module = "agentlen.infrastructure.*"
+ignore_errors = true
+
+# ---------------------------------------------------------------------------
+# import-linter — enforces the dependency rule mechanically
+# ---------------------------------------------------------------------------
+[tool.importlinter]
+root_package = "agentlen"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Domain has no third-party imports"
+type = "forbidden"
+source_modules = ["agentlen.domain"]
+forbidden_modules = [
+    "sqlalchemy",
+    "fastapi",
+    "polars",
+    "anthropic",
+    "openai",
+    "pydantic",
+    "httpx",
+    "aiohttp",
+]
+
+[[tool.importlinter.contracts]]
+name = "Application does not import infrastructure"
+type = "forbidden"
+source_modules = ["agentlen.application"]
+forbidden_modules = [
+    "agentlen.infrastructure",
+    "sqlalchemy",
+    "fastapi",
+    "polars",
+    "anthropic",
+    "openai",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "BLE", "PLR"]
+ignore = ["S101"]   # allow assert in tests
