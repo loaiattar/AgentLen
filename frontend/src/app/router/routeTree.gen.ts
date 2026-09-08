@@ -15,7 +15,10 @@ import { Route as AppImportAssistantIndexRouteImport } from './routes/_app.impor
 import { Route as AppImportsIndexRouteImport } from './routes/_app.imports.index'
 import { Route as AppImportsImportIdRouteImport } from './routes/_app.imports.$importId'
 import { Route as AppMappingsIndexRouteImport } from './routes/_app.mappings.index'
+import { Route as AppQualityIndexRouteImport } from './routes/_app.quality.index'
+import { Route as AppSessionsIndexRouteImport } from './routes/_app.sessions.index'
 import { Route as AppSessionsSessionIdRouteImport } from './routes/_app.sessions.$sessionId'
+import { Route as AppSourcesIndexRouteImport } from './routes/_app.sources.index'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -46,9 +49,24 @@ const AppMappingsIndexRoute = AppMappingsIndexRouteImport.update({
   path: '/mappings/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppQualityIndexRoute = AppQualityIndexRouteImport.update({
+  id: '/quality/',
+  path: '/quality/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSessionsIndexRoute = AppSessionsIndexRouteImport.update({
+  id: '/sessions/',
+  path: '/sessions/',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppSessionsSessionIdRoute = AppSessionsSessionIdRouteImport.update({
   id: '/sessions/$sessionId',
   path: '/sessions/$sessionId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSourcesIndexRoute = AppSourcesIndexRouteImport.update({
+  id: '/sources/',
+  path: '/sources/',
   getParentRoute: () => AppRoute,
 } as any)
 
@@ -59,6 +77,9 @@ export interface FileRoutesByFullPath {
   '/import-assistant/': typeof AppImportAssistantIndexRoute
   '/imports/': typeof AppImportsIndexRoute
   '/mappings/': typeof AppMappingsIndexRoute
+  '/quality/': typeof AppQualityIndexRoute
+  '/sessions/': typeof AppSessionsIndexRoute
+  '/sources/': typeof AppSourcesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
@@ -67,6 +88,9 @@ export interface FileRoutesByTo {
   '/import-assistant': typeof AppImportAssistantIndexRoute
   '/imports': typeof AppImportsIndexRoute
   '/mappings': typeof AppMappingsIndexRoute
+  '/quality': typeof AppQualityIndexRoute
+  '/sessions': typeof AppSessionsIndexRoute
+  '/sources': typeof AppSourcesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -77,6 +101,9 @@ export interface FileRoutesById {
   '/_app/import-assistant/': typeof AppImportAssistantIndexRoute
   '/_app/imports/': typeof AppImportsIndexRoute
   '/_app/mappings/': typeof AppMappingsIndexRoute
+  '/_app/quality/': typeof AppQualityIndexRoute
+  '/_app/sessions/': typeof AppSessionsIndexRoute
+  '/_app/sources/': typeof AppSourcesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -87,6 +114,9 @@ export interface FileRouteTypes {
     | '/import-assistant/'
     | '/imports/'
     | '/mappings/'
+    | '/quality/'
+    | '/sessions/'
+    | '/sources/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -95,6 +125,9 @@ export interface FileRouteTypes {
     | '/import-assistant'
     | '/imports'
     | '/mappings'
+    | '/quality'
+    | '/sessions'
+    | '/sources'
   id:
     | '__root__'
     | '/_app'
@@ -104,6 +137,9 @@ export interface FileRouteTypes {
     | '/_app/import-assistant/'
     | '/_app/imports/'
     | '/_app/mappings/'
+    | '/_app/quality/'
+    | '/_app/sessions/'
+    | '/_app/sources/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -154,11 +190,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMappingsIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/quality/': {
+      id: '/_app/quality/'
+      path: '/quality'
+      fullPath: '/quality/'
+      preLoaderRoute: typeof AppQualityIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/sessions/': {
+      id: '/_app/sessions/'
+      path: '/sessions'
+      fullPath: '/sessions/'
+      preLoaderRoute: typeof AppSessionsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/sessions/$sessionId': {
       id: '/_app/sessions/$sessionId'
       path: '/sessions/$sessionId'
       fullPath: '/sessions/$sessionId'
       preLoaderRoute: typeof AppSessionsSessionIdRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/sources/': {
+      id: '/_app/sources/'
+      path: '/sources'
+      fullPath: '/sources/'
+      preLoaderRoute: typeof AppSourcesIndexRouteImport
       parentRoute: typeof AppRoute
     }
   }
@@ -171,6 +228,9 @@ interface AppRouteChildren {
   AppImportAssistantIndexRoute: typeof AppImportAssistantIndexRoute
   AppImportsIndexRoute: typeof AppImportsIndexRoute
   AppMappingsIndexRoute: typeof AppMappingsIndexRoute
+  AppQualityIndexRoute: typeof AppQualityIndexRoute
+  AppSessionsIndexRoute: typeof AppSessionsIndexRoute
+  AppSourcesIndexRoute: typeof AppSourcesIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
@@ -180,6 +240,9 @@ const AppRouteChildren: AppRouteChildren = {
   AppImportAssistantIndexRoute: AppImportAssistantIndexRoute,
   AppImportsIndexRoute: AppImportsIndexRoute,
   AppMappingsIndexRoute: AppMappingsIndexRoute,
+  AppQualityIndexRoute: AppQualityIndexRoute,
+  AppSessionsIndexRoute: AppSessionsIndexRoute,
+  AppSourcesIndexRoute: AppSourcesIndexRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
