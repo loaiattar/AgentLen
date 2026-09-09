@@ -57,12 +57,57 @@ TOOL_ERROR_RATE = MetricDefinition(
     comparability="cross_source",
 )
 
-# Ordered list exposed by GET /api/v1/metrics/definitions
-ALL_METRICS: tuple[MetricDefinition, ...] = (
+# ---------------------------------------------------------------------------
+# Chart indicators — documented, but not part of the headline four
+# ---------------------------------------------------------------------------
+
+CACHE_READ_TOKENS = MetricDefinition(
+    key="cache_read_tokens",
+    label="Tokens lus depuis le cache",
+    unit="tokens",
+    formula="SUM(model_call.cache_read_tokens)",
+    scope="Appels modèles des sources qui fournissent des métriques de cache.",
+    missing_policy=(
+        "Une source qui ne fournit pas de données de cache remonte null avec "
+        "une couverture de 0.0, jamais 0. Les deux ne veulent pas dire la même "
+        "chose : 0 signifie « rien n'a été lu depuis le cache », null signifie "
+        "« cette source ne le dit pas »."
+    ),
+    # Certaines sources ne publient aucune donnée de cache. Un total toutes
+    # sources confondues mesurerait donc « les sources qui la fournissent »,
+    # pas « toutes les sources » — d'où l'avertissement obligatoire.
+    comparability="per_source_only",
+)
+
+IMPORT_REJECTION_RATIO = MetricDefinition(
+    key="import_rejection_ratio",
+    label="Taux de rejet à l'import",
+    unit="ratio",
+    formula="import_run.records_rejected / NULLIF(import_run.records_read, 0)",
+    scope="Un import donné, tel qu'enregistré à la fin de son exécution.",
+    missing_policy=(
+        "Un import n'ayant lu aucun enregistrement renvoie null, pas 0 : un "
+        "taux de rejet n'a pas de sens sur un dénominateur vide."
+    ),
+    comparability="cross_source",
+)
+
+
+# The four headline indicators of GET /api/v1/metrics/overview.
+OVERVIEW_METRICS: tuple[MetricDefinition, ...] = (
     SESSION_COUNT,
     AVG_TOKENS_PER_SESSION,
     AVG_SESSION_DURATION_MS,
     TOOL_ERROR_RATE,
+)
+
+# Everything GET /api/v1/metrics/definitions publishes: the headline four plus
+# the figures the charts expose. Every number the API returns must be findable
+# here — that is the "definition accessible" requirement.
+ALL_METRICS: tuple[MetricDefinition, ...] = (
+    *OVERVIEW_METRICS,
+    CACHE_READ_TOKENS,
+    IMPORT_REJECTION_RATIO,
 )
 
 _REGISTRY: dict[str, MetricDefinition] = {m.key: m for m in ALL_METRICS}
@@ -74,5 +119,14 @@ def get(key: str) -> MetricDefinition:
 
 
 def all_definitions() -> tuple[MetricDefinition, ...]:
-    """Return all registered metric definitions in display order."""
+    """Every published definition, in display order."""
     return ALL_METRICS
+
+
+def overview_definitions() -> tuple[MetricDefinition, ...]:
+    """Only the four indicators of the overview endpoint.
+
+    Kept separate from `all_definitions()` so documenting a chart figure never
+    silently adds a fifth tile to the dashboard header.
+    """
+    return OVERVIEW_METRICS

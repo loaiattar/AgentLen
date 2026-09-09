@@ -14,7 +14,7 @@ from fastapi import APIRouter, FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agentlen.interfaces.http.errors import register_error_handlers
-from agentlen.interfaces.http.routers import service
+from agentlen.interfaces.http.routers import metrics, service
 
 API_PREFIX = "/api/v1"
 
@@ -72,6 +72,7 @@ def create_app(*, engine: AsyncEngine | None = None) -> FastAPI:
     # versioned path. Both point at the same handler.
     versioned = APIRouter(prefix=API_PREFIX)
     versioned.include_router(service.router)
+    versioned.include_router(metrics.router)
     app.include_router(versioned)
     app.include_router(service.router, include_in_schema=False)
 
