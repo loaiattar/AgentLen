@@ -2,75 +2,200 @@ import { Link } from '@tanstack/react-router'
 
 import { AreaChart, BarList, MixLegend, Sparkline } from '@/components/ui/Chart'
 import { BentoGrid, BentoModule, BentoTitle } from '@/components/ui/Bento'
+import { Button } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { Kpi } from '@/components/ui/Kpi'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { GlassSkeleton } from '@/components/ui/Skeleton'
+import {
+  useDashboardActivityQuery,
+  useDashboardModelsQuery,
+  useDashboardOverviewQuery,
+  useDashboardToolsQuery,
+  useMetricDefinitionsQuery,
+} from '@/features/dashboard/api/dashboard.queries'
+import {
+  aggregateModels,
+  aggregateTools,
+  coverageHint,
+  formatCount,
+  formatDurationMs,
+  formatRatio,
+  formatTokens,
+  getDefinition,
+  getMetric,
+  knownTokensByDay,
+  MISSING_VALUE,
+  sessionsByDay,
+} from '@/features/dashboard/lib/format'
 
-const activity = [18, 22, 19, 28, 34, 31, 44, 41, 48, 52, 47, 61]
-const tokens = [12, 14, 13, 18, 22, 19, 24, 28, 26, 31, 29, 36]
-const tools = [
-  { label: 'read_file', value: 1284, tone: 'cyan' as const },
-  { label: 'shell', value: 842, tone: 'blue' as const },
-  { label: 'grep', value: 611, tone: 'mint' as const },
-  { label: 'apply_patch', value: 390, tone: 'magenta' as const },
-]
-const models = [
-  { label: 'gpt-4.1', value: 54, tone: 'cyan' as const },
-  { label: 'claude-sonnet', value: 28, tone: 'magenta' as const },
-  { label: 'gemini', value: 18, tone: 'blue' as const },
-]
+function ChartEmpty({ message }: { message: string }) {
+  return <p className="mt-8 text-body text-foreground-muted">{message}</p>
+}
 
 export function DashboardPage() {
+  const overview = useDashboardOverviewQuery()
+  const activity = useDashboardActivityQuery()
+  const tools = useDashboardToolsQuery()
+  const models = useDashboardModelsQuery()
+  const definitions = useMetricDefinitionsQuery()
+
+  const isPending = overview.isPending || activity.isPending || tools.isPending || models.isPending
+  const isError = overview.isError || activity.isError || tools.isError || models.isError
+
+  if (isPending) {
+    return (
+      <div>
+        <PageHeader kicker="Overview" title="Agent activity" />
+        <BentoGrid>
+          {Array.from({ length: 6 }, (_, index) => (
+            <BentoModule key={index} cols={index < 2 ? 2 : 1} padding="none">
+              <GlassSkeleton />
+            </BentoModule>
+          ))}
+        </BentoGrid>
+      </div>
+    )
+  }
+
+  if (isError) {
+    const message =
+      overview.error?.message ??
+      activity.error?.message ??
+      tools.error?.message ??
+      models.error?.message ??
+      'Unable to load metrics.'
+
+    return (
+      <div>
+        <PageHeader kicker="Overview" title="Agent activity" />
+        <EmptyState
+          title="Metrics unavailable"
+          description={message}
+          action={
+            <Button
+              variant="secondary"
+              onClick={() => {
+                void overview.refetch()
+                void activity.refetch()
+                void tools.refetch()
+                void models.refetch()
+              }}
+            >
+              Retry
+            </Button>
+          }
+        />
+      </div>
+    )
+  }
+
+  const metrics = overview.data?.metrics ?? []
+  const definitionList = definitions.data?.definitions
+  const sessionCount = getMetric(metrics, 'session_count')
+  const errorRate = getMetric(metrics, 'tool_error_rate')
+  const duration = getMetric(metrics, 'avg_session_duration_ms')
+  const avgTokens = getMetric(metrics, 'avg_tokens_per_session')
+
+  const activityPoints = activity.data?.points ?? []
+  const sessionSeries = sessionsByDay(activityPoints)
+  const tokenSeries = knownTokensByDay(activityPoints)
+  const toolItems = aggregateTools(tools.data?.points ?? [])
+  const modelItems = aggregateModels(models.data?.points ?? [])
+  const modelWarnings = models.data?.warnings ?? []
+
   return (
     <div>
       <PageHeader kicker="Overview" title="Agent activity" description="A calm window into traces, tokens and failures." />
       <BentoGrid>
         <BentoModule cols={2} rows={2} className="flex min-h-72 flex-col justify-between xl:min-h-80">
           <BentoTitle>Agent activity</BentoTitle>
-          <AreaChart values={activity} label="Sessions over the last twelve intervals" className="mt-6 h-44" />
+          {sessionSeries.length > 0 ? (
+            <AreaChart values={sessionSeries} label="Sessions per day" className="mt-6 h-44" />
+          ) : (
+            <ChartEmpty message="No session activity for this period." />
+          )}
         </BentoModule>
+
         <BentoModule cols={2} padding="none">
-          <Kpi label="Total sessions" value="24,861" delta="+12.4% this week" deltaTone="positive" />
+          <Kpi
+            label="Total sessions"
+            value={formatCount(sessionCount?.value)}
+            hint={coverageHint(sessionCount)}
+            title={getDefinition(definitionList, 'session_count')?.formula}
+          />
         </BentoModule>
+
         <BentoModule cols={1} padding="none">
-          <Kpi label="Error rate" value="1.8%" delta="-0.4 pts" deltaTone="positive" />
+          <Kpi
+            label="Error rate"
+            value={formatRatio(errorRate?.value)}
+            hint={coverageHint(errorRate)}
+            title={getDefinition(definitionList, 'tool_error_rate')?.formula}
+          />
         </BentoModule>
+
         <BentoModule cols={1} padding="none" interactive>
           <Link to="/quality" className="block h-full">
-            <Kpi label="Data quality" value="94.8%" delta="Integrity" />
+            <Kpi label="Data quality" value={MISSING_VALUE} delta="Integrity" />
           </Link>
         </BentoModule>
+
         <BentoModule cols={3} rows={2} className="flex min-h-64 flex-col">
           <BentoTitle>Token consumption</BentoTitle>
-          <Sparkline values={tokens} label="Token consumption trend" className="mt-8 h-32 flex-1" />
-          <p className="mt-4 font-display text-kpi text-foreground">24.8M</p>
+          {tokenSeries.length > 0 ? (
+            <Sparkline values={tokenSeries} label="Known token volume per day" className="mt-8 h-32 flex-1" />
+          ) : (
+            <ChartEmpty message="No token data for this period." />
+          )}
+          <p
+            className="mt-4 font-display text-kpi text-foreground"
+            title={getDefinition(definitionList, 'avg_tokens_per_session')?.formula}
+          >
+            {formatTokens(avgTokens?.value)}
+          </p>
+          <p className="mt-1 text-secondary text-foreground-muted">
+            {coverageHint(avgTokens) ?? 'Average tokens per session'}
+          </p>
         </BentoModule>
+
         <BentoModule cols={1} rows={2}>
           <BentoTitle>Model mix</BentoTitle>
-          <MixLegend items={models} className="mt-8" />
+          {modelItems.length > 0 ? (
+            <MixLegend items={modelItems} className="mt-8" />
+          ) : (
+            <ChartEmpty message="No model calls for this period." />
+          )}
+          {modelWarnings.map((warning) => (
+            <p key={warning} className="mt-4 text-secondary text-foreground-subtle">
+              {warning}
+            </p>
+          ))}
         </BentoModule>
+
         <BentoModule cols={2} rows={2}>
           <BentoTitle>Tool usage</BentoTitle>
-          <BarList items={tools} className="mt-8" />
+          {toolItems.length > 0 ? (
+            <BarList items={toolItems} className="mt-8" />
+          ) : (
+            <ChartEmpty message="No tool calls for this period." />
+          )}
         </BentoModule>
+
         <BentoModule cols={2} padding="none">
-          <Kpi label="Avg session duration" value="4m 12s" delta="Median 3m 48s" />
+          <Kpi
+            label="Avg session duration"
+            value={formatDurationMs(duration?.value)}
+            hint={coverageHint(duration)}
+            title={getDefinition(definitionList, 'avg_session_duration_ms')?.formula}
+          />
         </BentoModule>
+
         <BentoModule cols={2}>
           <BentoTitle>Recent activity</BentoTitle>
-          <ul className="mt-6 grid gap-4 text-secondary">
-            <li className="flex justify-between gap-4 text-foreground-muted">
-              <span>ses_8f21 · apply_patch</span>
-              <span>2m ago</span>
-            </li>
-            <li className="flex justify-between gap-4 text-foreground-muted">
-              <span>ses_12aa · tool error</span>
-              <span>11m ago</span>
-            </li>
-            <li className="flex justify-between gap-4 text-foreground-muted">
-              <span>ses_90c3 · completed</span>
-              <span>18m ago</span>
-            </li>
-          </ul>
+          <p className="mt-6 text-body text-foreground-muted">
+            Session details are not available until the exploration API is wired.
+          </p>
         </BentoModule>
       </BentoGrid>
     </div>
