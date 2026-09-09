@@ -1,4 +1,11 @@
-import type { ActivityPoint, Metric, MetricDefinition, ModelPoint, ToolPoint } from '@/features/dashboard/types'
+import type {
+  ActivityPoint,
+  Metric,
+  MetricDefinition,
+  ModelPoint,
+  QualityPoint,
+  ToolPoint,
+} from '@/features/dashboard/types'
 
 export const MISSING_VALUE = '—'
 
@@ -122,4 +129,56 @@ export function aggregateModels(points: ModelPoint[]) {
       value,
       tone: CHART_TONES[index % CHART_TONES.length],
     }))
+}
+
+export interface QualitySummary {
+  recordsRead: number | null
+  recordsImported: number | null
+  recordsDuplicate: number | null
+  recordsRejected: number | null
+  issueCount: number | null
+  fieldsMissing: number | null
+  rejectionRatio: number | null
+}
+
+function sumFieldsMissing(fields: Record<string, number>): number {
+  return Object.values(fields).reduce((total, count) => total + count, 0)
+}
+
+export function summarizeQuality(points: QualityPoint[]): QualitySummary {
+  if (points.length === 0) {
+    return {
+      recordsRead: null,
+      recordsImported: null,
+      recordsDuplicate: null,
+      recordsRejected: null,
+      issueCount: null,
+      fieldsMissing: null,
+      rejectionRatio: null,
+    }
+  }
+
+  const recordsRead = points.reduce((total, point) => total + point.records_read, 0)
+  const recordsImported = points.reduce((total, point) => total + point.records_imported, 0)
+  const recordsDuplicate = points.reduce((total, point) => total + point.records_duplicate, 0)
+  const recordsRejected = points.reduce((total, point) => total + point.records_rejected, 0)
+  const issueCount = points.reduce((total, point) => total + point.issue_count, 0)
+  const fieldsMissing = points.reduce((total, point) => total + sumFieldsMissing(point.fields_missing), 0)
+
+  return {
+    recordsRead,
+    recordsImported,
+    recordsDuplicate,
+    recordsRejected,
+    issueCount,
+    fieldsMissing,
+    rejectionRatio: recordsRead === 0 ? null : recordsRejected / recordsRead,
+  }
+}
+
+export function formatFieldsMissing(fields: Record<string, number> | null | undefined): string {
+  if (!fields) return MISSING_VALUE
+  const entries = Object.entries(fields).filter(([, count]) => count > 0)
+  if (entries.length === 0) return MISSING_VALUE
+  return entries.map(([field, count]) => `${field}: ${count}`).join(', ')
 }

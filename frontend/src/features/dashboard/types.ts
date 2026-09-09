@@ -78,6 +78,20 @@ export interface ModelPoint {
   filters: Record<string, unknown>
 }
 
+export interface QualityPoint {
+  import_run_id: number
+  data_source_id: number
+  status: string
+  records_read: number
+  records_imported: number
+  records_duplicate: number
+  records_rejected: number
+  issue_count: number
+  rejection_ratio: number | null
+  fields_missing: Record<string, number>
+  filters: Record<string, unknown>
+}
+
 export interface PointsResponse<T> {
   points: T[]
   filters_applied: Record<string, unknown>
