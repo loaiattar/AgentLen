@@ -39,6 +39,25 @@ python -m pytest -v
 - `sample_size <= 0` now raises a clear `ValueError` instead of silently profiling nothing (`0`) or leaking a raw Polars `ValueError` (`-1`).
 - An empty (0-byte) file now returns a `record_count=0` profile instead of crashing with a raw Polars `ComputeError` during schema inference.
 - The cross-format test checked each of jsonl/csv/parquet against fixed values independently — a real divergence between two formats would have passed silently. Added a direct three-way comparison of the `FileProfile`s.
+### Added — issue #46 (RecordNormalizer + referentials resolution)
+- `domain/model/reference.py`: `ReferenceRequest` (kind + name), declarative only — the domain never does I/O.
+- `domain/services/record_normalizer.py`: `RecordNormalizer.normalize(mapping, raw, data_source_id=..., line_number=...)` assembles `TransformationEngine`'s flat field values into linked `Session`/`ModelCall`/`ToolCall` domain entities — session built first, children linked to it via the generated UUID, `sequence_index` deduced from an explicit field or the deterministic iteration order, `MAPPING_MISSING_NATURAL_KEY`/`PARENT_SESSION_MISSING` issues on failure, and `ReferenceRequest`s collected for every agent/provider/model/tool name encountered.
+- `application/ports/repositories.py`: added `ReferentialRepository` (upsert-by-name for provider/model/agent/tool/repository — didn't exist yet).
+- `application/use_cases/resolve_references.py`: `ResolveReferences` upserts `ReferenceRequest`s through that port, with a per-instance cache so the same name declared by several records only hits the repository once per import run.
+- **Fixed a gap in `TransformationEngine` (Lot A, already merged)**: a `required` field that was simply absent from the source (no operator exception) rejected its entity with **zero** `ImportIssue` — silently, which contradicts the project's "an explained rejection" principle. Now emits `MISSING_REQUIRED_FIELD`.
+- Tests: entity assembly/linking/sequence_index/natural-key/rejection cascade in `tests/unit/domain/test_record_normalizer.py`; caching/reuse behaviour (with an in-memory fake repository, no DB needed) in `tests/unit/application/use_cases/test_resolve_references.py`.
+
+### Fixed — review findings on PR #67 (loaiattar)
+- **`sequence_index` broke reimport idempotence** — it was derived from a row's rank among *survivors*, not its position in the source. Rejecting a middle row shifted every later row's key, so fixing that row and reimporting inserted the shifted rows a second time under a new key (ARCHITECTURE.md §11's idempotence acceptance test). `TransformationEngine.apply()` now returns each result's `source_index` (position before any rejection); `RecordNormalizer` uses that instead of its own loop rank.
+- **Three ways a single bad row could crash the whole import** instead of producing a rejection: `data["external_id"]`/`data["tool_name"]` indexed directly even though `natural_key` doesn't guarantee their presence (→ `KeyError`), and an out-of-enum `status`/`outcome` (e.g. a source writing `"success"` instead of `"ok"`) raised straight out of the entity's `__post_init__` (→ `ValueError`). Entity construction is now wrapped in `try/except`, converting both into an `ENTITY_CONSTRUCTION_FAILED` `ImportIssue` — the row is skipped, the rest of the import continues.
+- **Multiple session rows from one record were silently dropped to the first** — nothing in `EntityMapping`/`MappingValidator` actually forbids `iterate` on the session entity. Now emits a `MULTIPLE_SESSIONS_IGNORED` warning for the discarded ones instead of losing them with zero trace.
+- **`ReferentialRepository.resolve(kind, name)` couldn't satisfy the schema** — `model` is unique on `(provider_id, name)`, not `name` alone (`DATA_MODEL.md` §4). `ReferenceRequest`/`ReferentialRepository.resolve` gained a `context` field/param for composite keys, decided now rather than surfacing as a `NOT NULL` violation deep in #45's adapter. `RecordNormalizer` now emits the provider as context on every model reference; `ResolveReferences`' cache key includes context, so two providers publishing a same-named model no longer collapse into one row. `repository` reference requests are still not emitted — `Session` has no repository/host/owner field yet, a domain-model gap flagged for a follow-up, not papered over here.
+- `sequence_index` is now cast to `int` during construction (same try/except catches a bad cast too).
+- `PARENT_SESSION_MISSING` is now emitted once per affected entity type (`model_call`, `tool_call`), not once per child — was inflating `ImportReport.issues` 8x on a rejected session with 8 children.
+- 12 new tests added directly reproducing each scenario above (reimport-after-fix, missing-optional-field crash, invalid status/outcome, multiple sessions, model/provider context, cache non-collapse, int cast).
+
+### Added — issue #43 (transformation engine operators)
+See branch `feat/43-transformation-engine-operators` (PR pending — `split_rows` blocked on a design question raised with the team).
 
 ### Added — issue #3 (original ingestion utilities)
 - Real sample extract from TraceLab (`data/samples/tracelab_example_session.jsonl`), 19 rows, sanitized public example pulled from `uw-syfi/TraceLab` (`example_sessions/sanitized/round_trace.jsonl`).
@@ -52,3 +71,5 @@ python -m pytest -v
 - 158/158 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files this issue touches.
 - `infrastructure/files/` now implements the `FileReader`-adjacent scanning helpers and the `FileProfiler` port, and is wired into `application/use_cases/profile_file.py`. Not yet wired into an HTTP route or a persisted `file_upload` (that's Lot E / #47 / #50).
 - All findings from loaiattar's review on PR #66 addressed (see changelog above).
+- 61/61 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files issue #46 touches. Rebased onto latest `develop`.
+- **Known gap, not fixed here**: `mapping_validator._SCHEMA` accepts `session.repository_url`, `model_call.reasoning_tokens` and `tool_call.arguments`, none of which `RecordNormalizer` reads — a validated mapping can silently lose those fields. Needs the domain entities extended before it can be fixed; flagged for the team rather than worked around.
