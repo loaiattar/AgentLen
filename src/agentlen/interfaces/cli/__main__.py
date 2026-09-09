@@ -4,6 +4,10 @@
 compose stack (#60). It lives here rather than in `infrastructure/` because
 wiring adapters to ports is an interface concern — this is the only place, with
 `interfaces/http/dependencies.py`, where concrete implementations are chosen.
+
+`python -m agentlen.interfaces.cli seed` is `make seed` (#60): the TraceLab
+data source, a starter mapping, and one import of the sample file, built from
+the same ports and use cases as `worker` — see `interfaces/cli/seed.py`.
 """
 
 from __future__ import annotations
@@ -19,6 +23,7 @@ from agentlen.infrastructure.jobs.postgres_queue import PostgresJobQueue
 from agentlen.infrastructure.jobs.worker import ImportWorker
 from agentlen.infrastructure.persistence.engine import create_engine
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from agentlen.interfaces.cli import seed as seed_module
 
 
 async def _run_worker(*, drain: bool = False) -> None:
@@ -36,11 +41,11 @@ async def _run_worker(*, drain: bool = False) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agentlen")
-    parser.add_argument("command", choices=["worker"], help="Ce qu'il faut lancer.")
+    parser.add_argument("command", choices=["worker", "seed"], help="Ce qu'il faut lancer.")
     parser.add_argument(
         "--drain",
         action="store_true",
-        help="Traiter la file puis sortir, au lieu de tourner en continu.",
+        help="Traiter la file puis sortir, au lieu de tourner en continu (worker uniquement).",
     )
     args = parser.parse_args(argv)
 
@@ -49,6 +54,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.command == "worker":
         asyncio.run(_run_worker(drain=args.drain))
+    elif args.command == "seed":
+        asyncio.run(seed_module.run())
     return 0
 
 

@@ -1,0 +1,43 @@
+{
+  "mapping": {
+    "name": "tracelab-jsonl",
+    "source_format": "jsonl",
+    "entities": [
+      {
+        "target": "session",
+        "natural_key": ["external_id"],
+        "fields": [
+          {"target": "external_id", "source": "$.session_id", "required": true,
+           "operators": [{"op": "cast", "to": "string"}]},
+          {"target": "agent_name", "source": "$.agent"},
+          {"target": "started_at", "source": "$.start_time",
+           "operators": [{"op": "parse_datetime", "format": "unix_seconds"}]}
+        ]
+      },
+      {
+        "target": "tool_call",
+        "natural_key": ["sequence_index"],
+        "iterate": "$.events",
+        "parent": {"entity": "session", "via": "external_id"},
+        "fields": [
+          {"target": "sequence_index", "source": "$.index"},
+          {"target": "tool_name", "source": "$.name", "required": true}
+        ]
+      }
+    ]
+  },
+  "rationale": [
+    {"target": "session.external_id", "source": "$.session_id",
+     "confidence": "high",
+     "explanation": "Unique sur 100 % des enregistrements échantillonnés."}
+  ],
+  "ambiguities": [
+    {"field": "$.duration",
+     "question": "Secondes ou millisecondes ? Les valeurs observées (0.4–320) suggèrent des secondes.",
+     "options": ["unit_convert s->ms", "aucune conversion"]}
+  ],
+  "unmapped_fields": [
+    {"path": "$.internal.debug_flags",
+     "reason": "Aucun équivalent dans le modèle cible ; conservé dans raw_record."}
+  ]
+}

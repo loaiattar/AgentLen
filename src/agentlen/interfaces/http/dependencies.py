@@ -25,6 +25,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agentlen.application.errors import ApplicationError
 from agentlen.application.ports.clock import Clock, SystemClock
 from agentlen.application.ports.dashboard_queries import DashboardQueries
+from agentlen.application.ports.structure_analyzer import StructureAnalyzer
+from agentlen.infrastructure.ai.factory import build_structure_analyzer
 from agentlen.infrastructure.persistence.engine import create_engine, get_database_url
 from agentlen.infrastructure.persistence.read_models import SqlDashboardQueries
 
@@ -68,6 +70,11 @@ def get_engine(request: Request) -> AsyncEngine:
     return _engine_singleton(get_database_url())
 
 
+def get_structure_analyzer() -> StructureAnalyzer:
+    """Resolved from AI_PROVIDER. The only place a provider is chosen."""
+    return build_structure_analyzer()
+
+
 def get_dashboard_queries(engine: EngineDep) -> DashboardQueries:
     """The read side. Holds only the engine, so one per request is fine."""
     return SqlDashboardQueries(engine)
@@ -89,10 +96,10 @@ get_import_run_repository = _not_wired("ImportRunRepository", "#45")
 get_file_storage = _not_wired("FileStorage", "#47")
 get_file_reader = _not_wired("FileReader", "#48")
 get_file_profiler = _not_wired("FileProfiler", "#48")
-get_structure_analyzer = _not_wired("StructureAnalyzer", "#49")
 
 
 #: Inject with `clock: ClockDep` in a route signature.
 ClockDep = Annotated[Clock, Depends(get_clock)]
 EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
 DashboardQueriesDep = Annotated[DashboardQueries, Depends(get_dashboard_queries)]
+AnalyzerDep = Annotated[StructureAnalyzer, Depends(get_structure_analyzer)]
