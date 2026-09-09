@@ -50,6 +50,27 @@ export function coverageHint(metric: Metric | undefined): string | undefined {
   return `Based on ${metric.coverage.present} of ${metric.coverage.total}`
 }
 
+export function collectDashboardWarnings(
+  metrics: Metric[],
+  envelopes: Array<{ warnings?: string[] } | undefined>,
+): string[] {
+  const seen = new Set<string>()
+  const warnings: string[] = []
+
+  const push = (warning: string | null | undefined) => {
+    if (!warning || seen.has(warning)) return
+    seen.add(warning)
+    warnings.push(warning)
+  }
+
+  for (const metric of metrics) push(metric.warning)
+  for (const envelope of envelopes) {
+    for (const warning of envelope?.warnings ?? []) push(warning)
+  }
+
+  return warnings
+}
+
 const CHART_TONES = ['cyan', 'blue', 'mint', 'magenta'] as const
 
 export function sessionsByDay(points: ActivityPoint[]): number[] {

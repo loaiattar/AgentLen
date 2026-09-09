@@ -16,13 +16,11 @@ dependencies = [
     # `docker compose up` runs migrations from inside the `api` container.
     "psycopg[binary]>=3.1",
     "fastapi>=0.110",
-    "pydantic-settings>=2.0",
-    # Providers are reached over plain HTTP rather than through two vendor
-    # SDKs: both APIs are simple JSON POSTs, we write the retry policy anyway,
-    # and it is what makes openai_compatible free.
+    "pydantic-settings>=2.2",
+    # Runtime HTTP client for AI adapters (infrastructure/ai/base.py). Not a
+    # test-only extra: the Docker image is built with `uv sync --no-dev`.
     "httpx>=0.27",
     "uvicorn[standard]>=0.29",
-    "pydantic-settings>=2.2",
     "anthropic>=0.40",
     "openai>=1.50",
     # Multipart form parsing for file-upload endpoints (Starlette requires it).
@@ -46,8 +44,6 @@ dev = [
     # Integration tests run against a real, throwaway Postgres 16.
     # (psycopg is now a runtime dependency, above — Alembic needs it in prod.)
     "testcontainers[postgres]>=4.0",
-    # ASGI transport for in-process HTTP tests — no server, no ports.
-    "httpx>=0.27",
 ]
 
 [tool.setuptools.packages.find]
