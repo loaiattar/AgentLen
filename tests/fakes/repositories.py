@@ -224,6 +224,10 @@ class InMemoryImportRunRepository:
         }
         return new_id
 
+    async def get(self, import_run_id: int) -> dict[str, Any] | None:
+        run = self._s.import_runs.get(import_run_id)
+        return dict(run, id=import_run_id) if run else None
+
     async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
         self._s.reports[import_run_id] = report
         if import_run_id in self._s.import_runs:

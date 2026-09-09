@@ -1,0 +1,112 @@
+"""The import worker: claim a job, run it, release it, repeat.
+
+Two behaviours matter more than the loop itself.
+
+**A job is never left locked.** Whatever happens — success, a failed import, an
+unexpected crash in our own code — the row is released before moving on. A job
+stuck in `running` with a lock and no worker behind it is invisible: it is not
+pending, so nobody picks it up, and it never finishes. (#18 handles the case
+where the process dies outright and cannot release anything.)
+
+**SIGTERM finishes the job in flight.** Container orchestrators send SIGTERM
+before SIGKILL. Stopping mid-import would leave a partially written run; the
+worker instead stops *claiming* new work and lets the current job complete.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import signal
+import socket
+from typing import Protocol
+
+logger = logging.getLogger("agentlen.worker")
+
+#: How long to wait when the queue is empty. Short enough that a queued import
+#: starts promptly, long enough not to hammer the database while idle.
+IDLE_SLEEP_SECONDS = 1.0
+
+
+class _Queue(Protocol):
+    async def claim_next(self, *, worker_id: str) -> int | None: ...
+    async def mark_succeeded(self, import_run_id: int, *, status: str = "succeeded") -> None: ...
+    async def mark_failed(self, import_run_id: int, *, error: str) -> None: ...
+
+
+class _Importer(Protocol):
+    async def execute(self, import_run_id: int) -> object: ...
+
+
+def default_worker_id() -> str:
+    """Identifies the holder of a lock — a hostname and pid are what someone
+    debugging a stuck job actually needs."""
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+class ImportWorker:
+    def __init__(
+        self,
+        queue: _Queue,
+        importer: _Importer,
+        *,
+        worker_id: str | None = None,
+        idle_sleep: float = IDLE_SLEEP_SECONDS,
+    ) -> None:
+        self._queue = queue
+        self._importer = importer
+        self._worker_id = worker_id or default_worker_id()
+        self._idle_sleep = idle_sleep
+        self._stopping = False
+        self.processed = 0
+
+    def request_stop(self) -> None:
+        """Stop after the current job. Never interrupts one in flight."""
+        logger.info("Arrêt demandé ; le job en cours va être terminé.")
+        self._stopping = True
+
+    async def run_once(self) -> bool:
+        """Claim and run one job. Returns False when the queue was empty."""
+        import_run_id = await self._queue.claim_next(worker_id=self._worker_id)
+        if import_run_id is None:
+            return False
+
+        try:
+            report = await self._importer.execute(import_run_id)
+            status = "partial" if getattr(report, "records_rejected", 0) else "succeeded"
+            await self._queue.mark_succeeded(import_run_id, status=status)
+            logger.info("Import %s terminé (%s).", import_run_id, status)
+        except Exception as exc:  # noqa: BLE001 - the loop must survive one bad job
+            # Released deliberately: a job that fails while holding its lock is
+            # indistinguishable from a crashed worker, and nobody retries it.
+            logger.exception("Import %s en échec.", import_run_id)
+            await self._queue.mark_failed(import_run_id, error=f"{type(exc).__name__}: {exc}")
+        finally:
+            self.processed += 1
+        return True
+
+    async def run_forever(self, *, stop_when_idle: bool = False) -> None:
+        """Consume until asked to stop.
+
+        `stop_when_idle` turns the loop into a drain: process what is queued,
+        then exit. That is what a test needs, and it is also the honest way to
+        run the worker as a one-shot task in CI or a cron job — a service that
+        can only run forever is awkward to use any other way.
+        """
+        logger.info("Worker %s démarré.", self._worker_id)
+        while not self._stopping:
+            worked = await self.run_once()
+            if worked:
+                continue
+            if stop_when_idle:
+                break
+            await asyncio.sleep(self._idle_sleep)
+        logger.info("Worker %s arrêté après %d job(s).", self._worker_id, self.processed)
+
+    def install_signal_handlers(self, loop: asyncio.AbstractEventLoop) -> None:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                loop.add_signal_handler(sig, self.request_stop)
+            except NotImplementedError:  # pragma: no cover - Windows
+                signal.signal(sig, lambda *_: self.request_stop())
