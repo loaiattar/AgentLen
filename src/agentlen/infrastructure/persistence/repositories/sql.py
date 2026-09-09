@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from agentlen.application.dto.persistence import (
+    DataSourceRecord,
     FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
@@ -491,6 +492,18 @@ class SqlAlchemyDataSourceRepository(_Base):
             await self._conn.execute(select(t.data_source.c.id).where(t.data_source.c.slug == slug))
         ).scalar_one_or_none()
 
+    async def get_by_id(self, data_source_id: int) -> DataSourceRecord | None:
+        row = (
+            (
+                await self._conn.execute(
+                    select(t.data_source).where(t.data_source.c.id == data_source_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _to_data_source(row) if row else None
+
     async def create(self, *, slug: str, name: str) -> int:
         statement = (
             insert(t.data_source)
@@ -504,6 +517,16 @@ class SqlAlchemyDataSourceRepository(_Base):
         found = await self.get_by_slug(slug)
         assert found is not None
         return found
+
+    async def list(self) -> list[DataSourceRecord]:
+        rows = (
+            await self._conn.execute(select(t.data_source).order_by(t.data_source.c.id))
+        ).mappings()
+        return [_to_data_source(r) for r in rows]
+
+
+def _to_data_source(row: Any) -> DataSourceRecord:
+    return DataSourceRecord(id=row["id"], slug=row["slug"], name=row["name"])
 
 
 #: kind -> (table, extra key columns resolved from the request context)

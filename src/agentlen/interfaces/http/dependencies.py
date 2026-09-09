@@ -6,46 +6,31 @@ swapping Postgres, Polars or the AI provider touches this file and nothing else.
 
 Everything here is overridable in tests via `app.dependency_overrides`, which is
 why the providers are plain functions rather than module-level singletons.
-
-Ports whose adapters do not exist yet (repositories, storage, the analyzer) are
-declared as `_not_wired` placeholders: a route asking for one gets a clear 503
-naming the issue that will provide it, instead of an import error at start-up
-or a mystery `None`.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from functools import lru_cache
-from typing import Annotated, Any
+from pathlib import Path
+from typing import Annotated
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from agentlen.application.errors import ApplicationError
 from agentlen.application.ports.clock import Clock, SystemClock
 from agentlen.application.ports.dashboard_queries import DashboardQueries
+from agentlen.application.ports.file_reader import FileProfiler, FileReader
+from agentlen.application.ports.file_storage import FileStorage
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
+from agentlen.application.ports.unit_of_work import UnitOfWork
 from agentlen.infrastructure.ai.factory import build_structure_analyzer
+from agentlen.infrastructure.files.local_storage import LocalFileStorage
+from agentlen.infrastructure.files.polars_profiler import PolarsFileProfiler
+from agentlen.infrastructure.files.polars_record_reader import PolarsRecordReader
 from agentlen.infrastructure.persistence.engine import create_engine, get_database_url
 from agentlen.infrastructure.persistence.read_models import SqlDashboardQueries
-
-
-class DependencyNotWiredError(ApplicationError):
-    """A port has no adapter yet. -> 503, with the issue number that lands it."""
-
-    code = "DEPENDENCY_NOT_WIRED"
-
-
-def _not_wired(port: str, issue: str) -> Callable[[], Any]:
-    def provider() -> Any:
-        raise DependencyNotWiredError(
-            f"Le port '{port}' n'a pas encore d'implémentation (voir {issue}).",
-            details={"port": port, "issue": issue},
-        )
-
-    return provider
-
+from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 # ---------------------------------------------------------------------------
 # Engine — one per application, created lazily and disposed on shutdown
@@ -86,16 +71,36 @@ async def get_clock() -> AsyncIterator[Clock]:
 
 
 # ---------------------------------------------------------------------------
-# Ports awaiting their adapters. Each names the issue that will provide it.
+# Unit of work — one instance per request, bound to the shared engine.
 # ---------------------------------------------------------------------------
 
-get_unit_of_work = _not_wired("UnitOfWork", "#45")
-get_session_repository = _not_wired("SessionRepository", "#45")
-get_mapping_repository = _not_wired("MappingRepository", "#45")
-get_import_run_repository = _not_wired("ImportRunRepository", "#45")
-get_file_storage = _not_wired("FileStorage", "#47")
-get_file_reader = _not_wired("FileReader", "#48")
-get_file_profiler = _not_wired("FileProfiler", "#48")
+
+def get_unit_of_work(engine: EngineDep) -> UnitOfWork:
+    return SqlAlchemyUnitOfWork(engine)
+
+
+# ---------------------------------------------------------------------------
+# Files — local disk today; the port is what the rest of the app depends on.
+# ---------------------------------------------------------------------------
+
+#: Repository root, from this file: src/agentlen/interfaces/http/ -> up 4.
+#: Same convention as the CLI seed (interfaces/cli/seed.py): resolves to
+#: /app/storage/uploads under the compose WORKDIR, <repo_root>/storage/uploads
+#: locally.
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+STORAGE_ROOT = _PROJECT_ROOT / "storage" / "uploads"
+
+
+def get_file_storage() -> FileStorage:
+    return LocalFileStorage(STORAGE_ROOT)
+
+
+def get_file_reader() -> FileReader:
+    return PolarsRecordReader()
+
+
+def get_file_profiler() -> FileProfiler:
+    return PolarsFileProfiler()
 
 
 #: Inject with `clock: ClockDep` in a route signature.
@@ -103,3 +108,7 @@ ClockDep = Annotated[Clock, Depends(get_clock)]
 EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
 DashboardQueriesDep = Annotated[DashboardQueries, Depends(get_dashboard_queries)]
 AnalyzerDep = Annotated[StructureAnalyzer, Depends(get_structure_analyzer)]
+UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
+FileStorageDep = Annotated[FileStorage, Depends(get_file_storage)]
+FileReaderDep = Annotated[FileReader, Depends(get_file_reader)]
+FileProfilerDep = Annotated[FileProfiler, Depends(get_file_profiler)]

@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from agentlen.application.dto.persistence import (
+    DataSourceRecord,
     FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
@@ -152,7 +153,9 @@ class MappingProposalRepository(Protocol):
 
 class DataSourceRepository(Protocol):
     async def get_by_slug(self, slug: str) -> int | None: ...
+    async def get_by_id(self, data_source_id: int) -> DataSourceRecord | None: ...
     async def create(self, *, slug: str, name: str) -> int: ...
+    async def list(self) -> list[DataSourceRecord]: ...
 
 
 class ReferentialRepository(Protocol):

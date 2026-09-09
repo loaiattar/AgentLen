@@ -28,6 +28,7 @@ from agentlen.application.errors import (
     ConflictError,
     NotFoundError,
 )
+from agentlen.application.ports.file_storage import FileStorageError
 from agentlen.domain.errors import AgentMaxIterationsError, DomainError, ValidationError
 
 #: Starlette is renaming its 422 constant; the literal does not churn.
@@ -108,6 +109,17 @@ async def _application(_: Request, exc: Exception) -> JSONResponse:
     return error_response(code, exc.code, exc.message, details=exc.details)
 
 
+async def _file_storage(_: Request, exc: Exception) -> JSONResponse:
+    """A file was refused before it could be stored. -> 422
+
+    API.md §1 lists "format non supporté" under 422 explicitly; too-large is
+    the same class of refusal — the request is well-formed, the upload itself
+    is what's rejected.
+    """
+    assert isinstance(exc, FileStorageError)
+    return error_response(HTTP_422_UNPROCESSABLE, exc.code, str(exc))
+
+
 async def _request_validation(_: Request, exc: Exception) -> JSONResponse:
     """FastAPI rejected the request before it reached a use case. -> 400
 
@@ -160,6 +172,7 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AgentMaxIterationsError, _agent_no_convergence)
     app.add_exception_handler(DomainError, _domain)
     app.add_exception_handler(ApplicationError, _application)
+    app.add_exception_handler(FileStorageError, _file_storage)
     app.add_exception_handler(RequestValidationError, _request_validation)
     app.add_exception_handler(StarletteHTTPException, _http_exception)
     app.add_exception_handler(Exception, _unhandled)

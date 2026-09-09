@@ -77,3 +77,12 @@ class FileUploadRecord:
     format: str
     size_bytes: int
     content_hash: str
+
+
+@dataclass(frozen=True)
+class DataSourceRecord:
+    """A declared data source, identified by its slug."""
+
+    id: int
+    slug: str
+    name: str
