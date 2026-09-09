@@ -34,7 +34,7 @@ class QueryDashboardOverview:
         totals = await self._queries.overview(filters)
         return [
             self._build(definition, totals, filters)
-            for definition in metric_registry.all_definitions()
+            for definition in metric_registry.overview_definitions()
         ]
 
     def _build(
