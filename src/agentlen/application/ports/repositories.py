@@ -118,6 +118,8 @@ class FileUploadRepository(Protocol):
 
     async def get_by_hash(self, content_hash: str) -> FileUploadRecord | None: ...
 
+    async def get_by_id(self, file_upload_id: int) -> FileUploadRecord | None: ...
+
     async def create(
         self,
         *,

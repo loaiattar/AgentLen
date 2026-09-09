@@ -44,6 +44,24 @@ class ConflictError(ApplicationError):
     code = "CONFLICT"
 
 
+class MappingInvalidError(ApplicationError):
+    """A mapping document failed validation. -> 422
+
+    Carries **every** error, not the first one. A user correcting a mapping one
+    error per round trip is a user who gives up; MAPPING_CONTRACT.md §4 requires
+    the full list, each with its code and the path of the offending field.
+    """
+
+    code = "MAPPING_INVALID"
+
+    def __init__(self, errors: list[dict[str, str | None]]) -> None:
+        super().__init__(
+            f"Le mapping comporte {len(errors)} erreur(s) de validation.",
+            details={"errors": errors},
+        )
+        self.errors = errors
+
+
 class AnalyzerError(ApplicationError):
     """The AI provider failed or returned a non-conforming response. -> 502
 
