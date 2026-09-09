@@ -16,9 +16,11 @@ UUID → id mapping; reads take the database id. See ADR-012.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Protocol
 
 from agentlen.application.dto.persistence import (
+    DataSourceRecord,
     FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
@@ -152,7 +154,24 @@ class MappingProposalRepository(Protocol):
 
 class DataSourceRepository(Protocol):
     async def get_by_slug(self, slug: str) -> int | None: ...
-    async def create(self, *, slug: str, name: str) -> int: ...
+
+    async def get_by_id(self, data_source_id: int) -> DataSourceRecord | None: ...
+
+    async def list(self) -> list[DataSourceRecord]:
+        """All declared sources — GET /data-sources (API.md §2)."""
+        ...
+
+    async def create(  # noqa: PLR0913
+        self,
+        *,
+        slug: str,
+        name: str,
+        description: str | None = None,
+        url: str | None = None,
+        license: str | None = None,
+        dataset_version: str | None = None,
+        retrieved_at: date | None = None,
+    ) -> int: ...
 
 
 class ReferentialRepository(Protocol):

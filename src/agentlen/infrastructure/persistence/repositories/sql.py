@@ -17,6 +17,7 @@ identifier comes from a request — the target schema is closed and known.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -25,6 +26,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from agentlen.application.dto.persistence import (
+    DataSourceRecord,
     FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
@@ -491,10 +493,48 @@ class SqlAlchemyDataSourceRepository(_Base):
             await self._conn.execute(select(t.data_source.c.id).where(t.data_source.c.slug == slug))
         ).scalar_one_or_none()
 
-    async def create(self, *, slug: str, name: str) -> int:
+    async def get_by_id(self, data_source_id: int) -> DataSourceRecord | None:
+        row = (
+            (
+                await self._conn.execute(
+                    select(t.data_source).where(t.data_source.c.id == data_source_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _to_data_source(row) if row else None
+
+    async def list(self) -> list[DataSourceRecord]:
+        rows = (
+            (await self._conn.execute(select(t.data_source).order_by(t.data_source.c.name)))
+            .mappings()
+            .all()
+        )
+        return [_to_data_source(row) for row in rows]
+
+    async def create(  # noqa: PLR0913
+        self,
+        *,
+        slug: str,
+        name: str,
+        description: str | None = None,
+        url: str | None = None,
+        license: str | None = None,
+        dataset_version: str | None = None,
+        retrieved_at: date | None = None,
+    ) -> int:
         statement = (
             insert(t.data_source)
-            .values(slug=slug, name=name)
+            .values(
+                slug=slug,
+                name=name,
+                description=description,
+                url=url,
+                license=license,
+                dataset_version=dataset_version,
+                retrieved_at=retrieved_at,
+            )
             .on_conflict_do_nothing(index_elements=[t.data_source.c.slug])
             .returning(t.data_source.c.id)
         )
@@ -504,6 +544,20 @@ class SqlAlchemyDataSourceRepository(_Base):
         found = await self.get_by_slug(slug)
         assert found is not None
         return found
+
+
+def _to_data_source(row: Any) -> DataSourceRecord:
+    return DataSourceRecord(
+        id=row["id"],
+        slug=row["slug"],
+        name=row["name"],
+        description=row["description"],
+        url=row["url"],
+        license=row["license"],
+        dataset_version=row["dataset_version"],
+        retrieved_at=row["retrieved_at"],
+        created_at=row["created_at"],
+    )
 
 
 #: kind -> (table, extra key columns resolved from the request context)

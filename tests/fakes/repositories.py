@@ -13,11 +13,13 @@ and against the SQLAlchemy implementations, which is what keeps the claim true.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from types import TracebackType
 from typing import Any
 from uuid import UUID
 
 from agentlen.application.dto.persistence import (
+    DataSourceRecord,
     FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
@@ -57,6 +59,7 @@ class _Store:
     issues: list[tuple[int, ImportIssue, int | None]] = field(default_factory=list)
     mappings: dict[int, tuple[Mapping, int]] = field(default_factory=dict)
     data_sources: dict[str, int] = field(default_factory=dict)
+    data_source_records: dict[int, DataSourceRecord] = field(default_factory=dict)
     referentials: dict[tuple[str, str, str], int] = field(default_factory=dict)
     file_uploads: dict[str, FileUploadRecord] = field(default_factory=dict)
     ids: _Sequence = field(default_factory=_Sequence)
@@ -78,6 +81,7 @@ class _Store:
             "issues": list(self.issues),
             "mappings": dict(self.mappings),
             "data_sources": dict(self.data_sources),
+            "data_source_records": dict(self.data_source_records),
             "referentials": dict(self.referentials),
             "file_uploads": dict(self.file_uploads),
         }
@@ -286,11 +290,38 @@ class InMemoryDataSourceRepository:
     async def get_by_slug(self, slug: str) -> int | None:
         return self._s.data_sources.get(slug)
 
-    async def create(self, *, slug: str, name: str) -> int:
+    async def get_by_id(self, data_source_id: int) -> DataSourceRecord | None:
+        return self._s.data_source_records.get(data_source_id)
+
+    async def list(self) -> list[DataSourceRecord]:
+        return sorted(self._s.data_source_records.values(), key=lambda r: r.name)
+
+    async def create(  # noqa: PLR0913
+        self,
+        *,
+        slug: str,
+        name: str,
+        description: str | None = None,
+        url: str | None = None,
+        license: str | None = None,
+        dataset_version: str | None = None,
+        retrieved_at: date | None = None,
+    ) -> int:
         if slug in self._s.data_sources:
             return self._s.data_sources[slug]
         new_id = self._s.ids.take()
         self._s.data_sources[slug] = new_id
+        self._s.data_source_records[new_id] = DataSourceRecord(
+            id=new_id,
+            slug=slug,
+            name=name,
+            description=description,
+            url=url,
+            license=license,
+            dataset_version=dataset_version,
+            retrieved_at=retrieved_at,
+            created_at=datetime.now(UTC),
+        )
         return new_id
 
 

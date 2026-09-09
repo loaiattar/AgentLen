@@ -13,6 +13,7 @@ storage layout from leaking into the domain.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from uuid import UUID
 
 from agentlen.domain.model.model_call import ModelCall
@@ -65,6 +66,21 @@ class InsertOutcome:
     @property
     def duplicate_count(self) -> int:
         return len(self.duplicates)
+
+
+@dataclass(frozen=True)
+class DataSourceRecord:
+    """One external dataset (API.md §2: `GET /data-sources`)."""
+
+    id: int
+    slug: str
+    name: str
+    description: str | None = None
+    url: str | None = None
+    license: str | None = None
+    dataset_version: str | None = None
+    retrieved_at: date | None = None
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True)
