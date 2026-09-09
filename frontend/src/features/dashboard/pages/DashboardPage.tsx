@@ -17,6 +17,7 @@ import {
 import {
   aggregateModels,
   aggregateTools,
+  collectDashboardWarnings,
   coverageHint,
   formatCount,
   formatDurationMs,
@@ -102,11 +103,21 @@ export function DashboardPage() {
   const tokenSeries = knownTokensByDay(activityPoints)
   const toolItems = aggregateTools(tools.data?.points ?? [])
   const modelItems = aggregateModels(models.data?.points ?? [])
-  const modelWarnings = models.data?.warnings ?? []
+  const dashboardWarnings = collectDashboardWarnings(metrics, [activity.data, tools.data, models.data])
 
   return (
     <div>
       <PageHeader kicker="Overview" title="Agent activity" description="A calm window into traces, tokens and failures." />
+      {dashboardWarnings.length > 0 ? (
+        <ul
+          role="status"
+          className="mb-[var(--space-3)] grid gap-[var(--space-1)] rounded-xl bg-warning-soft px-[var(--space-2)] py-[var(--space-2)] text-body text-foreground"
+        >
+          {dashboardWarnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
       <BentoGrid>
         <BentoModule cols={2} rows={2} className="flex min-h-72 flex-col justify-between xl:min-h-80">
           <BentoTitle>Agent activity</BentoTitle>
@@ -166,11 +177,6 @@ export function DashboardPage() {
           ) : (
             <ChartEmpty message="No model calls for this period." />
           )}
-          {modelWarnings.map((warning) => (
-            <p key={warning} className="mt-4 text-secondary text-foreground-subtle">
-              {warning}
-            </p>
-          ))}
         </BentoModule>
 
         <BentoModule cols={2} rows={2}>
