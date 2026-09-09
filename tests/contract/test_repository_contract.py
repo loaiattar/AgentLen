@@ -1,0 +1,362 @@
+"""One suite, both implementations.
+
+A test double is only useful if a use case cannot tell it apart from the real
+thing. The way to know that is not to hope — it is to run the same assertions
+against both and require identical answers.
+
+Every test below is parametrised over the in-memory unit of work and the
+SQLAlchemy one. The Postgres half skips when Docker is unavailable, so
+`pytest tests/unit` stays green on any machine while the contract is still
+enforced wherever a database exists.
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from typing import Any
+from uuid import uuid4
+
+import pytest
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from agentlen.application.dto.persistence import ModelCallRow, SessionRow
+from agentlen.domain.model.model_call import ModelCall, TokenUsage
+from agentlen.domain.model.session import Session
+from agentlen.infrastructure.persistence.engine import to_async_url
+from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.fakes.repositories import InMemoryUnitOfWork
+from tests.integration.conftest import requires_postgres
+
+STARTED = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+async def in_memory() -> AsyncIterator[InMemoryUnitOfWork]:
+    yield InMemoryUnitOfWork()
+
+
+@pytest.fixture
+async def sql(database_url: str, clean_db: Any) -> AsyncIterator[SqlAlchemyUnitOfWork]:
+    engine = create_async_engine(to_async_url(database_url))
+    yield SqlAlchemyUnitOfWork(engine)
+    await engine.dispose()
+
+
+@pytest.fixture(params=["in_memory", pytest.param("sql", marks=requires_postgres)])
+def uow(request: pytest.FixtureRequest) -> Any:
+    """Each test runs twice: once per implementation."""
+    return request.getfixturevalue(request.param)
+
+
+async def _provenance(uow: Any) -> dict[str, int]:
+    """The chain a fact row needs, created through the repositories themselves."""
+    source_id = await uow.data_sources.create(slug="tracelab", name="TraceLab")
+    if hasattr(uow, "_engine"):  # SQL: file_upload and mapping have no repository yet
+        from sqlalchemy import insert
+
+        from agentlen.infrastructure.persistence import tables as t
+
+        file_id = (
+            await uow._conn.execute(
+                insert(t.file_upload)
+                .values(
+                    original_name="s.jsonl",
+                    storage_path="/srv/s.jsonl",
+                    format="jsonl",
+                    size_bytes=1,
+                    content_hash="a" * 64,
+                )
+                .returning(t.file_upload.c.id)
+            )
+        ).scalar_one()
+        mapping_id = (
+            await uow._conn.execute(
+                insert(t.mapping)
+                .values(
+                    data_source_id=source_id,
+                    name="m",
+                    version=1,
+                    source_format="jsonl",
+                    document={},
+                    status="active",
+                )
+                .returning(t.mapping.c.id)
+            )
+        ).scalar_one()
+    else:
+        file_id, mapping_id = 1, 1
+
+    run_id = await uow.import_runs.create(
+        data_source_id=source_id, file_upload_id=file_id, mapping_id=mapping_id
+    )
+    raw = await uow.raw_records.add_many(import_run_id=run_id, records=[(1, {"sid": "a"})])
+    return {"source": source_id, "run": run_id, "raw": raw[1]}
+
+
+def _session(source_id: int, external_id: str) -> Session:
+    return Session(
+        id=uuid4(),
+        data_source_id=source_id,
+        external_id=external_id,
+        started_at=STARTED,
+        duration_ms=1000,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Idempotence
+# ---------------------------------------------------------------------------
+
+
+async def test_inserting_the_same_session_twice_reports_a_duplicate(uow: Any) -> None:
+    """Re-importing is expected. The second insert must be a no-op that says so,
+    not an error and not a second row."""
+    async with uow:
+        p = await _provenance(uow)
+        entity = _session(p["source"], "s1")
+        row = SessionRow(entity=entity, import_run_id=p["run"], raw_record_id=p["raw"])
+
+        first = await uow.sessions.add_many([row])
+        second = await uow.sessions.add_many(
+            [
+                SessionRow(
+                    entity=_session(p["source"], "s1"),
+                    import_run_id=p["run"],
+                    raw_record_id=p["raw"],
+                )
+            ]
+        )
+
+        assert first.inserted_count == 1
+        assert first.duplicate_count == 0
+        assert second.inserted_count == 0
+        assert second.duplicate_count == 1
+        assert await uow.sessions.count() == 1
+        await uow.commit()
+
+
+async def test_same_external_id_in_two_sources_is_not_a_duplicate(uow: Any) -> None:
+    """The key is (source, external_id). Two datasets may reuse an identifier."""
+    async with uow:
+        p = await _provenance(uow)
+        other = await uow.data_sources.create(slug="swe-chat", name="SWE-chat")
+
+        outcome = await uow.sessions.add_many(
+            [
+                SessionRow(
+                    entity=_session(p["source"], "shared"),
+                    import_run_id=p["run"],
+                    raw_record_id=p["raw"],
+                ),
+                SessionRow(
+                    entity=_session(other, "shared"), import_run_id=p["run"], raw_record_id=p["raw"]
+                ),
+            ]
+        )
+
+        assert outcome.inserted_count == 2
+        assert outcome.duplicate_count == 0
+        await uow.commit()
+
+
+async def test_duplicate_sequence_index_within_a_session_is_reported(uow: Any) -> None:
+    async with uow:
+        p = await _provenance(uow)
+        entity = _session(p["source"], "s1")
+        inserted = await uow.sessions.add_many(
+            [SessionRow(entity=entity, import_run_id=p["run"], raw_record_id=p["raw"])]
+        )
+
+        def call() -> ModelCallRow:
+            return ModelCallRow(
+                entity=ModelCall(
+                    id=uuid4(),
+                    session_id=entity.id,
+                    sequence_index=0,
+                    token_usage=TokenUsage(input_tokens=10, output_tokens=2),
+                    status="ok",
+                ),
+                raw_record_id=p["raw"],
+            )
+
+        first = await uow.model_calls.add_many([call()], session_ids=inserted.assigned)
+        second = await uow.model_calls.add_many([call()], session_ids=inserted.assigned)
+
+        assert first.inserted_count == 1
+        assert second.duplicate_count == 1
+        await uow.commit()
+
+
+# ---------------------------------------------------------------------------
+# Absent is not zero, all the way down to storage
+# ---------------------------------------------------------------------------
+
+
+async def test_unknown_token_counts_round_trip_as_none(uow: Any) -> None:
+    async with uow:
+        p = await _provenance(uow)
+        entity = _session(p["source"], "s1")
+        inserted = await uow.sessions.add_many(
+            [SessionRow(entity=entity, import_run_id=p["run"], raw_record_id=p["raw"])]
+        )
+        await uow.model_calls.add_many(
+            [
+                ModelCallRow(
+                    entity=ModelCall(
+                        id=uuid4(),
+                        session_id=entity.id,
+                        sequence_index=0,
+                        token_usage=TokenUsage(),
+                        status="unknown",
+                    ),
+                    raw_record_id=p["raw"],
+                )
+            ],
+            session_ids=inserted.assigned,
+        )
+        await uow.commit()
+
+    async with uow:
+        stored = await uow.sessions.get(list(inserted.assigned.values())[0])
+        assert stored is not None
+        assert stored.external_id == "s1"
+
+
+async def test_a_session_without_duration_stays_none(uow: Any) -> None:
+    async with uow:
+        p = await _provenance(uow)
+        entity = Session(
+            id=uuid4(),
+            data_source_id=p["source"],
+            external_id="s1",
+            started_at=None,
+            duration_ms=None,
+        )
+        outcome = await uow.sessions.add_many(
+            [SessionRow(entity=entity, import_run_id=p["run"], raw_record_id=p["raw"])]
+        )
+        await uow.commit()
+
+    async with uow:
+        stored = await uow.sessions.get(outcome.assigned[entity.id])
+        assert stored is not None
+        assert stored.duration_ms is None
+        assert stored.started_at is None
+
+
+# ---------------------------------------------------------------------------
+# Transaction boundary
+# ---------------------------------------------------------------------------
+
+
+async def test_leaving_without_commit_writes_nothing(uow: Any) -> None:
+    """The default is rollback: an early return must not half-commit."""
+    async with uow:
+        p = await _provenance(uow)
+        await uow.sessions.add_many(
+            [
+                SessionRow(
+                    entity=_session(p["source"], "s1"),
+                    import_run_id=p["run"],
+                    raw_record_id=p["raw"],
+                )
+            ]
+        )
+        # deliberately no commit
+
+    async with uow:
+        assert await uow.sessions.count() == 0
+
+
+async def test_an_exception_mid_import_leaves_the_database_untouched(uow: Any) -> None:
+    """A half-imported file is worse than a failed one — nothing tells you
+    which half you got."""
+    boom = RuntimeError("disk on fire")
+    with pytest.raises(RuntimeError):
+        async with uow:
+            p = await _provenance(uow)
+            await uow.sessions.add_many(
+                [
+                    SessionRow(
+                        entity=_session(p["source"], "s1"),
+                        import_run_id=p["run"],
+                        raw_record_id=p["raw"],
+                    )
+                ]
+            )
+            raise boom
+
+    async with uow:
+        assert await uow.sessions.count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Referentials
+# ---------------------------------------------------------------------------
+
+
+async def test_the_same_name_resolves_to_the_same_row(uow: Any) -> None:
+    async with uow:
+        first = await uow.referentials.resolve("tool", "Bash")
+        second = await uow.referentials.resolve("tool", "Bash")
+        assert first == second
+        await uow.commit()
+
+
+async def test_a_model_name_is_keyed_by_its_provider(uow: Any) -> None:
+    """DATA_MODEL.md §4: model is unique on (provider_id, name). Two providers
+    publishing a same-named model must not collapse into one row."""
+    async with uow:
+        anthropic = await uow.referentials.resolve(
+            "model", "shared-name", context={"provider_name": "anthropic"}
+        )
+        openai = await uow.referentials.resolve(
+            "model", "shared-name", context={"provider_name": "openai"}
+        )
+        assert anthropic != openai
+        await uow.commit()
+
+
+# ---------------------------------------------------------------------------
+# Import report and issues
+# ---------------------------------------------------------------------------
+
+
+async def test_the_import_report_round_trips(uow: Any) -> None:
+    from agentlen.domain.model.import_run import ImportReport
+
+    async with uow:
+        p = await _provenance(uow)
+        report = ImportReport(
+            records_read=100, records_imported=90, records_duplicate=7, records_rejected=3
+        )
+        await uow.import_runs.save_report(p["run"], report, status="partial")
+        await uow.commit()
+
+    async with uow:
+        stored = await uow.import_runs.get_report(p["run"])
+        assert stored is not None
+        assert stored.records_read == 100
+        assert stored.records_rejected == 3
+
+
+async def test_issues_are_listed_and_filterable_by_severity(uow: Any) -> None:
+    from agentlen.domain.model.import_run import ImportIssue
+
+    async with uow:
+        p = await _provenance(uow)
+        await uow.import_issues.add_many(
+            import_run_id=p["run"],
+            issues=[
+                (ImportIssue(severity="rejected", code="CAST_FAILED", message="nope"), p["raw"]),
+                (ImportIssue(severity="duplicate", code="DUPLICATE", message="seen"), p["raw"]),
+            ],
+        )
+        await uow.commit()
+
+    async with uow:
+        assert len(await uow.import_issues.list(import_run_id=p["run"])) == 2
+        rejected = await uow.import_issues.list(import_run_id=p["run"], severity="rejected")
+        assert len(rejected) == 1
+        assert rejected[0].code == "CAST_FAILED"

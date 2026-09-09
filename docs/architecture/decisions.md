@@ -161,3 +161,30 @@ Deux écarts structurels s'ajoutent au gel des dataclasses :
 **Conséquences.** Le domaine reste totalement ignorant de SQLAlchemy — l'objectif d'ADR-003 est donc atteint, plus complètement même qu'avec l'instrumentation, qui aurait modifié les classes du domaine au moment de l'import. Coût : la traduction est écrite à la main plutôt que déduite, soit quelques dizaines de lignes par agrégat, entièrement testables sans base.
 
 **Reste à trancher (issue #45).** Comment réconcilier l'identité `UUID` du domaine avec le `BIGINT` de la base. Recommandation : ajouter une colonne `uuid UNIQUE` aux trois tables de faits — les ports (`get(session_id: UUID)`) restent applicables, le contrat d'API garde ses entiers, et le coût est une migration. Cela suppose une PR sur `DATA_MODEL.md`, qui reste la source de vérité du schéma.
+
+---
+
+## ADR-012 — L'identité persistante appartient à la base, l'UUID est une corrélation de lot
+
+**Statut :** accepté (tranche la question laissée ouverte par [ADR-011](#adr-011--le-mapping-impératif-est-impossible-sur-nos-entités--traduction-explicite))
+
+**Contexte.** ADR-011 laissait ouverte la réconciliation entre l'`UUID` porté par les entités du domaine et le `BIGINT GENERATED ALWAYS AS IDENTITY` des tables, et recommandait d'ajouter une colonne `uuid UNIQUE` aux tables de faits pour que les ports `get(session_id: UUID)` restent applicables.
+
+**Cette recommandation était fausse.** `RecordNormalizer` génère ces identifiants avec `uuid4()`, à chaque normalisation :
+
+```python
+id=uuid4(),   # record_normalizer.py, lignes 179, 224, 284
+```
+
+Ils sont donc **aléatoires et non reproductibles** : relire le même fichier produit d'autres UUID. Les persister reviendrait à stocker une valeur qui ne désigne rien de stable, et sur laquelle aucune recherche ultérieure ne pourrait s'appuyer. La colonne aurait coûté une migration pour ranger du bruit.
+
+**Décision.** Deux identités distinctes, chacune avec son rôle :
+
+- **L'`UUID` est une corrélation *intra-lot*.** Il sert à un `ModelCall` pour désigner sa `Session` avant que l'une ou l'autre n'ait été écrite. Sa portée est une normalisation ; il ne quitte jamais le processus.
+- **Le `BIGINT` est l'identité persistante.** La base l'attribue, l'API l'expose (`{"id": 12}`), les clés étrangères le référencent.
+
+Les ports d'écriture prennent donc des entités et renvoient un `InsertOutcome` portant `assigned: dict[UUID, int]` — la correspondance qui permet de rattacher les enfants au parent qui vient d'être inséré. Les ports de lecture prennent l'identifiant de base : `get(session_id: int)`.
+
+**Conséquences.** Aucune migration, aucune colonne de bruit. Les signatures des ports du Lot A qui annonçaient `UUID` en lecture sont corrigées — elles n'avaient aucune implémentation ni aucun appelant, le coût est nul. En contrepartie, `_to_session()` frappe un nouvel UUID à la lecture : il n'a pas de sens hors d'un lot d'import, et le code qui en dépendrait serait déjà en faute.
+
+**Ce qui reste vrai d'ADR-011.** Le domaine reste ignorant de SQLAlchemy, et la traduction entité ↔ ligne est écrite à la main. C'est cette traduction explicite qui rend la distinction ci-dessus visible plutôt qu'implicite.
