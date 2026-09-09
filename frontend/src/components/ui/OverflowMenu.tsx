@@ -16,9 +16,15 @@ export interface OverflowMenuProps {
   label?: string
   items: OverflowMenuItem[]
   trigger?: ReactNode
+  side?: 'top' | 'bottom' | 'left' | 'right'
 }
 
-export function OverflowMenu({ label = 'More actions', items, trigger }: OverflowMenuProps) {
+export function OverflowMenu({
+  label = 'More actions',
+  items,
+  trigger,
+  side = 'bottom',
+}: OverflowMenuProps) {
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -31,6 +37,7 @@ export function OverflowMenu({ label = 'More actions', items, trigger }: Overflo
       <DropdownMenu.Portal>
         <DropdownMenu.Content
           align="end"
+          side={side}
           sideOffset={8}
           className={cn(
             'z-50 min-w-44 overflow-hidden rounded-lg border border-glass-border bg-glass-strong p-1 shadow-pop backdrop-blur-[var(--glass-blur)]',
