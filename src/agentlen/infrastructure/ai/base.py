@@ -31,6 +31,7 @@ from agentlen.application.errors import AnalyzerError
 from agentlen.application.ports.tool_executor import ImportAgentToolExecutor
 from agentlen.domain.errors import AgentMaxIterationsError
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
+from agentlen.infrastructure.ai.sanitizer import sanitize_samples
 from agentlen.infrastructure.config.settings import AISettings
 
 logger = logging.getLogger("agentlen.ai")
@@ -174,9 +175,12 @@ class BaseAnalyzerAdapter:
         """
         from agentlen.infrastructure.ai.prompts.analysis import build_analysis_prompt
 
+        # Routed through the sanitizer even when empty: the NewType is what
+        # makes "these samples were redacted" checkable rather than a comment,
+        # and passing a bare list around it would defeat the point.
         prompt = build_analysis_prompt(
             profile=_profile_payload(profile),
-            samples=[],
+            samples=sanitize_samples([]),
             target_schema=_target_schema(),
             allowed_operators=_allowed_operators(),
             hint=hint,
