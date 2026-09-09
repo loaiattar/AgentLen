@@ -1,54 +1,135 @@
+"""Persistence ports.
+
+Two implementations exist for each: SQLAlchemy for production, and an in-memory
+double so use-case tests run without Postgres. A shared contract test suite runs
+against both, because a double that behaves differently from the database is
+worse than no double at all.
+
+**On identity.** Domain entities carry a `UUID`, generated fresh by
+`RecordNormalizer` on every normalisation (`uuid4()`). It is *in-batch
+correlation* — how a `ModelCall` says which `Session` it belongs to before
+either has been written. It is not stable: re-reading the same file produces
+different UUIDs. Persistent identity is the `BIGINT` the database assigns, and
+that is what the API exposes. So writes take entities and hand back a
+UUID → id mapping; reads take the database id. See ADR-012.
+"""
+
 from __future__ import annotations
 
-from typing import Protocol
-from uuid import UUID
+from typing import Any, Protocol
 
-from agentlen.domain.model.import_run import ImportReport
+from agentlen.application.dto.persistence import (
+    InsertOutcome,
+    ModelCallRow,
+    SessionRow,
+    ToolCallRow,
+)
+from agentlen.domain.model.import_run import ImportIssue, ImportReport
 from agentlen.domain.model.mapping import Mapping, MappingProposal
 from agentlen.domain.model.session import Session
 
 
 class SessionRepository(Protocol):
-    async def get(self, session_id: UUID) -> Session | None: ...
-    async def save(self, session: Session) -> None: ...
+    async def add_many(self, rows: list[SessionRow]) -> InsertOutcome:
+        """Insert sessions, skipping any whose natural key already exists.
+
+        `UNIQUE (data_source_id, external_id)` decides. A conflict is reported
+        in `duplicates`, not raised: re-importing is expected behaviour.
+        """
+        ...
+
+    async def get(self, session_id: int) -> Session | None: ...
+
     async def list(
         self,
         *,
         data_source_id: int | None = None,
+        agent_id: int | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Session]: ...
 
+    async def count(self, *, data_source_id: int | None = None) -> int: ...
 
-class MappingRepository(Protocol):
-    async def get(self, mapping_id: UUID) -> Mapping | None: ...
-    async def save(self, mapping: Mapping) -> None: ...
-    async def list(self, *, data_source_id: int | None = None) -> list[Mapping]: ...
+
+class ModelCallRepository(Protocol):
+    async def add_many(
+        self, rows: list[ModelCallRow], *, session_ids: dict[Any, int]
+    ) -> InsertOutcome:
+        """`session_ids` maps each parent's in-batch UUID to its database id."""
+        ...
+
+
+class ToolCallRepository(Protocol):
+    async def add_many(
+        self,
+        rows: list[ToolCallRow],
+        *,
+        session_ids: dict[Any, int],
+        model_call_ids: dict[Any, int] | None = None,
+    ) -> InsertOutcome: ...
+
+
+class RawRecordRepository(Protocol):
+    async def add_many(
+        self, *, import_run_id: int, records: list[tuple[int, dict[str, Any]]]
+    ) -> dict[int, int]:
+        """Store payloads verbatim. Returns line number → raw_record id."""
+        ...
 
 
 class ImportRunRepository(Protocol):
-    async def save_report(self, import_run_id: UUID, report: ImportReport) -> None: ...
-    async def get_report(self, import_run_id: UUID) -> ImportReport | None: ...
+    async def create(self, *, data_source_id: int, file_upload_id: int, mapping_id: int) -> int: ...
+    async def save_report(
+        self, import_run_id: int, report: ImportReport, *, status: str
+    ) -> None: ...
+    async def get_report(self, import_run_id: int) -> ImportReport | None: ...
+
+
+class ImportIssueRepository(Protocol):
+    async def add_many(
+        self,
+        *,
+        import_run_id: int,
+        issues: list[tuple[ImportIssue, int | None]],
+    ) -> None:
+        """Each issue with the raw_record id it concerns, when there is one."""
+        ...
+
+    async def list(
+        self, *, import_run_id: int, severity: str | None = None, limit: int = 50, offset: int = 0
+    ) -> list[ImportIssue]: ...
+
+
+class MappingRepository(Protocol):
+    async def get(self, mapping_id: int) -> Mapping | None: ...
+    async def save(self, mapping: Mapping, *, data_source_id: int) -> int: ...
+    async def list(self, *, data_source_id: int | None = None) -> list[Mapping]: ...
 
 
 class MappingProposalRepository(Protocol):
-    async def save(self, proposal: MappingProposal, file_id: int) -> UUID: ...
-    async def get(self, proposal_id: UUID) -> MappingProposal | None: ...
+    """Traceability of what the AI proposed. Consumed by #53."""
+
+    async def save(
+        self, proposal: MappingProposal, *, file_upload_id: int, data_source_id: int | None = None
+    ) -> int: ...
+
+    async def get(self, proposal_id: int) -> MappingProposal | None: ...
+
+
+class DataSourceRepository(Protocol):
+    async def get_by_slug(self, slug: str) -> int | None: ...
+    async def create(self, *, slug: str, name: str) -> int: ...
 
 
 class ReferentialRepository(Protocol):
-    """Persists the small reference tables (provider/model/agent/tool/repository).
+    """Upsert-by-name for provider / model / agent / tool / repository.
 
-    One method for all five kinds — but they do NOT all share the same key
-    shape (DATA_MODEL.md §4): `provider` and `tool` are unique on `name`
-    alone; `model` is unique on `(provider_id, name)`; `repository` is
-    unique on `(host, owner, name)`. `context` carries whatever extra key
-    components a kind needs beyond `name`, e.g. for `model`:
-    `context={"provider_name": "anthropic"}`. The implementation is
-    responsible for resolving/creating any referenced-by-context row too
-    (e.g. the provider) before inserting the row that depends on it.
+    A mapping supplies a *name*; the id is resolved or created here. `context`
+    carries the extra key components some kinds need — `model` is unique on
+    `(provider_id, name)`, not on `name` alone (DATA_MODEL.md §4).
     """
 
-    async def resolve(self, kind: str, name: str, *, context: dict[str, str] | None = None) -> int:
-        """Return the id for (kind, name, context), creating the row if needed."""
-        ...
+    async def resolve(
+        self, kind: str, name: str, *, context: dict[str, str] | None = None
+    ) -> int: ...
