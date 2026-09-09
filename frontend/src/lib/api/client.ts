@@ -23,6 +23,16 @@ function joinUrl(base: string, path: string): string {
   return `${normalizedBase}${normalizedPath}`
 }
 
+function messageFromErrorBody(body: unknown, fallback: string): string {
+  if (body && typeof body === 'object' && 'error' in body) {
+    const payload = (body as { error?: { message?: unknown } }).error
+    if (typeof payload?.message === 'string' && payload.message.length > 0) {
+      return payload.message
+    }
+  }
+  return fallback
+}
+
 async function request<TResponse>(path: string, options: RequestOptions = {}): Promise<TResponse> {
   const { body, headers, ...rest } = options
   const isFormData = body instanceof FormData
@@ -39,7 +49,7 @@ async function request<TResponse>(path: string, options: RequestOptions = {}): P
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null)
-    throw new ApiError(response.statusText, response.status, errorBody)
+    throw new ApiError(messageFromErrorBody(errorBody, response.statusText), response.status, errorBody)
   }
 
   if (response.status === 204) {
