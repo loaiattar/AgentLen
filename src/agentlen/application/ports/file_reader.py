@@ -17,4 +17,13 @@ class FileProfiler(Protocol):
 class FileReader(Protocol):
     """Port for reading source records from a file."""
 
-    def read_records(self, path: str) -> list[dict[str, Any]]: ...
+    def read_records(
+        self, path: str, *, limit: int | None = None, format: str | None = None
+    ) -> list[dict[str, Any]]:
+        """Read records, at most `limit` of them.
+
+        The limit is not a convenience: a preview looks at twenty rows, and
+        reading a 500 MB file to show twenty rows would make the feature
+        unusable on exactly the files that need it most.
+        """
+        ...

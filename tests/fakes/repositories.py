@@ -297,6 +297,9 @@ class InMemoryFileUploadRepository:
     async def get_by_hash(self, content_hash: str) -> FileUploadRecord | None:
         return self._s.file_uploads.get(content_hash)
 
+    async def get_by_id(self, file_upload_id: int) -> FileUploadRecord | None:
+        return next((r for r in self._s.file_uploads.values() if r.id == file_upload_id), None)
+
     async def create(
         self,
         *,

@@ -411,6 +411,18 @@ class SqlAlchemyFileUploadRepository(_Base):
         )
         return _to_file_upload(row) if row else None
 
+    async def get_by_id(self, file_upload_id: int) -> FileUploadRecord | None:
+        row = (
+            (
+                await self._conn.execute(
+                    select(t.file_upload).where(t.file_upload.c.id == file_upload_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _to_file_upload(row) if row else None
+
     async def create(
         self,
         *,
