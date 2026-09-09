@@ -1,3 +1,4 @@
 polars
 pytest
+pytest-asyncio
 google-re2

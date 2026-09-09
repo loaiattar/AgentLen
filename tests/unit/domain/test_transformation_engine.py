@@ -177,3 +177,42 @@ def test_apply_map_values_operator():
     raw = {"index": 1, "error": None}
     results, issues = engine.apply(mapping, raw)
     assert results[0]["data"]["status"] == "ok"
+
+
+def test_source_index_reflects_position_before_rejection_not_survivor_rank():
+    """A rejected row must not shift the source_index of the rows after it —
+    that index is used downstream as part of a natural key (sequence_index),
+    and a shifting key breaks reimport idempotence."""
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="tool_call",
+                natural_key=["sequence_index"],
+                iterate="$.tools",
+                fields=[
+                    FieldRule(
+                        target="tool_name",
+                        source="$.name",
+                        required=True,
+                        operators=[{"op": "cast", "to": "string"}],
+                    ),
+                ],
+            )
+        ]
+    )
+    # Middle row is malformed (name is a dict, cast to string still "succeeds"
+    # trivially) -> use a required field that's simply absent instead, which
+    # triggers MISSING_REQUIRED_FIELD and drops the row from `results`.
+    raw = {"tools": [{"name": "Bash"}, {}, {"name": "Write"}]}
+
+    results, issues = engine.apply(mapping, raw)
+
+    expected_surviving_count = 2
+    expected_third_row_source_index = 2  # it's the 3rd source row, not the 2nd survivor
+    assert len(results) == expected_surviving_count
+    assert len(issues) == 1
+    assert results[0]["data"]["tool_name"] == "Bash"
+    assert results[0]["source_index"] == 0
+    assert results[1]["data"]["tool_name"] == "Write"
+    assert results[1]["source_index"] == expected_third_row_source_index

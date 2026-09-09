@@ -46,8 +46,13 @@ class TransformationEngine:
         """Transform one raw record according to the mapping.
 
         Returns:
-            results: list of {'entity': str, 'data': dict} for successfully
-                     transformed entities.
+            results: list of {'entity': str, 'data': dict, 'source_index': int}
+                     for successfully transformed entities. `source_index` is
+                     the entity's position in the *source* list (before any
+                     rejection) — callers that need a stable, reimport-safe
+                     ordering (e.g. a natural key) must use this, not their
+                     own rank among survivors, which shifts whenever an
+                     earlier row is rejected.
             issues:  list of ImportIssue for each field/entity that failed.
         """
         results: list[dict[str, Any]] = []
@@ -59,11 +64,17 @@ class TransformationEngine:
             else:
                 rows = [raw_record]
 
-            for row in rows:
+            for source_index, row in enumerate(rows):
                 entity_data, entity_issues = self._apply_entity(entity_mapping, row, line_number)
                 issues.extend(entity_issues)
                 if entity_data is not None:
-                    results.append({"entity": entity_mapping.target, "data": entity_data})
+                    results.append(
+                        {
+                            "entity": entity_mapping.target,
+                            "data": entity_data,
+                            "source_index": source_index,
+                        }
+                    )
 
         return results, issues
 
@@ -86,8 +97,23 @@ class TransformationEngine:
             issues.extend(field_issues)
 
             if value is None and field_rule.required:
-                # A required field that failed → the whole entity is rejected
+                # A required field that failed → the whole entity is rejected.
+                # If it failed silently (absent from the source, no operator
+                # exception), field_issues is empty — still record why.
                 rejected = True
+                if not field_issues:
+                    issues.append(
+                        ImportIssue(
+                            severity="rejected",
+                            code="MISSING_REQUIRED_FIELD",
+                            message=f"Required field '{field_rule.target}' is missing or null.",
+                            field_path=(
+                                f"entities[target={entity.target}]"
+                                f".fields[target={field_rule.target}]"
+                            ),
+                            line_number=line_number,
+                        )
+                    )
             elif value is not None:
                 data[field_rule.target] = value
 

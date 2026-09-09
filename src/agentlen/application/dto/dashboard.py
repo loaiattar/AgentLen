@@ -13,7 +13,7 @@ contract promises; a second near-identical class here would drift.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from agentlen.domain.model.metrics import Coverage
 
@@ -166,3 +166,24 @@ class ImportQualityPoint:
         if self.records_read == 0:
             return None
         return self.records_rejected / self.records_read
+
+
+def point_filters(base: DashboardFilters, **overrides: object) -> dict[str, object]:
+    """The active filters plus the ones that identify a single chart point.
+
+    This is the drill-down contract of API.md §6: the front replays the result
+    verbatim on `GET /sessions` and gets exactly the rows behind the point. It
+    is built from the same `DashboardFilters` the route was called with, so the
+    two can never disagree about a name.
+    """
+    return {**base.as_drill_down(), **{k: v for k, v in overrides.items() if v is not None}}
+
+
+def day_bounds(day: date) -> tuple[str, str]:
+    """The replayable instant range covering one calendar day, UTC.
+
+    A point on a daily chart is identified by a date, but `GET /sessions`
+    filters on instants — so the point carries the interval, not the date.
+    """
+    start = datetime(day.year, day.month, day.day, tzinfo=UTC)
+    return start.isoformat(), (start + timedelta(days=1)).isoformat()
