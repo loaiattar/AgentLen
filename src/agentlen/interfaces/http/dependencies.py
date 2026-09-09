@@ -26,9 +26,11 @@ from agentlen.application.errors import ApplicationError
 from agentlen.application.ports.clock import Clock, SystemClock
 from agentlen.application.ports.dashboard_queries import DashboardQueries
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
+from agentlen.application.ports.unit_of_work import UnitOfWork
 from agentlen.infrastructure.ai.factory import build_structure_analyzer
 from agentlen.infrastructure.persistence.engine import create_engine, get_database_url
 from agentlen.infrastructure.persistence.read_models import SqlDashboardQueries
+from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 
 class DependencyNotWiredError(ApplicationError):
@@ -80,6 +82,12 @@ def get_dashboard_queries(engine: EngineDep) -> DashboardQueries:
     return SqlDashboardQueries(engine)
 
 
+def get_unit_of_work(engine: EngineDep) -> UnitOfWork:
+    """One instance per request; the transaction itself is opened by the
+    route's own `async with uow:` block, not here."""
+    return SqlAlchemyUnitOfWork(engine)
+
+
 async def get_clock() -> AsyncIterator[Clock]:
     """Real time in production, frozen in tests via dependency_overrides."""
     yield SystemClock()
@@ -89,10 +97,6 @@ async def get_clock() -> AsyncIterator[Clock]:
 # Ports awaiting their adapters. Each names the issue that will provide it.
 # ---------------------------------------------------------------------------
 
-get_unit_of_work = _not_wired("UnitOfWork", "#45")
-get_session_repository = _not_wired("SessionRepository", "#45")
-get_mapping_repository = _not_wired("MappingRepository", "#45")
-get_import_run_repository = _not_wired("ImportRunRepository", "#45")
 get_file_storage = _not_wired("FileStorage", "#47")
 get_file_reader = _not_wired("FileReader", "#48")
 get_file_profiler = _not_wired("FileProfiler", "#48")
@@ -103,3 +107,4 @@ ClockDep = Annotated[Clock, Depends(get_clock)]
 EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
 DashboardQueriesDep = Annotated[DashboardQueries, Depends(get_dashboard_queries)]
 AnalyzerDep = Annotated[StructureAnalyzer, Depends(get_structure_analyzer)]
+UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]

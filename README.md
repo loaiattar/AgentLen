@@ -18,6 +18,16 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Added — issue #50 (`/data-sources` router)
+- `interfaces/http/routers/data_sources.py`: `GET /api/v1/data-sources` (list) and `POST /api/v1/data-sources` (create, 201) — the first half of #50, before `/files` (the upload half).
+- `interfaces/http/schemas/data_sources.py`: `DataSourceOut`/`DataSourceCreateIn` wire shapes.
+- `application/ports/repositories.py`: extended `DataSourceRepository` with `get_by_id`, `list`, and additive `create(...)` kwargs (description, url, license, dataset_version, retrieved_at).
+- `infrastructure/persistence/repositories/sql.py` and `tests/fakes/repositories.py`: matching implementations, kept in sync via the contract test suite.
+- `interfaces/http/dependencies.py`: wired `get_unit_of_work` for real (`SqlAlchemyUnitOfWork`), replacing its `_not_wired` placeholder — repository, session and mapping ports go through it now.
+- Fixed a latent `mypy --strict` gap surfaced by wiring the UoW for real: `SqlAlchemyUnitOfWork`'s repository attributes were untyped at the class level, so mypy inferred their concrete adapter types instead of the `UnitOfWork` protocol's port types — invariant under Protocol structural checks, so every repository attribute silently failed the check. Fixed by declaring them at the class level with the port types.
+- Fixed `tests/e2e/conftest.py`'s `client` fixture: its `ASGITransport` was missing `raise_app_exceptions=False`, so a genuinely unhandled exception (simulated via an unreachable database) propagated through httpx instead of returning the app's own clean `500 {"error": {"code": "INTERNAL_ERROR"}}` response — the one other e2e fixture that exercises this path (`raising_client` in `test_error_envelope.py`) already had the flag set.
+- `tests/e2e/test_data_sources_routes.py`: full route coverage (empty list, create + full record, appears in list, duplicate slug -> 409, missing field -> 422, database down -> 500 envelope).
+
 ### Added — issue #48 (CSV/Parquet profiling, wired to the domain port)
 - `polars_reader.py`: `read_csv`, `read_parquet` alongside `read_jsonl`. All three are now **lazy** (`pl.scan_*`, return `LazyFrame`) instead of eager reads, so a large file is never loaded whole. Added `scan_file(path, format=...)` dispatcher and `infer_format(path)` (suffix-based).
 - `polars_profiler.py`: rewritten as `PolarsFileProfiler`, a concrete implementation of the `FileProfiler` port (`application/ports/file_reader.py`). `profile(path, sample_size=500)` now returns the domain's `FileProfile`/`FieldProfile` dataclasses (not a Polars object — a leaked Polars type across the port boundary was a stated PR-rejection criterion).
