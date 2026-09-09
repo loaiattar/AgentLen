@@ -12,6 +12,11 @@ dependencies = [
     "alembic>=1.13",
     "asyncpg>=0.29",
     "fastapi>=0.110",
+    "pydantic-settings>=2.0",
+    # Providers are reached over plain HTTP rather than through two vendor
+    # SDKs: both APIs are simple JSON POSTs, we write the retry policy anyway,
+    # and it is what makes openai_compatible free.
+    "httpx>=0.27",
     "uvicorn[standard]>=0.29",
     # Linear-time regex. The sanitizer applies patterns to unbounded strings
     # taken straight from trace files; RE2 cannot backtrack, so no future

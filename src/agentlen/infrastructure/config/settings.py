@@ -1,0 +1,66 @@
+"""Application configuration, 12-factor.
+
+**No model identifier appears anywhere in this file** — not even as an example
+in a comment, which the CI guard checks for and rightly rejected on the first
+attempt. `AI_MODEL` has no default: hardcoding one would mean the
+"interchangeable by configuration" requirement holds only until someone forgets
+to set the variable. Not choosing for the operator is the point.
+"""
+
+from __future__ import annotations
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class AISettings(BaseSettings):
+    """Everything needed to reach a model provider."""
+
+    model_config = SettingsConfigDict(env_prefix="AI_", extra="ignore")
+
+    provider: str = Field(
+        default="fake",
+        description=(
+            "anthropic | openai | openai_compatible | fake. "
+            "Defaults to the test double so nothing can accidentally spend "
+            "credits or require a key."
+        ),
+    )
+    model: str = Field(
+        default="",
+        description="Provider's model identifier. Deliberately without a default.",
+    )
+    base_url: str = Field(
+        default="",
+        description=(
+            "Override the provider's endpoint. Required by openai_compatible, "
+            "which is how Groq, Mistral, OpenRouter, Ollama and the rest are reached."
+        ),
+    )
+    timeout_seconds: float = 60.0
+    max_output_tokens: int = 8000
+    max_iterations: int = 10
+    max_conversation_turns: int = 10
+
+
+class ProviderKeys(BaseSettings):
+    """API keys, read separately so they are never mixed into a descriptor.
+
+    Nothing in this class is ever logged, echoed in an API response, or put in
+    a `MappingProposal`.
+    """
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    # Anything OpenAI-shaped that is neither: Groq, Mistral, OpenRouter…
+    ai_api_key: str = ""
+
+
+def load_ai_settings() -> AISettings:
+    return AISettings()
+
+
+def load_provider_keys() -> ProviderKeys:
+    return ProviderKeys()
