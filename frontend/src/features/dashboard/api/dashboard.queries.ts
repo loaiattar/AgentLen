@@ -9,6 +9,7 @@ import type {
   ModelPoint,
   OverviewResponse,
   PointsResponse,
+  QualityPoint,
   ToolPoint,
 } from '@/features/dashboard/types'
 
@@ -47,6 +48,12 @@ export const dashboardQueries = {
       queryFn: () =>
         apiClient.get<PointsResponse<ModelPoint>>(`/metrics/models${toMetricsQuery(filters)}`),
     }),
+  quality: (filters: DashboardFilters = {}) =>
+    queryOptions({
+      queryKey: dashboardKeys.quality(filters),
+      queryFn: () =>
+        apiClient.get<PointsResponse<QualityPoint>>(`/metrics/quality${toMetricsQuery(filters)}`),
+    }),
   definitions: () =>
     queryOptions({
       queryKey: dashboardKeys.definitions(),
@@ -68,6 +75,10 @@ export function useDashboardToolsQuery(filters: DashboardFilters = {}) {
 
 export function useDashboardModelsQuery(filters: DashboardFilters = {}) {
   return useQuery(dashboardQueries.models(filters))
+}
+
+export function useDashboardQualityQuery(filters: DashboardFilters = {}) {
+  return useQuery(dashboardQueries.quality(filters))
 }
 
 export function useMetricDefinitionsQuery() {

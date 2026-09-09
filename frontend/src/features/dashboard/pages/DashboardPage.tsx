@@ -11,6 +11,7 @@ import {
   useDashboardActivityQuery,
   useDashboardModelsQuery,
   useDashboardOverviewQuery,
+  useDashboardQualityQuery,
   useDashboardToolsQuery,
   useMetricDefinitionsQuery,
 } from '@/features/dashboard/api/dashboard.queries'
@@ -26,8 +27,8 @@ import {
   getDefinition,
   getMetric,
   knownTokensByDay,
-  MISSING_VALUE,
   sessionsByDay,
+  summarizeQuality,
 } from '@/features/dashboard/lib/format'
 
 function ChartEmpty({ message }: { message: string }) {
@@ -39,6 +40,7 @@ export function DashboardPage() {
   const activity = useDashboardActivityQuery()
   const tools = useDashboardToolsQuery()
   const models = useDashboardModelsQuery()
+  const quality = useDashboardQualityQuery()
   const definitions = useMetricDefinitionsQuery()
 
   const isPending = overview.isPending || activity.isPending || tools.isPending || models.isPending
@@ -148,7 +150,12 @@ export function DashboardPage() {
 
         <BentoModule cols={1} padding="none" interactive>
           <Link to="/quality" className="block h-full">
-            <Kpi label="Data quality" value={MISSING_VALUE} delta="Integrity" />
+            <Kpi
+              label="Data quality"
+              value={formatRatio(summarizeQuality(quality.data?.points ?? []).rejectionRatio)}
+              hint={quality.isError ? 'Unavailable' : 'Rejection rate'}
+              title={getDefinition(definitionList, 'import_rejection_ratio')?.formula}
+            />
           </Link>
         </BentoModule>
 
