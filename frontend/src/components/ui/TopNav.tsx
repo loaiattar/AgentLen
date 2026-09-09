@@ -5,26 +5,29 @@ import { SearchField } from '@/components/ui/SearchField'
 
 export function TopNav() {
   return (
-    <header className="flex h-[var(--header-height)] items-center gap-3 px-4 md:px-8">
+    <header className="flex h-[var(--header-height)] items-center gap-[var(--space-1)] px-[var(--space-2)] md:px-[var(--space-4)]">
       <SearchField placeholder="Search sessions, imports, mappings…" aria-label="Global search" />
-      <button
-        type="button"
-        className="hidden h-9 shrink-0 rounded-md border border-border bg-glass-soft px-3 text-secondary text-foreground-muted md:block"
-      >
+
+      <Button type="button" variant="secondary" size="sm" className="hidden shrink-0 md:inline-flex">
         All datasets
-      </button>
-      <button
-        type="button"
-        className="hidden h-9 shrink-0 rounded-md border border-border bg-glass-soft px-3 text-secondary text-foreground-muted lg:block"
-      >
+      </Button>
+      <Button type="button" variant="secondary" size="sm" className="hidden shrink-0 lg:inline-flex">
         Last 7 days
-      </button>
-      <Button variant="ghost" size="icon" aria-label="Notifications">
+      </Button>
+
+      <Button type="button" variant="ghost" size="icon" aria-label="Notifications">
         <Bell />
       </Button>
-      <div className="flex size-9 items-center justify-center rounded-full bg-primary-soft text-meta text-foreground">
+
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        aria-label="Account"
+        className="rounded-pill bg-primary-soft text-meta text-foreground"
+      >
         AS
-      </div>
+      </Button>
     </header>
   )
 }

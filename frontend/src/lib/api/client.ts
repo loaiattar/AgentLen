@@ -1,4 +1,5 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api'
+/** Backend prefix from API.md. Paths passed to apiClient are relative to this (e.g. `/metrics/overview`). */
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
 export class ApiError extends Error {
   status: number
@@ -16,11 +17,17 @@ interface RequestOptions extends Omit<RequestInit, 'body'> {
   body?: unknown
 }
 
+function joinUrl(base: string, path: string): string {
+  const normalizedBase = base.replace(/\/$/, '')
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return `${normalizedBase}${normalizedPath}`
+}
+
 async function request<TResponse>(path: string, options: RequestOptions = {}): Promise<TResponse> {
   const { body, headers, ...rest } = options
   const isFormData = body instanceof FormData
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(joinUrl(API_BASE_URL, path), {
     ...rest,
     headers: {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
