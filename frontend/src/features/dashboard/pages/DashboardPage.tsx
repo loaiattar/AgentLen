@@ -30,17 +30,19 @@ import {
   sessionsByDay,
   summarizeQuality,
 } from '@/features/dashboard/lib/format'
+import { useMetricsFilters } from '@/features/dashboard/hooks/useMetricsFilters'
 
 function ChartEmpty({ message }: { message: string }) {
   return <p className="mt-8 text-body text-foreground-muted">{message}</p>
 }
 
 export function DashboardPage() {
-  const overview = useDashboardOverviewQuery()
-  const activity = useDashboardActivityQuery()
-  const tools = useDashboardToolsQuery()
-  const models = useDashboardModelsQuery()
-  const quality = useDashboardQualityQuery()
+  const { filters } = useMetricsFilters()
+  const overview = useDashboardOverviewQuery(filters)
+  const activity = useDashboardActivityQuery(filters)
+  const tools = useDashboardToolsQuery(filters)
+  const models = useDashboardModelsQuery(filters)
+  const quality = useDashboardQualityQuery(filters)
   const definitions = useMetricDefinitionsQuery()
 
   const isPending = overview.isPending || activity.isPending || tools.isPending || models.isPending
@@ -149,7 +151,7 @@ export function DashboardPage() {
         </BentoModule>
 
         <BentoModule cols={1} padding="none" interactive>
-          <Link to="/quality" className="block h-full">
+          <Link to="/quality" search={(prev) => prev} className="block h-full">
             <Kpi
               label="Data quality"
               value={formatRatio(summarizeQuality(quality.data?.points ?? []).rejectionRatio)}
