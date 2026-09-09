@@ -1,0 +1,94 @@
+# Local reproduction stack: `db` (Postgres 16), `api` (FastAPI, migrations run
+# before uvicorn starts) and `worker` (the C6 import worker, #55).
+#
+# Run via `make up` (from the repo root) rather than a bare `docker compose
+# up`, so relative paths below always resolve against the repo root and not
+# wherever the shell happens to be:
+#   docker compose -f docker/docker-compose.yml --project-directory . up --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: agentlen
+      POSTGRES_PASSWORD: agentlen
+      POSTGRES_DB: agentlen
+    volumes:
+      - agentlen_pgdata:/var/lib/postgresql/data
+    # Optional and overridable: a host already running Postgres on 5432 must
+    # not block the stack — `api`/`worker` only ever reach `db` over the
+    # internal compose network, never through this mapping.
+    ports:
+      - "${DB_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentlen -d agentlen"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file:
+      - .env
+    environment:
+      # Overrides whatever DATABASE_URL is in .env: inside the compose
+      # network Postgres is reachable at the service name `db`, never at
+      # localhost.
+      DATABASE_URL: postgresql+asyncpg://agentlen:agentlen@db:5432/agentlen
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - agentlen_storage:/app/storage
+    # PostgreSQL healthy -> Alembic migrations -> uvicorn. The API stays up
+    # after migrating; a failed migration stops the container instead of
+    # serving traffic against a schema it never applied.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn agentlen.interfaces.http.app:create_app --factory --host 0.0.0.0 --port 8000"
+    # GET /health/ready already reports "reachable AND migrations applied"
+    # (infrastructure/persistence/health.py) — reusing it here, rather than
+    # inventing a second readiness signal, is what lets `worker` wait on it
+    # below instead of racing the migration step.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://agentlen:agentlen@db:5432/agentlen
+    depends_on:
+      db:
+        condition: service_healthy
+      # `worker` claims rows from `import_run` on startup; if it starts before
+      # Alembic has created that table it crashes outright (the claim query
+      # isn't behind a retry). Waiting for `api`'s readiness — which is only
+      # healthy once migrations are applied — makes that ordering explicit
+      # instead of racing `api`'s migration step.
+      api:
+        condition: service_healthy
+    volumes:
+      - agentlen_storage:/app/storage
+    command: ["python", "-m", "agentlen.interfaces.cli", "worker"]
+
+volumes:
+  agentlen_pgdata:
+  agentlen_storage:
