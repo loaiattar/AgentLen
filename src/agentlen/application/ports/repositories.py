@@ -81,6 +81,11 @@ class RawRecordRepository(Protocol):
 
 class ImportRunRepository(Protocol):
     async def create(self, *, data_source_id: int, file_upload_id: int, mapping_id: int) -> int: ...
+
+    async def get(self, import_run_id: int) -> dict[str, Any] | None:
+        """The run's identifying columns: source, file, mapping, status."""
+        ...
+
     async def save_report(
         self, import_run_id: int, report: ImportReport, *, status: str
     ) -> None: ...

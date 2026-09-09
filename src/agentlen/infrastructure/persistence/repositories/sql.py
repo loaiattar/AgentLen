@@ -274,6 +274,18 @@ class SqlAlchemyImportRunRepository(_Base):
         )
         return int((await self._conn.execute(statement)).scalar_one())
 
+    async def get(self, import_run_id: int) -> dict[str, Any] | None:
+        row = (
+            (
+                await self._conn.execute(
+                    select(t.import_run).where(t.import_run.c.id == import_run_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row else None
+
     async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
         from sqlalchemy import func
 
