@@ -34,6 +34,27 @@ class UnknownTargetFieldError(ValidationError):
         )
 
 
+class InvalidOperatorParamError(ValidationError):
+    """Raised when an operator's parameters are malformed (e.g. an uncompilable regex)."""
+
+    def __init__(self, field_path: str, message: str) -> None:
+        super().__init__(code="INVALID_OPERATOR_PARAM", field_path=field_path, message=message)
+
+
+class OperatorFailedError(DomainError):
+    """Raised by an operator on a data-level failure, carrying a stable ImportIssue code.
+
+    Distinct from InvalidOperatorParamError: this is about the *data* being
+    unprocessable (e.g. an unparsable date), not the operator's own params
+    being malformed.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"[{code}] {message}")
+
+
 class AgentMaxIterationsError(DomainError):
     """Raised when the agent loop reaches the maximum number of iterations."""
 

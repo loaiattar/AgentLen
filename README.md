@@ -57,7 +57,14 @@ python -m pytest -v
 - 12 new tests added directly reproducing each scenario above (reimport-after-fix, missing-optional-field crash, invalid status/outcome, multiple sessions, model/provider context, cache non-collapse, int cast).
 
 ### Added — issue #43 (transformation engine operators)
-See branch `feat/43-transformation-engine-operators` (PR pending — `split_rows` blocked on a design question raised with the team).
+- `domain/services/transformation_engine.py`: implemented 5 of the 6 operators that were placeholders — `parse_datetime` (iso8601/unix_seconds/unix_millis/strptime, always UTC-aware, never falls back to a default date on failure), `coalesce` and `concat` (both resolve their own `sources` list of paths against the raw record, per `MAPPING_CONTRACT.md` §3), `hash` (sha256 over canonicalized `sources` values, same approach as `Deduplicator.content_hash` — stable regardless of key order), `regex_extract` (uses `google-re2`, not the stdlib `re`, so a pathological pattern like `(a+)+$` can't cause catastrophic backtracking — the timeout guarantee is structural).
+- `domain/errors.py`: added `OperatorFailedError` (carries a stable `ImportIssue` code, e.g. `DATETIME_PARSE_FAILED`) and `InvalidOperatorParamError` (e.g. an uncompilable regex).
+- `_apply_operator` now also receives the raw row, needed by `coalesce`/`concat`/`hash` since they read several source fields, not just the field's own pre-extracted value.
+- Added `google-re2` as a project dependency + a mypy override (it ships no type stubs).
+- Tests: one nominal + one failure case per operator, in `tests/unit/domain/test_transformation_engine_operators.py`.
+- **Rebased onto `develop`**, which had tightened `import-linter`'s contract in the meantime to forbid `re2` in `domain/` (previously not listed) — `regex_extract`'s original direct `import re2` now failed CI. Fixed by extracting a `RegexExtractor` Protocol in `transformation_engine.py` and moving the concrete re2 implementation to `infrastructure/text/re2_regex_extractor.py`, injected into the engine's constructor. Using `regex_extract` without one configured now fails clearly (`REGEX_EXTRACTOR_NOT_CONFIGURED`) instead of an import error.
+
+**Not done — `split_rows` is blocked on a design question, raised with the team rather than guessed:** every other operator is `value -> value`, but `split_rows` is described as "one source record produces N target rows" at the *field* level, which doesn't fit that contract (the engine already has an equivalent mechanism at the *entity* level via `entity_mapping.iterate`). Needs clarification on how a field-level operator is meant to fan out into multiple rows before implementing it.
 
 ### Added — issue #3 (original ingestion utilities)
 - Real sample extract from TraceLab (`data/samples/tracelab_example_session.jsonl`), 19 rows, sanitized public example pulled from `uw-syfi/TraceLab` (`example_sessions/sanitized/round_trace.jsonl`).
@@ -73,3 +80,5 @@ See branch `feat/43-transformation-engine-operators` (PR pending — `split_rows
 - All findings from loaiattar's review on PR #66 addressed (see changelog above).
 - 61/61 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files issue #46 touches. Rebased onto latest `develop`.
 - **Known gap, not fixed here**: `mapping_validator._SCHEMA` accepts `session.repository_url`, `model_call.reasoning_tokens` and `tool_call.arguments`, none of which `RecordNormalizer` reads — a validated mapping can silently lose those fields. Needs the domain entities extended before it can be fixed; flagged for the team rather than worked around.
+- 142/142 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean, rebased onto latest `develop`.
+- 5 of 6 transformation-engine operators done; `split_rows` pending a team decision (see above) — opening the PR now for the 5 that are done rather than waiting.
