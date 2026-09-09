@@ -65,3 +65,15 @@ class InsertOutcome:
     @property
     def duplicate_count(self) -> int:
         return len(self.duplicates)
+
+
+@dataclass(frozen=True)
+class FileUploadRecord:
+    """A file already known to the system, recognised by its content hash."""
+
+    id: int
+    original_name: str
+    storage_path: str
+    format: str
+    size_bytes: int
+    content_hash: str

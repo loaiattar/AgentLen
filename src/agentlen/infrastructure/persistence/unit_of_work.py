@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from agentlen.infrastructure.persistence.repositories import (
     SqlAlchemyDataSourceRepository,
+    SqlAlchemyFileUploadRepository,
     SqlAlchemyImportIssueRepository,
     SqlAlchemyImportRunRepository,
     SqlAlchemyMappingRepository,
@@ -49,6 +50,7 @@ class SqlAlchemyUnitOfWork:
         self.import_issues = SqlAlchemyImportIssueRepository(conn)
         self.mappings = SqlAlchemyMappingRepository(conn)
         self.data_sources = SqlAlchemyDataSourceRepository(conn)
+        self.file_uploads = SqlAlchemyFileUploadRepository(conn)
         self.referentials = SqlAlchemyReferentialRepository(conn)
         return self
 

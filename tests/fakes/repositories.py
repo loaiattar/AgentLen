@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 from agentlen.application.dto.persistence import (
+    FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
     SessionRow,
@@ -57,6 +58,7 @@ class _Store:
     mappings: dict[int, tuple[Mapping, int]] = field(default_factory=dict)
     data_sources: dict[str, int] = field(default_factory=dict)
     referentials: dict[tuple[str, str, str], int] = field(default_factory=dict)
+    file_uploads: dict[str, FileUploadRecord] = field(default_factory=dict)
     ids: _Sequence = field(default_factory=_Sequence)
 
     def snapshot(self) -> dict[str, Any]:
@@ -77,6 +79,7 @@ class _Store:
             "mappings": dict(self.mappings),
             "data_sources": dict(self.data_sources),
             "referentials": dict(self.referentials),
+            "file_uploads": dict(self.file_uploads),
         }
 
     def restore(self, snap: dict[str, Any]) -> None:
@@ -287,6 +290,47 @@ class InMemoryDataSourceRepository:
         return new_id
 
 
+class InMemoryFileUploadRepository:
+    def __init__(self, store: _Store) -> None:
+        self._s = store
+
+    async def get_by_hash(self, content_hash: str) -> FileUploadRecord | None:
+        return self._s.file_uploads.get(content_hash)
+
+    async def create(
+        self,
+        *,
+        original_name: str,
+        storage_path: str,
+        format: str,
+        size_bytes: int,
+        content_hash: str,
+    ) -> FileUploadRecord:
+        # Same UNIQUE(content_hash) the database enforces.
+        if content_hash in self._s.file_uploads:
+            return self._s.file_uploads[content_hash]
+        record = FileUploadRecord(
+            id=self._s.ids.take(),
+            original_name=original_name,
+            storage_path=storage_path,
+            format=format,
+            size_bytes=size_bytes,
+            content_hash=content_hash,
+        )
+        self._s.file_uploads[content_hash] = record
+        return record
+
+    async def import_run_ids(self, file_upload_id: int) -> list[int]:
+        return sorted(
+            (
+                run_id
+                for run_id, run in self._s.import_runs.items()
+                if run["file_upload_id"] == file_upload_id
+            ),
+            reverse=True,
+        )
+
+
 class InMemoryReferentialRepository:
     def __init__(self, store: _Store) -> None:
         self._s = store
@@ -318,6 +362,7 @@ class InMemoryUnitOfWork:
         self.import_issues = InMemoryImportIssueRepository(self._store)
         self.mappings = InMemoryMappingRepository(self._store)
         self.data_sources = InMemoryDataSourceRepository(self._store)
+        self.file_uploads = InMemoryFileUploadRepository(self._store)
         self.referentials = InMemoryReferentialRepository(self._store)
 
     async def __aenter__(self) -> InMemoryUnitOfWork:

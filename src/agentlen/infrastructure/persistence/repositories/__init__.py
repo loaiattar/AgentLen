@@ -2,6 +2,7 @@
 
 from agentlen.infrastructure.persistence.repositories.sql import (
     SqlAlchemyDataSourceRepository,
+    SqlAlchemyFileUploadRepository,
     SqlAlchemyImportIssueRepository,
     SqlAlchemyImportRunRepository,
     SqlAlchemyMappingRepository,
@@ -14,6 +15,7 @@ from agentlen.infrastructure.persistence.repositories.sql import (
 
 __all__ = [
     "SqlAlchemyDataSourceRepository",
+    "SqlAlchemyFileUploadRepository",
     "SqlAlchemyImportIssueRepository",
     "SqlAlchemyImportRunRepository",
     "SqlAlchemyMappingRepository",
