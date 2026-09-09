@@ -28,6 +28,7 @@ export function MobileNav() {
           <Link
             key={item.to}
             to={item.to}
+            search={(prev) => prev}
             aria-label={item.label}
             aria-current={active ? 'page' : undefined}
             className={cn(shellNavItemVariants({ layout: 'mobile', active }))}
@@ -48,7 +49,7 @@ export function MobileNav() {
         items={MOBILE_MORE_NAV.map((item) => ({
           label: item.label,
           onSelect: () => {
-            void navigate({ to: item.to })
+            void navigate({ to: item.to, search: (prev) => prev })
           },
         }))}
         trigger={
