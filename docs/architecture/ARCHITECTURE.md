@@ -367,14 +367,38 @@ sequenceDiagram
 Aucun identifiant de modèle n'est codé en dur. Tout vient de l'environnement (`.env.example` fourni, sans secrets) :
 
 ```dotenv
-AI_PROVIDER=anthropic              # anthropic | openai | fake
-AI_MODEL=claude-opus-4-8           # jamais en dur dans le code
-AI_BASE_URL=                       # vide = point d'accès par défaut du fournisseur
+AI_PROVIDER=anthropic              # anthropic | openai | openai_compatible | fake
+AI_MODEL=                          # jamais en dur, et sans valeur par défaut
+AI_BASE_URL=                       # vide = point d'accès par défaut ; requis par openai_compatible
 AI_TIMEOUT_SECONDS=60
 AI_MAX_OUTPUT_TOKENS=8000
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
+AI_API_KEY=                        # pour openai_compatible
 ```
+
+**`openai_compatible` — un adaptateur, tout un écosystème.** La quasi-totalité des
+fournisseurs expose aujourd'hui le contrat de l'API OpenAI (`POST /v1/chat/completions`,
+mêmes formes de requête et de réponse). Le même adaptateur, pointé par `AI_BASE_URL`,
+atteint donc Groq, Mistral, DeepSeek, Together, OpenRouter, Fireworks, Azure OpenAI, et
+en local Ollama, LM Studio ou vLLM — sans une ligne de code par fournisseur.
+
+```dotenv
+AI_PROVIDER=openai_compatible
+AI_BASE_URL=https://api.groq.com/openai/v1
+AI_MODEL=llama-3.3-70b
+```
+
+Cela vaut pour le **transport**, pas pour une garantie de bout en bout : l'appel d'outils
+est la partie la moins uniforme de ce contrat, et un petit modèle local l'implémente
+souvent mal. L'adaptateur atteint le fournisseur ; savoir si un modèle donné sait piloter
+la boucle agentique est une propriété de ce modèle, mesurée dans
+`docs/verification/ai-models-report.md` plutôt que supposée.
+
+Un adaptateur réellement générique — décrivant en configuration la forme des requêtes et
+des réponses de n'importe quelle API — a été écarté : authentification, encodage des
+appels d'outils, formats d'erreur et limites de débit diffèrent tous, et on construirait
+un mini-framework fragile au lieu d'un produit.
 
 ### Résolution
 
