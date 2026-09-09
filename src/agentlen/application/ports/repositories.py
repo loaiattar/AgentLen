@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any, Protocol
 
 from agentlen.application.dto.persistence import (
+    FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
     SessionRow,
@@ -105,6 +106,31 @@ class MappingRepository(Protocol):
     async def get(self, mapping_id: int) -> Mapping | None: ...
     async def save(self, mapping: Mapping, *, data_source_id: int) -> int: ...
     async def list(self, *, data_source_id: int | None = None) -> list[Mapping]: ...
+
+
+class FileUploadRepository(Protocol):
+    """Files, keyed by the SHA-256 of their content.
+
+    `content_hash` is UNIQUE in the schema, so the same bytes are stored once
+    however many times they are uploaded — the first idempotence barrier
+    (DATA_MODEL.md §6.1).
+    """
+
+    async def get_by_hash(self, content_hash: str) -> FileUploadRecord | None: ...
+
+    async def create(
+        self,
+        *,
+        original_name: str,
+        storage_path: str,
+        format: str,
+        size_bytes: int,
+        content_hash: str,
+    ) -> FileUploadRecord: ...
+
+    async def import_run_ids(self, file_upload_id: int) -> list[int]:
+        """Runs that already used this file, newest first."""
+        ...
 
 
 class MappingProposalRepository(Protocol):

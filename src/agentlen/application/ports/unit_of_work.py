@@ -15,6 +15,7 @@ from typing import Protocol
 
 from agentlen.application.ports.repositories import (
     DataSourceRepository,
+    FileUploadRepository,
     ImportIssueRepository,
     ImportRunRepository,
     MappingRepository,
@@ -41,6 +42,7 @@ class UnitOfWork(Protocol):
     import_issues: ImportIssueRepository
     mappings: MappingRepository
     data_sources: DataSourceRepository
+    file_uploads: FileUploadRepository
     referentials: ReferentialRepository
 
     async def __aenter__(self) -> UnitOfWork: ...

@@ -25,6 +25,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from agentlen.application.dto.persistence import (
+    FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
     SessionRow,
@@ -395,6 +396,69 @@ class SqlAlchemyMappingRepository(_Base):
             document_to_mapping(r["document"], name=r["name"], version=r["version"])
             for r in (await self._conn.execute(query.order_by(t.mapping.c.id))).mappings()
         ]
+
+
+class SqlAlchemyFileUploadRepository(_Base):
+    async def get_by_hash(self, content_hash: str) -> FileUploadRecord | None:
+        row = (
+            (
+                await self._conn.execute(
+                    select(t.file_upload).where(t.file_upload.c.content_hash == content_hash)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _to_file_upload(row) if row else None
+
+    async def create(
+        self,
+        *,
+        original_name: str,
+        storage_path: str,
+        format: str,
+        size_bytes: int,
+        content_hash: str,
+    ) -> FileUploadRecord:
+        statement = (
+            insert(t.file_upload)
+            .values(
+                original_name=original_name,
+                storage_path=storage_path,
+                format=format,
+                size_bytes=size_bytes,
+                content_hash=content_hash,
+            )
+            .on_conflict_do_nothing(index_elements=[t.file_upload.c.content_hash])
+            .returning(t.file_upload)
+        )
+        created = (await self._conn.execute(statement)).mappings().one_or_none()
+        if created is not None:
+            return _to_file_upload(created)
+        # Lost a race with a concurrent upload of identical bytes: the other
+        # writer's row is the right answer.
+        existing = await self.get_by_hash(content_hash)
+        assert existing is not None
+        return existing
+
+    async def import_run_ids(self, file_upload_id: int) -> list[int]:
+        rows = await self._conn.execute(
+            select(t.import_run.c.id)
+            .where(t.import_run.c.file_upload_id == file_upload_id)
+            .order_by(t.import_run.c.id.desc())
+        )
+        return [int(r[0]) for r in rows]
+
+
+def _to_file_upload(row: Any) -> FileUploadRecord:
+    return FileUploadRecord(
+        id=row["id"],
+        original_name=row["original_name"],
+        storage_path=row["storage_path"],
+        format=row["format"],
+        size_bytes=row["size_bytes"],
+        content_hash=row["content_hash"],
+    )
 
 
 class SqlAlchemyDataSourceRepository(_Base):
