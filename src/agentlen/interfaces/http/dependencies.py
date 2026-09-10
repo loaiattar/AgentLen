@@ -25,10 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agentlen.application.errors import ApplicationError
 from agentlen.application.ports.clock import Clock, SystemClock
 from agentlen.application.ports.dashboard_queries import DashboardQueries
+from agentlen.application.ports.exploration_queries import ExplorationQueries
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
 from agentlen.infrastructure.ai.factory import build_structure_analyzer
 from agentlen.infrastructure.persistence.engine import create_engine, get_database_url
 from agentlen.infrastructure.persistence.read_models import SqlDashboardQueries
+from agentlen.infrastructure.persistence.read_models.sql import SqlExplorationQueries
 
 
 class DependencyNotWiredError(ApplicationError):
@@ -103,3 +105,10 @@ ClockDep = Annotated[Clock, Depends(get_clock)]
 EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
 DashboardQueriesDep = Annotated[DashboardQueries, Depends(get_dashboard_queries)]
 AnalyzerDep = Annotated[StructureAnalyzer, Depends(get_structure_analyzer)]
+
+
+def get_exploration_queries(engine: EngineDep) -> ExplorationQueries:
+    return SqlExplorationQueries(engine)
+
+
+ExplorationQueriesDep = Annotated[ExplorationQueries, Depends(get_exploration_queries)]
