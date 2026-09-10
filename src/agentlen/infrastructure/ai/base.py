@@ -31,7 +31,8 @@ from agentlen.application.errors import AnalyzerError
 from agentlen.application.ports.tool_executor import ImportAgentToolExecutor
 from agentlen.domain.errors import AgentMaxIterationsError
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
-from agentlen.infrastructure.ai.sanitizer import sanitize_samples
+from agentlen.infrastructure.ai.prompts.analysis import PROMPT_VERSION
+from agentlen.infrastructure.ai.sanitizer import sanitize_samples, sanitize_value
 from agentlen.infrastructure.config.settings import AISettings
 
 logger = logging.getLogger("agentlen.ai")
@@ -70,7 +71,10 @@ class BaseAnalyzerAdapter:
     """Everything a provider adapter shares."""
 
     provider_name = "base"
-    prompt_version = "analysis-v1"
+    #: Reprend la constante du builder plutôt que de la recopier : le descriptor
+    #: n'a d'intérêt que s'il nomme le prompt réellement envoyé, et deux
+    #: littéraux séparés divergent au premier changement de formulation.
+    prompt_version = PROMPT_VERSION
 
     def __init__(self, settings: AISettings, api_key: str = "") -> None:
         if not settings.model:
@@ -144,17 +148,21 @@ class BaseAnalyzerAdapter:
                     if response.status_code < HTTP_ERROR_THRESHOLD:
                         parsed: dict[str, Any] = response.json()
                         return parsed
+                    diagnostic = _provider_diagnostic(response)
                     if response.status_code not in RETRYABLE_STATUS:
                         raise AnalyzerError(
                             f"Le fournisseur {self.provider_name} a répondu "
-                            f"{response.status_code}.",
-                            details={"status": response.status_code},
+                            f"{response.status_code}"
+                            + (f" : {diagnostic['provider_message']}" if diagnostic else "")
+                            + ".",
+                            details={"status": response.status_code, **(diagnostic or {})},
                         )
                     last = AnalyzerError(f"HTTP {response.status_code}")
                     logger.warning(
-                        "Appel %s: HTTP %d, tentative %d/%d",
+                        "Appel %s: HTTP %d (%s), tentative %d/%d",
                         self.provider_name,
                         response.status_code,
+                        (diagnostic or {}).get("request_id", "sans request_id"),
                         attempt,
                         MAX_ATTEMPTS,
                     )
@@ -331,6 +339,51 @@ def _mapping_payload(mapping: Mapping) -> dict[str, Any]:
     )
 
     return mapping_to_document(mapping)
+
+
+#: Le message d'erreur d'un fournisseur tient en une phrase. Borné malgré tout :
+#: un hôte openai_compatible arbitraire n'est pas tenu d'être aussi sobre.
+MAX_PROVIDER_MESSAGE = 300
+
+
+def _provider_diagnostic(response: httpx.Response) -> dict[str, str] | None:
+    """Ce que le fournisseur a dit du refus, et sous quel identifiant.
+
+    La règle du module — aucune clé, aucun contenu de trace dans un log — vise
+    les erreurs de connexion, dont le message porte l'URL et l'URL parfois la
+    clé. Elle ne vise pas le corps JSON qu'un fournisseur renvoie exprès pour
+    expliquer un refus : sans lui, un solde épuisé, une clé invalide et un
+    modèle inexistant donnent tous les trois « a répondu 400 », et le
+    `request_id` que le support demande est perdu. L'URL, elle, n'est jamais
+    reprise ici.
+    """
+    diagnostic: dict[str, str] = {}
+
+    request_id = response.headers.get("request-id") or response.headers.get("x-request-id")
+    if request_id:
+        diagnostic["request_id"] = request_id[:128]
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        error = error if isinstance(error, dict) else payload
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            # Passé au caviardeur, pas simplement tronqué : un proxy mal réglé
+            # renvoie volontiers l'en-tête Authorization dans son message
+            # d'erreur, et ce message part maintenant jusqu'au client HTTP.
+            diagnostic["provider_message"] = sanitize_value(
+                message.strip(), max_value_length=MAX_PROVIDER_MESSAGE
+            )
+        kind = error.get("type")
+        if isinstance(kind, str) and kind.strip():
+            diagnostic["provider_error_type"] = kind.strip()[:64]
+
+    return diagnostic or None
 
 
 def _profile_payload(profile: Any) -> dict[str, Any]:
