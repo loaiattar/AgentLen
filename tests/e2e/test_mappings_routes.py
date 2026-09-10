@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from httpx import AsyncClient
 
 from tests.integration.conftest import requires_postgres
@@ -18,7 +20,15 @@ VALID_DOCUMENT = {
 }
 
 
-async def _seed_data_source(live_client: AsyncClient, *, slug: str = "tracelab") -> int:
+async def _seed_data_source(live_client: AsyncClient, *, slug: str | None = None) -> int:
+    """A fresh data source with a unique slug by default.
+
+    `live_client` shares one Postgres across the whole CI run with no
+    truncation between tests, and `POST /data-sources` genuinely 409s on a
+    duplicate slug (it isn't idempotent like the repository's own `create()`)
+    — a hardcoded default slug would 409 on the second test to call this.
+    """
+    slug = slug or f"tracelab-{uuid4().hex[:8]}"
     response = await live_client.post("/api/v1/data-sources", json={"slug": slug, "name": slug})
     id_: int = response.json()["id"]
     return id_
@@ -191,8 +201,8 @@ async def test_get_unknown_mapping_is_404(live_client: AsyncClient) -> None:
 
 @requires_postgres
 async def test_list_mappings_filters_by_data_source(live_client: AsyncClient) -> None:
-    source_id = await _seed_data_source(live_client, slug="tracelab")
-    other_id = await _seed_data_source(live_client, slug="swe-chat")
+    source_id = await _seed_data_source(live_client)
+    other_id = await _seed_data_source(live_client)
     await live_client.post(
         "/api/v1/mappings", json={"data_source_id": source_id, "name": "a", **VALID_DOCUMENT}
     )
