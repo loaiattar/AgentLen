@@ -18,6 +18,17 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Fixed — two review findings on the #29 session detail page
+- **Tokens KPI showed `0` instead of `—` for a real "no data" case.** The sum only guarded `modelCalls.length === 0`; a session with model calls but every `input_tokens`/`output_tokens` null (common with TraceLab) still summed to `0` and displayed it — violating the project's own "null isn't 0" rule (same as the dashboard). Fixed by tracking which calls report *any* token data at all: `—` now means "nothing known", not "zero calls".
+- **The Back link dropped the list's drill-down filters.** `<Link to="/sessions">` with no `search` prop resets the shared `/_app` search state — returning from a session opened while filtered by tool/day landed back on the unfiltered list. Added `search={(prev) => prev}`, the same pattern already used everywhere else this route is entered (`openSession`, `useSessionIdSearch`, the list row links).
+
+### Added — issue #29 (frontend: session detail page)
+- `frontend/src/features/sessions/pages/SessionDetailPage.tsx`: replaced the static design-mock (hardcoded "gpt-4.1", fake timeline) with a real page wired to the API. The data layer (`sessionsQueries.detail/.timeline/.record`, the `useSessionQuery`/`useSessionTimelineQuery`/`useRawRecordQuery` hooks, and the matching TypeScript types) already existed from #28 — this only builds the page that consumes it.
+- General info: duration, total tokens (summed across model calls, `—` when there are none — never a bare `0` for "no data"), model/tool call counts, agent/source ids, outcome badge, start/end instants — reusing `formatDurationMs`/`formatCount`/`formatInstant`/`outcomeTone` from `sessions/lib/format.ts` rather than duplicating formatting logic.
+- Timeline: each model/tool call renders via the existing `Timeline`/`TimelineItem` component, expandable for its own detail (tokens/duration for model calls, duration/error for tool calls) — nothing shown up front beyond time, type and status, per the issue's "reading over controls" brief.
+- Raw record drill-down: `GET /records/{raw_record_id}` is fetched lazily (`enabled` only once a "View raw record" button is clicked) into a `Drawer`, not eagerly for the whole timeline — the issue calls for it accessible on demand, not shown by default.
+- Verified: `tsc -b` and `oxlint` clean, `vite build` succeeds. **Not verified live in a browser** — no browser tool available here, and no Docker locally to run the real backend against real data; needs a manual check with `npm run dev`.
+
 ### Fixed — same class of CI failure, now in `test_mappings_routes.py`
 - `_seed_data_source()` defaulted to `slug="tracelab"` on every call. Unlike the repository's own `create()`, `POST /data-sources` genuinely 409s on a duplicate slug — so the second `@requires_postgres` test to call this without an explicit slug got a 409 instead of 201, and `response.json()["id"]` raised `KeyError: 'id'`. Same root cause as the `test_imports_routes.py` fix above, just a different file — CI (real Postgres) caught it, not local (Docker unavailable).
 - Fixed by generating a unique slug by default; `test_list_mappings_filters_by_data_source`'s two hardcoded slugs (`"tracelab"`/`"swe-chat"`) dropped in favour of the same unique default.
