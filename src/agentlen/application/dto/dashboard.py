@@ -35,6 +35,9 @@ class DashboardFilters:
     date_from: datetime | None = None
     date_to: datetime | None = None
 
+    # Public filter name; matches session.outcome, not a child call or import status.
+    status: str | None = None
+
     def as_drill_down(self) -> dict[str, object]:
         """The non-empty filters, ready to be replayed on `GET /sessions`."""
         return {
@@ -45,6 +48,7 @@ class DashboardFilters:
                 ("model_id", self.model_id),
                 ("tool_id", self.tool_id),
                 ("import_run_id", self.import_run_id),
+                ("status", self.status),
                 ("date_from", self.date_from.isoformat() if self.date_from else None),
                 ("date_to", self.date_to.isoformat() if self.date_to else None),
             )

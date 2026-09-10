@@ -10,7 +10,7 @@ a filter silently stops narrowing.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, Query
 
@@ -18,7 +18,7 @@ from agentlen.application.dto.dashboard import DashboardFilters
 
 
 def dashboard_filters(  # noqa: PLR0913, PLR0917
-    # Seven parameters because API.md §6 documents seven filters. FastAPI
+    # Eight parameters because API.md §6 documents eight filters. FastAPI
     # derives the query string from this signature, so collapsing them into
     # an object would remove them from the OpenAPI the front generates from.
     data_source_id: Annotated[int | None, Query(description="Restrict to one source.")] = None,
@@ -32,6 +32,10 @@ def dashboard_filters(  # noqa: PLR0913, PLR0917
     date_to: Annotated[
         datetime | None, Query(description="Sessions started at or before this instant.")
     ] = None,
+    status: Annotated[
+        Literal["completed", "error", "aborted", "unknown"] | None,
+        Query(description="Session outcome."),
+    ] = None,
 ) -> DashboardFilters:
     return DashboardFilters(
         data_source_id=data_source_id,
@@ -41,6 +45,7 @@ def dashboard_filters(  # noqa: PLR0913, PLR0917
         import_run_id=import_run_id,
         date_from=date_from,
         date_to=date_to,
+        status=status,
     )
 
 

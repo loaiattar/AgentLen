@@ -14,9 +14,11 @@ import {
   getDefinition,
   summarizeQuality,
 } from '@/features/dashboard/lib/format'
+import { useMetricsFilters } from '@/features/dashboard/hooks/useMetricsFilters'
 
 export function DataQualityPage() {
-  const quality = useDashboardQualityQuery()
+  const { filters } = useMetricsFilters()
+  const quality = useDashboardQualityQuery(filters)
   const definitions = useMetricDefinitionsQuery()
 
   if (quality.isPending) {

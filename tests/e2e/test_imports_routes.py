@@ -239,7 +239,14 @@ async def test_preview_rejects_an_invalid_mapping_with_422(
     live_client: AsyncClient, live_engine: AsyncEngine
 ) -> None:
     async with SqlAlchemyUnitOfWork(live_engine) as uow:
-        source_id = await uow.data_sources.create(slug="tracelab", name="TraceLab")
+        # Own unique slug: data_sources.create() is idempotent by slug, so a
+        # bare "tracelab" would silently work today, but only because of
+        # pytest's current file collection order relative to
+        # test_data_sources_routes.py's own (non-idempotent, HTTP-level)
+        # "tracelab" — fragile enough to fix outright.
+        source_id = await uow.data_sources.create(
+            slug=f"tracelab-{uuid4().hex[:8]}", name="TraceLab"
+        )
         file_record = await uow.file_uploads.create(
             original_name="s.jsonl",
             storage_path="unused/does-not-need-to-exist.jsonl",

@@ -12,6 +12,7 @@ export function AppSidebar() {
       <div className="flex h-[var(--header-height)] items-center px-[var(--space-3)]">
         <Link
           to="/"
+          search={(prev) => prev}
           className="font-display text-section text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           AgentScope
@@ -27,6 +28,7 @@ export function AppSidebar() {
             <Link
               key={item.to}
               to={item.to}
+              search={(prev) => prev}
               aria-current={active ? 'page' : undefined}
               className={cn(shellNavItemVariants({ layout: 'sidebar', active }))}
             >
