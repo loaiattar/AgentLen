@@ -18,6 +18,14 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Added — issue #50 (`/files` router — upload, metadata, profiling)
+- `interfaces/http/routers/files.py`: `POST /api/v1/files` (multipart upload, 201), `GET /api/v1/files/{id}` (metadata), `POST /api/v1/files/{id}/profile` (200) — the second half of #50, closing it out on top of `/data-sources`.
+- `interfaces/http/schemas/files.py`: `FileUploadOut`/`FieldProfileOut`/`FileProfileOut` wire shapes.
+- `interfaces/http/dependencies.py`: wired `get_file_storage` (`LocalFileStorage`, rooted at `<repo>/storage/uploads`), `get_file_reader` (`PolarsRecordReader`) and `get_file_profiler` (`PolarsFileProfiler`) for real, replacing their `_not_wired` placeholders — nothing reimplemented, `UploadFile`/`ProfileFile` (#47/#48) and the existing storage/profiler adapters are wired as-is.
+- `interfaces/http/errors.py`: added the `FileStorageError` handler (-> 422, e.g. `UNSUPPORTED_FILE_FORMAT`) — a disallowed extension was previously falling through to the generic 500 handler with no code, contradicting API.md §1.
+- `tests/e2e/test_files_routes.py`: upload + metadata + profiling coverage, plus a duplicate-content ("already_seen") case and a 404 on both metadata and profiling for an unknown id. The extension-rejection test runs without Postgres, since `LocalFileStorage` refuses the file before any row is touched.
+- Found while reconciling with a colleague's parallel PR (#92, `Closes #89`) covering overlapping scope: its plumbing changes (dependency wiring style, `FileStorageError` handler) matched what this issue needed, but its branch as pushed was missing the router/schema/test files its own `app.py` imported — confirmed via a scratch worktree (`ImportError` on startup). Rebuilt independently against this issue's fuller `DataSourceRecord` (API.md §2 requires `dataset_version`/`retrieved_at`, absent from the other branch's version).
+
 ### Added — issue #50 (`/data-sources` router)
 - `interfaces/http/routers/data_sources.py`: `GET /api/v1/data-sources` (list) and `POST /api/v1/data-sources` (create, 201) — the first half of #50, before `/files` (the upload half).
 - `interfaces/http/schemas/data_sources.py`: `DataSourceOut`/`DataSourceCreateIn` wire shapes.

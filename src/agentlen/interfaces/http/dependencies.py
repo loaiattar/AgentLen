@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
@@ -25,12 +26,24 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agentlen.application.errors import ApplicationError
 from agentlen.application.ports.clock import Clock, SystemClock
 from agentlen.application.ports.dashboard_queries import DashboardQueries
+from agentlen.application.ports.file_reader import FileProfiler, FileReader
+from agentlen.application.ports.file_storage import FileStorage
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
 from agentlen.application.ports.unit_of_work import UnitOfWork
 from agentlen.infrastructure.ai.factory import build_structure_analyzer
+from agentlen.infrastructure.files.local_storage import LocalFileStorage
+from agentlen.infrastructure.files.polars_profiler import PolarsFileProfiler
+from agentlen.infrastructure.files.polars_record_reader import PolarsRecordReader
 from agentlen.infrastructure.persistence.engine import create_engine, get_database_url
 from agentlen.infrastructure.persistence.read_models import SqlDashboardQueries
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
+
+#: Repository root, from this file: src/agentlen/interfaces/http/ -> up 4.
+#: Same convention as the CLI seed (interfaces/cli/seed.py): resolves to
+#: /app/storage/uploads under the compose WORKDIR, <repo_root>/storage/uploads
+#: locally.
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+STORAGE_ROOT = _PROJECT_ROOT / "storage" / "uploads"
 
 
 class DependencyNotWiredError(ApplicationError):
@@ -94,12 +107,20 @@ async def get_clock() -> AsyncIterator[Clock]:
 
 
 # ---------------------------------------------------------------------------
-# Ports awaiting their adapters. Each names the issue that will provide it.
+# Files — local disk today; the port is what the rest of the app depends on.
 # ---------------------------------------------------------------------------
 
-get_file_storage = _not_wired("FileStorage", "#47")
-get_file_reader = _not_wired("FileReader", "#48")
-get_file_profiler = _not_wired("FileProfiler", "#48")
+
+def get_file_storage() -> FileStorage:
+    return LocalFileStorage(STORAGE_ROOT)
+
+
+def get_file_reader() -> FileReader:
+    return PolarsRecordReader()
+
+
+def get_file_profiler() -> FileProfiler:
+    return PolarsFileProfiler()
 
 
 #: Inject with `clock: ClockDep` in a route signature.
@@ -108,3 +129,6 @@ EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
 DashboardQueriesDep = Annotated[DashboardQueries, Depends(get_dashboard_queries)]
 AnalyzerDep = Annotated[StructureAnalyzer, Depends(get_structure_analyzer)]
 UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
+FileStorageDep = Annotated[FileStorage, Depends(get_file_storage)]
+FileReaderDep = Annotated[FileReader, Depends(get_file_reader)]
+FileProfilerDep = Annotated[FileProfiler, Depends(get_file_profiler)]
