@@ -95,7 +95,15 @@ class BaseAnalyzerAdapter:
     def _parse_turn(self, payload: dict[str, Any]) -> ModelTurn:
         raise NotImplementedError
 
-    def _tool_results_message(self, results: list[tuple[ToolCall, dict[str, Any]]]) -> Any:
+    def _tool_results_message(
+        self, results: list[tuple[ToolCall, dict[str, Any]]]
+    ) -> list[dict[str, Any]]:
+        """The messages carrying these results back, in the provider's shape.
+
+        Always a list, even when the provider wants a single message holding
+        every result: the loop extends `messages` with it, and a lone dict
+        returned here would be appended as a nested element instead.
+        """
         raise NotImplementedError
 
     def _assistant_message(self, turn: ModelTurn) -> Any:
@@ -201,7 +209,7 @@ class BaseAnalyzerAdapter:
                 results.append((call, await tool_executor.execute(call.name, call.arguments)))
 
             messages.append(self._assistant_message(turn))
-            messages.append(self._tool_results_message(results))
+            messages.extend(self._tool_results_message(results))
 
         raise AgentMaxIterationsError(self._settings.max_iterations)
 
@@ -228,7 +236,7 @@ class BaseAnalyzerAdapter:
                 for call in turn.tool_calls
             ]
             messages.append(self._assistant_message(turn))
-            messages.append(self._tool_results_message(results))
+            messages.extend(self._tool_results_message(results))
 
         raise AgentMaxIterationsError(self._settings.max_conversation_turns)
 
@@ -346,13 +354,15 @@ def _profile_payload(profile: Any) -> dict[str, Any]:
 
 
 def _target_schema() -> dict[str, Any]:
-    from agentlen.domain.services import mapping_validator
+    # Imported by name, not read with getattr and a default: these two feed the
+    # prompt's contract sections, and a silent fallback here ships an empty
+    # schema or an empty whitelist to the model with nothing to show for it.
+    from agentlen.domain.services.mapping_validator import _SCHEMA
 
-    schema = getattr(mapping_validator, "_SCHEMA", {})
-    return {target: sorted(fields) for target, fields in schema.items()}
+    return {target: sorted(fields) for target, fields in _SCHEMA.items()}
 
 
 def _allowed_operators() -> list[str]:
-    from agentlen.domain.services import mapping_validator
+    from agentlen.domain.services.mapping_validator import OPERATOR_WHITELIST
 
-    return sorted(getattr(mapping_validator, "ALLOWED_OPERATORS", ()))
+    return sorted(OPERATOR_WHITELIST)

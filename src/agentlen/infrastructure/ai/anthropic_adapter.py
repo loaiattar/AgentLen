@@ -60,17 +60,21 @@ class AnthropicAnalyzer(BaseAnalyzerAdapter):
 
     def _tool_results_message(
         self, results: list[tuple[ToolCall, dict[str, Any]]]
-    ) -> dict[str, Any]:
+    ) -> list[dict[str, Any]]:
+        # One message holding every result — the opposite of OpenAI. It is
+        # still returned in a list because the loop extends with it.
         import json
 
-        return {
-            "role": "user",
-            "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": call.id,
-                    "content": json.dumps(result, ensure_ascii=False),
-                }
-                for call, result in results
-            ],
-        }
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": call.id,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                    for call, result in results
+                ],
+            }
+        ]
