@@ -110,6 +110,23 @@ def _redact_credentials_assignment(match: Any) -> str:
     return f"{match.group(1)}{match.group(2)}[REDACTED_SECRET]"
 
 
+def _redact_email_unless_vcs_remote(match: Any) -> str:
+    """`git@github.com:acme/api.git` is a repository URL, not an address.
+
+    The email rule matched the `git@github.com` inside it and blanked the whole
+    value, so every example the analyzer saw for a remote read
+    `[REDACTED_EMAIL]` — and `repository_url` is a target field it is expected
+    to map. Keeping the shape here costs nothing: what is preserved is an
+    address followed immediately by `:path/to/repo.git` or `/path/to/repo.git`
+    — the SCP and `ssh://` forms of a remote, and not how a human address is
+    ever written. Anything else, including an address followed by a colon in
+    prose, still goes.
+    """
+    if match.group(1):
+        return str(match.group(0))
+    return "[REDACTED_EMAIL]"
+
+
 def _redact_connection_password(match: Any) -> str:
     """`scheme://user:password@host` — keep scheme and user, drop the password."""
     return f"{match.group(1)}{match.group(2)}:[REDACTED_PASSWORD]@"
@@ -163,10 +180,15 @@ _VALUE_RULES: tuple[tuple[Any, _Replacer], ...] = (
     (re2.compile(r"(?i:bearer)\s{1,4}([A-Za-z0-9._-]{8,512})"), _credential_after("Bearer")),
     (re2.compile(r"(?i:basic)\s{1,4}([A-Za-z0-9+/=]{12,512})"), _credential_after("Basic")),
     # Email addresses. RFC 5321 caps the local part at 64 octets and the domain
-    # at 255, so these bounds are the specification, not a guess.
+    # at 255, so these bounds are the specification, not a guess. The optional
+    # tail is what tells an address apart from an SCP-style git remote — see
+    # `_redact_email_unless_vcs_remote`.
     (
-        re2.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}"),
-        _constant("[REDACTED_EMAIL]"),
+        re2.compile(
+            r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,24}"
+            r"([:/][A-Za-z0-9._/~-]{1,200}\.git)?"
+        ),
+        _redact_email_unless_vcs_remote,
     ),
     # Absolute home paths. The prefix is kept: /Users/ is a macOS trace and
     # /home/ a Linux one, and a mapping may legitimately care.

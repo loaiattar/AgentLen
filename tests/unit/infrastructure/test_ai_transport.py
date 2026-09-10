@@ -145,3 +145,88 @@ async def test_a_network_failure_is_reported_by_class_not_message(
     assert SECRET not in caplog.text
     assert SECRET not in str(exc.value)
     assert "ConnectError" in str(exc.value.details)
+
+
+# ---------------------------------------------------------------------------
+# Ce que le fournisseur a dit du refus remonte jusqu'à l'opérateur
+# ---------------------------------------------------------------------------
+
+
+class Refusing(httpx.AsyncBaseTransport):
+    """Un fournisseur qui refuse en expliquant pourquoi, comme le fait l'API."""
+
+    def __init__(self, status: int, payload: Any, *, request_id: str | None = None) -> None:
+        self.status = status
+        self.payload = payload
+        self.request_id = request_id
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        headers = {"request-id": self.request_id} if self.request_id else {}
+        if isinstance(self.payload, str):
+            return httpx.Response(self.status, text=self.payload, headers=headers)
+        return httpx.Response(self.status, json=self.payload, headers=headers)
+
+
+async def test_a_refusal_carries_the_providers_own_explanation(patched) -> None:  # type: ignore[no-untyped-def]
+    """Constat de la vérification du 2026-09-10 : un solde épuisé, une clé
+    invalide et un modèle inexistant donnaient tous les trois « a répondu
+    400 », et le request_id que le support réclame était jeté."""
+    patched(
+        Refusing(
+            400,
+            {
+                "type": "error",
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": "Your credit balance is too low to access the Anthropic API.",
+                },
+            },
+            request_id="req_011CeuqhRg7cecEQkLZ7uaVk",
+        )
+    )
+
+    with pytest.raises(AnalyzerError) as exc:
+        await analyzer()._post({"x": 1})
+
+    assert "credit balance" in str(exc.value)
+    details = exc.value.details or {}
+    assert details["status"] == 400
+    assert details["request_id"] == "req_011CeuqhRg7cecEQkLZ7uaVk"
+    assert details["provider_error_type"] == "invalid_request_error"
+
+
+async def test_the_providers_message_is_redacted_before_it_travels(patched) -> None:  # type: ignore[no-untyped-def]
+    """Un proxy mal réglé renvoie l'en-tête Authorization dans son message
+    d'erreur. Ce message part maintenant jusqu'au client HTTP : il passe donc
+    par le caviardeur, comme n'importe quelle donnée de trace."""
+    patched(Refusing(400, {"error": {"message": f"invalid credentials: {SECRET} rejected"}}))
+
+    with pytest.raises(AnalyzerError) as exc:
+        await analyzer()._post({"x": 1})
+
+    assert SECRET not in str(exc.value)
+    assert SECRET not in str(exc.value.details)
+    assert "rejected" in str(exc.value)
+
+
+async def test_a_refusal_without_a_json_body_still_names_the_status(patched) -> None:  # type: ignore[no-untyped-def]
+    """Une base_url qui pointe sur un proxy renvoie du HTML, pas du JSON."""
+    patched(Refusing(400, "<html><body>Bad Gateway</body></html>"))
+
+    with pytest.raises(AnalyzerError) as exc:
+        await analyzer()._post({"x": 1})
+
+    assert "400" in str(exc.value)
+    assert (exc.value.details or {})["status"] == 400
+
+
+async def test_a_verbose_provider_message_is_bounded(patched) -> None:  # type: ignore[no-untyped-def]
+    """Un hôte openai_compatible arbitraire n'est pas tenu d'être sobre."""
+    from agentlen.infrastructure.ai.base import MAX_PROVIDER_MESSAGE
+
+    patched(Refusing(400, {"error": {"message": "z" * 5000}}))
+
+    with pytest.raises(AnalyzerError) as exc:
+        await analyzer()._post({"x": 1})
+
+    assert len((exc.value.details or {})["provider_message"]) <= MAX_PROVIDER_MESSAGE

@@ -351,3 +351,41 @@ def test_sanitize_value_refuses_an_invalid_budget() -> None:
 
 def test_sanitize_value_is_usable_on_its_own() -> None:
     assert sanitize_value(f"key={FAKE_ANTHROPIC_KEY}") == "key=[REDACTED_API_KEY]"
+
+
+# ---------------------------------------------------------------------------
+# Une URL de dépôt n'est pas une adresse e-mail
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "remote",
+    [
+        "git@github.com:acme/service-0.git",
+        "git@gitlab.com:groupe/sous/projet.git",
+        "ssh://git@host.example.io/acme/api.git",
+    ],
+)
+def test_a_repository_remote_survives_redaction(remote: str) -> None:
+    """Constat de la vérification du 2026-09-10 : la règle e-mail attrapait le
+    `git@github.com` d'un remote et blanchissait toute la valeur, si bien que
+    chaque exemple vu par l'analyseur pour `repository_url` — un champ cible
+    qu'il doit mapper — valait `[REDACTED_EMAIL]`."""
+    assert sanitize_value(remote) == remote
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "loai@example.com",
+        "écrire à bob@example.com avant lundi",
+        "bob@example.com:notes",
+        "bob@example.com/rapport",
+    ],
+)
+def test_an_address_is_still_redacted(value: str) -> None:
+    """L'exception est étroite : une adresse suivie immédiatement d'un chemin
+    `.git`. Tout le reste, y compris une adresse suivie d'un deux-points en
+    prose, part comme avant."""
+    assert "[REDACTED_EMAIL]" in sanitize_value(value)
+    assert "example.com" not in sanitize_value(value)

@@ -338,3 +338,14 @@ def test_the_prompt_carries_the_operators_the_validator_accepts() -> None:
     assert _allowed_operators() == sorted(OPERATOR_WHITELIST)
     assert _allowed_operators(), "the whitelist must never reach the prompt empty"
     assert _target_schema(), "the target schema must never reach the prompt empty"
+
+
+def test_the_recorded_prompt_version_is_the_one_actually_sent() -> None:
+    """Constat de la vérification du 2026-09-10 : le descriptor annonçait
+    `analysis-v1` alors que le builder envoyait `analysis-v2`. Deux littéraux
+    séparés, et la traçabilité que ce champ existe pour offrir — retrouver le
+    prompt derrière une proposition surprenante — ne fonctionnait pas."""
+    from agentlen.infrastructure.ai.prompts.analysis import PROMPT_VERSION
+
+    for adapter in (anthropic(), openai(), FakeAnalyzer()):
+        assert adapter.descriptor["prompt_version"] == PROMPT_VERSION
