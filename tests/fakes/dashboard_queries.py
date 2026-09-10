@@ -65,6 +65,8 @@ class InMemoryDashboardQueries:
                 continue
             if f.import_run_id is not None and s.get("import_run_id") != f.import_run_id:
                 continue
+            if f.status is not None and s.get("outcome") != f.status:
+                continue
             started: datetime | None = s.get("started_at")
             if f.date_from is not None and (started is None or started < f.date_from):
                 continue
@@ -156,13 +158,15 @@ class InMemoryDashboardQueries:
         return points
 
     async def tool_usage(self, filters: DashboardFilters) -> list[ToolUsagePoint]:
-        sources = {s["data_source_id"] for s in self._matching_sessions(filters)}
+        session_ids = {s["id"] for s in self._matching_sessions(filters)}
         by_session = {s["id"]: s for s in self.sessions}
 
         buckets: dict[tuple[int, int], list[dict[str, Any]]] = defaultdict(list)
         for c in self.tool_calls:
             session = by_session.get(c["session_id"])
-            if session is None or session["data_source_id"] not in sources:
+            if session is None or session["id"] not in session_ids:
+                continue
+            if filters.tool_id is not None and c.get("tool_id") != filters.tool_id:
                 continue
             buckets[(c["tool_id"], session["data_source_id"])].append(c)
 
@@ -180,13 +184,15 @@ class InMemoryDashboardQueries:
         return sorted(points, key=lambda p: (-p.call_count, p.tool_name))
 
     async def model_usage(self, filters: DashboardFilters) -> list[ModelUsagePoint]:
-        sources = {s["data_source_id"] for s in self._matching_sessions(filters)}
+        session_ids = {s["id"] for s in self._matching_sessions(filters)}
         by_session = {s["id"]: s for s in self.sessions}
 
         buckets: dict[tuple[int | None, int], list[dict[str, Any]]] = defaultdict(list)
         for c in self.model_calls:
             session = by_session.get(c["session_id"])
-            if session is None or session["data_source_id"] not in sources:
+            if session is None or session["id"] not in session_ids:
+                continue
+            if filters.model_id is not None and c.get("model_id") != filters.model_id:
                 continue
             buckets[(c.get("model_id"), session["data_source_id"])].append(c)
 
@@ -217,6 +223,20 @@ class InMemoryDashboardQueries:
             runs = [r for r in runs if r["data_source_id"] == filters.data_source_id]
         if filters.import_run_id is not None:
             runs = [r for r in runs if r["id"] == filters.import_run_id]
+
+        if any(
+            value is not None
+            for value in (
+                filters.agent_id,
+                filters.model_id,
+                filters.tool_id,
+                filters.date_from,
+                filters.date_to,
+                filters.status,
+            )
+        ):
+            run_ids = {s.get("import_run_id") for s in self._matching_sessions(filters)}
+            runs = [r for r in runs if r["id"] in run_ids]
 
         return [
             ImportQualityPoint(
