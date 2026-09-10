@@ -67,10 +67,12 @@ async def test_duplicate_slug_is_rejected_with_409(live_client: AsyncClient) -> 
 
 
 @requires_postgres
-async def test_missing_required_field_is_a_422_not_a_500(live_client: AsyncClient) -> None:
+async def test_missing_required_field_is_a_400_not_a_500(live_client: AsyncClient) -> None:
+    """422 is reserved for business validation (API.md §1) — a malformed
+    request body is remapped to 400, same as everywhere else in the API."""
     response = await live_client.post("/api/v1/data-sources", json={"slug": "no-name"})
 
-    assert response.status_code == 422
+    assert response.status_code == 400
 
 
 async def test_list_answers_the_shared_error_envelope_when_the_database_is_down(

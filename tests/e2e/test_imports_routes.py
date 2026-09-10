@@ -54,21 +54,38 @@ def _invalid_mapping() -> Mapping:
     )
 
 
-async def _seed(live_engine: AsyncEngine) -> dict[str, int]:
+async def _seed(live_engine: AsyncEngine) -> dict[str, int | str]:
     """A data source, a stored file record and an active mapping — the minimum
-    an import run needs. The file's bytes are never read by these tests."""
+    an import run needs. The file's bytes are never read by these tests.
+
+    `live_client`/`live_engine` share one Postgres across the whole run with no
+    truncation between tests (unlike the contract suite's `clean_db`), and
+    `mappings.save()` has no idempotence to fall back on the way
+    `data_sources.create()`/`file_uploads.create()` do — so every call needs
+    its own unique name, or the second test to call this collides on
+    `uq_mapping_name_version`.
+    """
+    unique = uuid4().hex[:8]
+    slug = f"tracelab-{unique}"
     async with SqlAlchemyUnitOfWork(live_engine) as uow:
-        source_id = await uow.data_sources.create(slug="tracelab", name="TraceLab")
+        source_id = await uow.data_sources.create(slug=slug, name="TraceLab")
         file_record = await uow.file_uploads.create(
             original_name="s.jsonl",
             storage_path="unused/does-not-need-to-exist.jsonl",
             format="jsonl",
             size_bytes=10,
-            content_hash="b" * 64,
+            content_hash=f"{unique}".rjust(64, "0"),
         )
-        mapping_id = await uow.mappings.save(_valid_mapping(), data_source_id=source_id)
+        mapping_id = await uow.mappings.save(
+            _valid_mapping(name=f"tracelab-jsonl-{unique}"), data_source_id=source_id
+        )
         await uow.commit()
-    return {"source_id": source_id, "file_id": file_record.id, "mapping_id": mapping_id}
+    return {
+        "source_id": source_id,
+        "slug": slug,
+        "file_id": file_record.id,
+        "mapping_id": mapping_id,
+    }
 
 
 async def test_creating_an_import_with_a_missing_field_is_400(client: AsyncClient) -> None:
@@ -141,7 +158,7 @@ async def test_get_import_returns_full_status_with_joined_refs(
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "pending"
-    assert body["data_source"] == {"id": seed["source_id"], "slug": "tracelab"}
+    assert body["data_source"] == {"id": seed["source_id"], "slug": seed["slug"]}
     assert body["file"] == {"id": seed["file_id"], "original_name": "s.jsonl"}
     assert body["mapping"]["name"] == "tracelab-jsonl"
     assert body["mapping"]["version"] == 1
