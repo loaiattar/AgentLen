@@ -4,13 +4,13 @@ This is the only module where a concrete adapter is chosen for a port. Routers
 and use cases receive ports and never learn which implementation they got, so
 swapping Postgres, Polars or the AI provider touches this file and nothing else.
 
-Everything here is overridable in tests via `app.dependency_overrides`, which is
-why the providers are plain functions rather than module-level singletons.
+Everything here is overridable in tests via `app.dependency_overrides`, which
+is why the providers are plain functions rather than module-level singletons.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
@@ -25,7 +25,11 @@ from agentlen.application.ports.file_reader import FileProfiler, FileReader
 from agentlen.application.ports.file_storage import FileStorage
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
 from agentlen.application.ports.unit_of_work import UnitOfWork
-from agentlen.infrastructure.ai.factory import build_structure_analyzer
+from agentlen.infrastructure.ai.factory import (
+    build_structure_analyzer,
+    provider_status,
+)
+from agentlen.infrastructure.config.settings import load_ai_settings
 from agentlen.infrastructure.files.local_storage import LocalFileStorage
 from agentlen.infrastructure.files.polars_profiler import PolarsFileProfiler
 from agentlen.infrastructure.files.polars_record_reader import PolarsRecordReader
@@ -65,14 +69,43 @@ def get_engine(request: Request) -> AsyncEngine:
     return _engine_singleton(get_database_url())
 
 
+# ---------------------------------------------------------------------------
+# AI
+# ---------------------------------------------------------------------------
+
+
 def get_structure_analyzer() -> StructureAnalyzer:
     """Resolved from AI_PROVIDER. The only place a provider is chosen."""
     return build_structure_analyzer()
 
 
-def get_dashboard_queries(engine: EngineDep) -> DashboardQueries:
-    """The read side. Holds only the engine, so one per request is fine."""
-    return SqlDashboardQueries(engine)
+def get_analyzer_factory() -> Callable[[str | None, str | None], StructureAnalyzer]:
+    def build(
+        provider: str | None,
+        model: str | None,
+    ) -> StructureAnalyzer:
+        configured = load_ai_settings()
+        if provider is None and model is None:
+            return build_structure_analyzer(configured)
+
+        selected = configured.model_copy(
+            update={
+                "provider": provider or configured.provider,
+                "model": model if model is not None else configured.model,
+            }
+        )
+        return build_structure_analyzer(selected)
+
+    return build
+
+
+def get_provider_status() -> dict[str, object]:
+    return provider_status()
+
+
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
 
 
 def get_unit_of_work(engine: EngineDep) -> UnitOfWork:
@@ -81,9 +114,13 @@ def get_unit_of_work(engine: EngineDep) -> UnitOfWork:
     return SqlAlchemyUnitOfWork(engine)
 
 
-async def get_clock() -> AsyncIterator[Clock]:
-    """Real time in production, frozen in tests via dependency_overrides."""
-    yield SystemClock()
+def get_dashboard_queries(engine: EngineDep) -> DashboardQueries:
+    """The read side. Holds only the engine, so one per request is fine."""
+    return SqlDashboardQueries(engine)
+
+
+def get_exploration_queries(engine: EngineDep) -> ExplorationQueries:
+    return SqlExplorationQueries(engine)
 
 
 # ---------------------------------------------------------------------------
@@ -103,19 +140,52 @@ def get_file_profiler() -> FileProfiler:
     return PolarsFileProfiler()
 
 
+# ---------------------------------------------------------------------------
+# Clock
+# ---------------------------------------------------------------------------
+
+
+async def get_clock() -> AsyncIterator[Clock]:
+    """Real time in production, frozen in tests via dependency_overrides."""
+    yield SystemClock()
+
+
 #: Inject with `clock: ClockDep` in a route signature.
 ClockDep = Annotated[Clock, Depends(get_clock)]
 EngineDep = Annotated[AsyncEngine, Depends(get_engine)]
-DashboardQueriesDep = Annotated[DashboardQueries, Depends(get_dashboard_queries)]
-AnalyzerDep = Annotated[StructureAnalyzer, Depends(get_structure_analyzer)]
-UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
-FileStorageDep = Annotated[FileStorage, Depends(get_file_storage)]
-FileReaderDep = Annotated[FileReader, Depends(get_file_reader)]
-FileProfilerDep = Annotated[FileProfiler, Depends(get_file_profiler)]
-
-
-def get_exploration_queries(engine: EngineDep) -> ExplorationQueries:
-    return SqlExplorationQueries(engine)
-
-
-ExplorationQueriesDep = Annotated[ExplorationQueries, Depends(get_exploration_queries)]
+DashboardQueriesDep = Annotated[
+    DashboardQueries,
+    Depends(get_dashboard_queries),
+]
+ExplorationQueriesDep = Annotated[
+    ExplorationQueries,
+    Depends(get_exploration_queries),
+]
+AnalyzerDep = Annotated[
+    StructureAnalyzer,
+    Depends(get_structure_analyzer),
+]
+AnalyzerFactoryDep = Annotated[
+    Callable[[str | None, str | None], StructureAnalyzer],
+    Depends(get_analyzer_factory),
+]
+ProviderStatusDep = Annotated[
+    dict[str, object],
+    Depends(get_provider_status),
+]
+UnitOfWorkDep = Annotated[
+    UnitOfWork,
+    Depends(get_unit_of_work),
+]
+FileStorageDep = Annotated[
+    FileStorage,
+    Depends(get_file_storage),
+]
+FileReaderDep = Annotated[
+    FileReader,
+    Depends(get_file_reader),
+]
+FileProfilerDep = Annotated[
+    FileProfiler,
+    Depends(get_file_profiler),
+]

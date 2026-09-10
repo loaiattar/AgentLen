@@ -34,7 +34,7 @@ from agentlen.application.dto.persistence import (
     ToolCallRow,
 )
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
-from agentlen.domain.model.mapping import Mapping
+from agentlen.domain.model.mapping import Mapping, MappingProposal
 from agentlen.domain.model.session import Session
 from agentlen.infrastructure.persistence import tables as t
 
@@ -484,6 +484,114 @@ class SqlAlchemyMappingRepository(_Base):
             document_to_mapping(r["document"], name=r["name"], version=r["version"])
             for r in (await self._conn.execute(query.order_by(t.mapping.c.id))).mappings()
         ]
+
+
+class SqlAlchemyMappingProposalRepository(_Base):
+    async def save(
+        self,
+        proposal: MappingProposal,
+        *,
+        file_upload_id: int,
+        data_source_id: int | None = None,
+    ) -> int:
+        from agentlen.infrastructure.persistence.repositories.mapping_codec import (
+            mapping_to_document,
+        )
+
+        descriptor = proposal.analyzer_descriptor
+        statement = (
+            insert(t.mapping_proposal)
+            .values(
+                data_source_id=data_source_id,
+                file_upload_id=file_upload_id,
+                document=mapping_to_document(proposal.mapping),
+                validation=_validation_document(proposal.mapping),
+                rationale=list(proposal.rationale),
+                ambiguities=list(proposal.ambiguities),
+                unmapped_fields=list(proposal.unmapped_fields),
+                analyzer_provider=descriptor.get("provider", "unknown"),
+                analyzer_model=descriptor.get("model", "unknown"),
+                prompt_version=descriptor.get("prompt_version"),
+            )
+            .returning(t.mapping_proposal.c.id)
+        )
+        return int((await self._conn.execute(statement)).scalar_one())
+
+    async def get(self, proposal_id: int) -> MappingProposal | None:
+        row = (
+            (
+                await self._conn.execute(
+                    select(t.mapping_proposal).where(t.mapping_proposal.c.id == proposal_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return _to_mapping_proposal(row) if row else None
+
+    async def update(self, proposal_id: int, proposal: MappingProposal) -> None:
+        from sqlalchemy import update
+
+        from agentlen.infrastructure.persistence.repositories.mapping_codec import (
+            mapping_to_document,
+        )
+
+        await self._conn.execute(
+            update(t.mapping_proposal)
+            .where(t.mapping_proposal.c.id == proposal_id)
+            .values(
+                document=mapping_to_document(proposal.mapping),
+                validation=_validation_document(proposal.mapping),
+                rationale=list(proposal.rationale),
+                ambiguities=list(proposal.ambiguities),
+                unmapped_fields=list(proposal.unmapped_fields),
+            )
+        )
+
+    async def add_message(self, proposal_id: int, *, role: str, content: str) -> None:
+        from sqlalchemy import func
+
+        next_turn = select(
+            func.coalesce(func.max(t.mapping_proposal_message.c.turn_index), -1) + 1
+        ).where(t.mapping_proposal_message.c.mapping_proposal_id == proposal_id)
+        await self._conn.execute(
+            insert(t.mapping_proposal_message).values(
+                mapping_proposal_id=proposal_id,
+                turn_index=next_turn.scalar_subquery(),
+                role=role,
+                content=content,
+            )
+        )
+
+
+def _validation_document(mapping: Mapping) -> dict[str, Any]:
+    from agentlen.domain.services.mapping_validator import validate
+
+    errors = validate(mapping)
+    return {
+        "valid": not errors,
+        "errors": [
+            {"code": error.code, "field_path": error.field_path, "message": error.message}
+            for error in errors
+        ],
+    }
+
+
+def _to_mapping_proposal(row: Any) -> MappingProposal:
+    from agentlen.infrastructure.persistence.repositories.mapping_codec import document_to_mapping
+
+    document = dict(row["document"])
+    return MappingProposal(
+        mapping=document_to_mapping(document, name=document["name"], version=1),
+        rationale=tuple(row["rationale"] or ()),
+        ambiguities=tuple(row["ambiguities"] or ()),
+        unmapped_fields=tuple(row["unmapped_fields"] or ()),
+        analyzer_descriptor={
+            "provider": row["analyzer_provider"],
+            "model": row["analyzer_model"],
+            "prompt_version": row["prompt_version"],
+        },
+    )
 
 
 class SqlAlchemyFileUploadRepository(_Base):
