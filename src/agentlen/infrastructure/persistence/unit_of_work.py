@@ -33,6 +33,7 @@ from agentlen.infrastructure.persistence.repositories import (
     SqlAlchemyFileUploadRepository,
     SqlAlchemyImportIssueRepository,
     SqlAlchemyImportRunRepository,
+    SqlAlchemyMappingProposalRepository,
     SqlAlchemyMappingRepository,
     SqlAlchemyModelCallRepository,
     SqlAlchemyRawRecordRepository,
@@ -76,6 +77,7 @@ class SqlAlchemyUnitOfWork:
         self.import_runs = SqlAlchemyImportRunRepository(conn)
         self.import_issues = SqlAlchemyImportIssueRepository(conn)
         self.mappings = SqlAlchemyMappingRepository(conn)
+        self.mapping_proposals = SqlAlchemyMappingProposalRepository(conn)
         self.data_sources = SqlAlchemyDataSourceRepository(conn)
         self.file_uploads = SqlAlchemyFileUploadRepository(conn)
         self.referentials = SqlAlchemyReferentialRepository(conn)
