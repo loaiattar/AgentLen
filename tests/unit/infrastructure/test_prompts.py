@@ -208,3 +208,58 @@ def test_wrap_as_instruction_is_balanced() -> None:
 def test_prompt_version_is_declared() -> None:
     """Recorded on every proposal so a surprising mapping can be traced back."""
     assert PROMPT_VERSION
+
+
+# ---------------------------------------------------------------------------
+# La forme de réponse est montrée en entier, pas élidée
+# ---------------------------------------------------------------------------
+
+
+def test_the_response_shape_spells_out_an_entity() -> None:
+    """Constat du 2026-09-10, contre l'API réelle : tant que la section abrégeait
+    `"entities": [...]`, deux modèles ont inventé chacun sa structure —
+    `{"name", "fields": {cible: chemin}}` pour l'un, `{"entity", "mappings":
+    {cible: {"path": …}}}` pour l'autre — et `_document_to_mapping` levait un
+    `KeyError`. Les trois sections qui, elles, étaient détaillées, ils les
+    reproduisaient exactement. Ce qui n'est pas montré n'est pas deviné."""
+    prompt = build_analysis_prompt(
+        profile=PROFILE, samples=[], target_schema=SCHEMA, allowed_operators=OPERATORS
+    )
+    shape = prompt.split("## RESPONSE SHAPE", 1)[1].split("## TARGET SCHEMA", 1)[0]
+
+    # Les clés que `_document_to_mapping` indexe sans garde.
+    for key in ('"target"', '"natural_key"', '"fields"', '"source"', '"operators"'):
+        assert key in shape, f"{key} doit apparaître dans la forme de réponse"
+
+    # Une entité imbriquée n'est exprimable qu'avec ces deux-là.
+    assert '"iterate"' in shape
+    assert '"parent"' in shape
+
+    # `fields` est une liste de règles, jamais un objet indexé par champ cible.
+    assert '"fields": [' in shape
+    assert '"entities": [...]' not in shape
+
+
+def test_the_shape_shown_is_the_shape_the_parser_accepts() -> None:
+    """La section est envoyée telle quelle pour que #49 ait quelque chose de
+    déterministe à analyser. Le vérifier plutôt que l'espérer : l'exemple est
+    relu par le convertisseur réel."""
+    import json
+    import re
+
+    from agentlen.infrastructure.ai.base import _document_to_mapping
+
+    prompt = build_analysis_prompt(
+        profile=PROFILE, samples=[], target_schema=SCHEMA, allowed_operators=OPERATORS
+    )
+    shape = prompt.split("## RESPONSE SHAPE", 1)[1].split("## TARGET SCHEMA", 1)[0]
+    document = json.loads(
+        re.sub(r'"\.\.\."', '"x"', shape[shape.index("{") : shape.rindex("}") + 1])
+    )
+
+    mapping = _document_to_mapping(document["mapping"])
+
+    assert [entity.target for entity in mapping.entities] == ["session", "model_call"]
+    assert mapping.entities[1].iterate == "$.llm_calls[]"
+    assert mapping.entities[1].parent == {"entity": "session", "via": "external_id"}
+    assert mapping.entities[0].fields[1].operators[0]["op"] == "unit_convert"
