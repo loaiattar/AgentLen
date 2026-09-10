@@ -67,6 +67,7 @@ async def _seed(live_engine: AsyncEngine) -> dict[str, int | str]:
     """
     unique = uuid4().hex[:8]
     slug = f"tracelab-{unique}"
+    mapping_name = f"tracelab-jsonl-{unique}"
     async with SqlAlchemyUnitOfWork(live_engine) as uow:
         source_id = await uow.data_sources.create(slug=slug, name="TraceLab")
         file_record = await uow.file_uploads.create(
@@ -77,7 +78,7 @@ async def _seed(live_engine: AsyncEngine) -> dict[str, int | str]:
             content_hash=f"{unique}".rjust(64, "0"),
         )
         mapping_id = await uow.mappings.save(
-            _valid_mapping(name=f"tracelab-jsonl-{unique}"), data_source_id=source_id
+            _valid_mapping(name=mapping_name), data_source_id=source_id
         )
         await uow.commit()
     return {
@@ -85,6 +86,7 @@ async def _seed(live_engine: AsyncEngine) -> dict[str, int | str]:
         "slug": slug,
         "file_id": file_record.id,
         "mapping_id": mapping_id,
+        "mapping_name": mapping_name,
     }
 
 
@@ -160,7 +162,7 @@ async def test_get_import_returns_full_status_with_joined_refs(
     assert body["status"] == "pending"
     assert body["data_source"] == {"id": seed["source_id"], "slug": seed["slug"]}
     assert body["file"] == {"id": seed["file_id"], "original_name": "s.jsonl"}
-    assert body["mapping"]["name"] == "tracelab-jsonl"
+    assert body["mapping"]["name"] == seed["mapping_name"]
     assert body["mapping"]["version"] == 1
     assert body["report"]["records_read"] == 0
     assert body["started_at"] is None
