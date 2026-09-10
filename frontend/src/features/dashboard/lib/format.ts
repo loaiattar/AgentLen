@@ -15,6 +15,13 @@ const compactFormat = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 1,
 })
 
+export function formatDay(value: string | null | undefined): string {
+  if (!value) return MISSING_VALUE
+  const date = new Date(`${value}T00:00:00Z`)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(date)
+}
+
 export function getMetric(metrics: Metric[] | undefined, key: string): Metric | undefined {
   return metrics?.find((metric) => metric.key === key)
 }
@@ -103,31 +110,25 @@ export function knownTokensByDay(points: ActivityPoint[]): number[] {
 }
 
 export function aggregateTools(points: ToolPoint[], limit = 6) {
-  const byLabel = new Map<string, number>()
-  for (const point of points) {
-    byLabel.set(point.label, (byLabel.get(point.label) ?? 0) + point.call_count)
-  }
-  return [...byLabel.entries()]
-    .sort(([, left], [, right]) => right - left)
+  return [...points]
+    .sort((left, right) => right.call_count - left.call_count)
     .slice(0, limit)
-    .map(([label, value], index) => ({
-      label,
-      value,
+    .map((point, index) => ({
+      label: point.label,
+      value: point.call_count,
       tone: CHART_TONES[index % CHART_TONES.length],
+      filters: point.filters,
     }))
 }
 
 export function aggregateModels(points: ModelPoint[]) {
-  const byLabel = new Map<string, number>()
-  for (const point of points) {
-    byLabel.set(point.label, (byLabel.get(point.label) ?? 0) + point.call_count)
-  }
-  return [...byLabel.entries()]
-    .sort(([, left], [, right]) => right - left)
-    .map(([label, value], index) => ({
-      label,
-      value,
+  return [...points]
+    .sort((left, right) => right.call_count - left.call_count)
+    .map((point, index) => ({
+      label: point.label,
+      value: point.call_count,
       tone: CHART_TONES[index % CHART_TONES.length],
+      filters: point.filters,
     }))
 }
 

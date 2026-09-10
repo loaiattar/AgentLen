@@ -6,6 +6,7 @@ export interface DashboardFilters {
   import_run_id?: number
   date_from?: string
   date_to?: string
+  status?: string
 }
 
 export interface Coverage {

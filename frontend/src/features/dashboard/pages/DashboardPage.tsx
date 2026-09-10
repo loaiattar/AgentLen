@@ -21,6 +21,7 @@ import {
   collectDashboardWarnings,
   coverageHint,
   formatCount,
+  formatDay,
   formatDurationMs,
   formatRatio,
   formatTokens,
@@ -30,11 +31,15 @@ import {
   sessionsByDay,
   summarizeQuality,
 } from '@/features/dashboard/lib/format'
+import { toSessionSearch } from '@/features/dashboard/lib/filters'
 import { useMetricsFilters } from '@/features/dashboard/hooks/useMetricsFilters'
 
 function ChartEmpty({ message }: { message: string }) {
   return <p className="mt-8 text-body text-foreground-muted">{message}</p>
 }
+
+const drillDownClassName =
+  'grid gap-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis/70'
 
 export function DashboardPage() {
   const { filters } = useMetricsFilters()
@@ -132,13 +137,15 @@ export function DashboardPage() {
           )}
         </BentoModule>
 
-        <BentoModule cols={2} padding="none">
-          <Kpi
-            label="Total sessions"
-            value={formatCount(sessionCount?.value)}
-            hint={coverageHint(sessionCount)}
-            title={getDefinition(definitionList, 'session_count')?.formula}
-          />
+        <BentoModule cols={2} padding="none" interactive>
+          <Link to="/sessions" search={(prev) => prev} className="block h-full">
+            <Kpi
+              label="Total sessions"
+              value={formatCount(sessionCount?.value)}
+              hint={coverageHint(sessionCount)}
+              title={getDefinition(definitionList, 'session_count')?.formula}
+            />
+          </Link>
         </BentoModule>
 
         <BentoModule cols={1} padding="none">
@@ -182,7 +189,19 @@ export function DashboardPage() {
         <BentoModule cols={1} rows={2}>
           <BentoTitle>Model mix</BentoTitle>
           {modelItems.length > 0 ? (
-            <MixLegend items={modelItems} className="mt-8" />
+            <MixLegend
+              items={modelItems}
+              className="mt-8"
+              wrapItem={(item, content) => (
+                <Link
+                  to="/sessions"
+                  search={() => toSessionSearch(item.filters)}
+                  className="flex w-full items-center justify-between gap-3 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis/70"
+                >
+                  {content}
+                </Link>
+              )}
+            />
           ) : (
             <ChartEmpty message="No model calls for this period." />
           )}
@@ -191,7 +210,15 @@ export function DashboardPage() {
         <BentoModule cols={2} rows={2}>
           <BentoTitle>Tool usage</BentoTitle>
           {toolItems.length > 0 ? (
-            <BarList items={toolItems} className="mt-8" />
+            <BarList
+              items={toolItems}
+              className="mt-8"
+              wrapItem={(item, content) => (
+                <Link to="/sessions" search={() => toSessionSearch(item.filters)} className={drillDownClassName}>
+                  {content}
+                </Link>
+              )}
+            />
           ) : (
             <ChartEmpty message="No tool calls for this period." />
           )}
@@ -208,9 +235,27 @@ export function DashboardPage() {
 
         <BentoModule cols={2}>
           <BentoTitle>Recent activity</BentoTitle>
-          <p className="mt-6 text-body text-foreground-muted">
-            Session details are not available until the exploration API is wired.
-          </p>
+          {activityPoints.length > 0 ? (
+            <ul className="mt-6 grid gap-3">
+              {[...activityPoints]
+                .sort((left, right) => right.day.localeCompare(left.day))
+                .slice(0, 5)
+                .map((point) => (
+                  <li key={`${point.day}-${point.data_source_id}`}>
+                    <Link
+                      to="/sessions"
+                      search={() => toSessionSearch(point.filters)}
+                      className="flex items-baseline justify-between gap-3 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis/70"
+                    >
+                      <span className="text-secondary text-foreground-muted">{formatDay(point.day)}</span>
+                      <span className="text-meta text-foreground">{formatCount(point.session_count)}</span>
+                    </Link>
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <p className="mt-6 text-body text-foreground-muted">No session activity for this period.</p>
+          )}
         </BentoModule>
       </BentoGrid>
     </div>

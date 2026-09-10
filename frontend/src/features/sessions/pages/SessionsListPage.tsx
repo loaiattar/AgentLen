@@ -1,117 +1,225 @@
 import { Link } from '@tanstack/react-router'
+import type { FormEvent } from 'react'
 
 import { Badge } from '@/components/ui/Badge'
 import { BentoGrid, BentoModule } from '@/components/ui/Bento'
+import { Button } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { FilterBar, FilterChip } from '@/components/ui/FilterBar'
 import { Kpi } from '@/components/ui/Kpi'
 import { OverflowMenu } from '@/components/ui/OverflowMenu'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { SearchField } from '@/components/ui/SearchField'
+import { GlassSkeleton } from '@/components/ui/Skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
+import { useSessionsQuery } from '@/features/sessions/api/sessions.queries'
+import { useSessionIdSearch, useSessionsSearch } from '@/features/sessions/hooks/useSessionsSearch'
+import {
+  formatCount,
+  formatDurationMs,
+  formatFilterValue,
+  formatInstant,
+  formatOutcome,
+  outcomeTone,
+  STATUS_FILTERS,
+} from '@/features/sessions/lib/format'
 
-const sessions = [
-  {
-    id: 'ses_8f21',
-    agent: 'codegen',
-    model: 'gpt-4.1',
-    duration: '6m 04s',
-    tokens: '182k',
-    tools: 24,
-    errors: 0,
-    timestamp: '14:22',
-    status: 'ok' as const,
-  },
-  {
-    id: 'ses_12aa',
-    agent: 'reviewer',
-    model: 'claude-sonnet',
-    duration: '3m 11s',
-    tokens: '94k',
-    tools: 11,
-    errors: 2,
-    timestamp: '14:11',
-    status: 'error' as const,
-  },
-  {
-    id: 'ses_90c3',
-    agent: 'planner',
-    model: 'gpt-4.1',
-    duration: '8m 40s',
-    tokens: '241k',
-    tools: 31,
-    errors: 0,
-    timestamp: '13:58',
-    status: 'ok' as const,
-  },
-]
+function filterChipLabel(key: string, value: string | number): string {
+  const labels: Record<string, string> = {
+    agent_id: 'Agent',
+    model_id: 'Model',
+    tool_id: 'Tool',
+    import_run_id: 'Import',
+    date_from: 'From',
+    date_to: 'To',
+  }
+  return `${labels[key] ?? key} ${formatFilterValue(key, value)}`
+}
 
 export function SessionsListPage() {
+  const {
+    search,
+    filters,
+    limit,
+    offset,
+    setStatus,
+    clearKey,
+    clearExploration,
+    setOffset,
+    openSession,
+    drillDownKeys,
+  } = useSessionsSearch()
+  const sessions = useSessionsQuery(filters, limit, offset)
+  const idSearch = useSessionIdSearch()
+
+  const onSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    idSearch.submit()
+  }
+
+  if (sessions.isPending) {
+    return (
+      <div>
+        <PageHeader kicker="Sessions" title="Explorer" />
+        <BentoGrid>
+          {Array.from({ length: 3 }, (_, index) => (
+            <BentoModule key={index} cols={index === 0 ? 2 : 1} padding="none">
+              <GlassSkeleton />
+            </BentoModule>
+          ))}
+        </BentoGrid>
+      </div>
+    )
+  }
+
+  if (sessions.isError) {
+    return (
+      <div>
+        <PageHeader kicker="Sessions" title="Explorer" />
+        <EmptyState
+          title="Sessions unavailable"
+          description={sessions.error?.message ?? 'Unable to load sessions.'}
+          action={
+            <Button variant="secondary" onClick={() => void sessions.refetch()}>
+              Retry
+            </Button>
+          }
+        />
+      </div>
+    )
+  }
+
+  const page = sessions.data
+  const items = page?.items ?? []
+  const total = page?.total ?? 0
+  const from = total === 0 ? 0 : offset + 1
+  const to = Math.min(offset + items.length, total)
+  const hasActiveFilters = drillDownKeys.some((key) => search[key] != null) || search.status != null
+  const canPrev = offset > 0
+  const canNext = offset + limit < total
+
   return (
     <div>
       <PageHeader kicker="Sessions" title="Explorer" />
       <BentoGrid className="mb-8">
         <BentoModule cols={2} padding="none">
-          <Kpi label="Total sessions" value="24,861" />
+          <Kpi label="Matching sessions" value={formatCount(total)} />
         </BentoModule>
-        <BentoModule cols={1} padding="none">
-          <Kpi label="Active models" value="3" />
-        </BentoModule>
-        <BentoModule cols={1} padding="none">
-          <Kpi label="Avg duration" value="4m 12s" />
+        <BentoModule cols={2} padding="none">
+          <Kpi
+            label="This page"
+            value={items.length === 0 ? '—' : `${formatCount(from)}–${formatCount(to)}`}
+          />
         </BentoModule>
       </BentoGrid>
+
       <FilterBar>
-        <FilterChip active>All sources</FilterChip>
-        <FilterChip>Agent</FilterChip>
-        <FilterChip>Model</FilterChip>
-        <FilterChip>Period</FilterChip>
+        <form onSubmit={onSearchSubmit} className="min-w-48 flex-1">
+          <SearchField
+            value={idSearch.value}
+            onChange={(event) => idSearch.setValue(event.target.value)}
+            placeholder="Open session id"
+            aria-label="Open session by id"
+          />
+        </form>
+        {STATUS_FILTERS.map((option) => (
+          <FilterChip
+            key={option.label}
+            active={search.status === option.id}
+            onClick={() => setStatus(option.id)}
+          >
+            {option.label}
+          </FilterChip>
+        ))}
+        {drillDownKeys.map((key) => {
+          const value = search[key]
+          if (value == null) return null
+          return (
+            <FilterChip key={key} active onClick={() => clearKey(key)}>
+              {filterChipLabel(key, value)}
+            </FilterChip>
+          )
+        })}
       </FilterBar>
-      <div className="glass-surface rounded-xl p-2">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Session</TableHead>
-              <TableHead>Agent</TableHead>
-              <TableHead>Model</TableHead>
-              <TableHead>Duration</TableHead>
-              <TableHead>Tokens</TableHead>
-              <TableHead>Tools</TableHead>
-              <TableHead>Errors</TableHead>
-              <TableHead>Time</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="w-10" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {sessions.map((session) => (
-              <TableRow key={session.id}>
-                <TableCell>
-                  <Link to="/sessions/$sessionId" params={{ sessionId: session.id }} className="text-foreground">
-                    {session.id}
-                  </Link>
-                </TableCell>
-                <TableCell className="text-foreground-muted">{session.agent}</TableCell>
-                <TableCell className="text-foreground-muted">{session.model}</TableCell>
-                <TableCell>{session.duration}</TableCell>
-                <TableCell>{session.tokens}</TableCell>
-                <TableCell>{session.tools}</TableCell>
-                <TableCell>{session.errors}</TableCell>
-                <TableCell className="text-foreground-muted">{session.timestamp}</TableCell>
-                <TableCell>
-                  <Badge tone={session.status === 'ok' ? 'mint' : 'pink'}>{session.status}</Badge>
-                </TableCell>
-                <TableCell>
-                  <OverflowMenu
-                    items={[
-                      { label: 'Open', onSelect: () => undefined },
-                      { label: 'Export', onSelect: () => undefined },
-                    ]}
-                  />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+
+      {items.length === 0 ? (
+        <EmptyState
+          title={hasActiveFilters ? 'No matching sessions' : 'No sessions yet'}
+          description={
+            hasActiveFilters
+              ? 'Nothing matches these filters. Clear them to widen the list.'
+              : 'Sessions appear after an import. Until then, this list stays empty.'
+          }
+          action={
+            hasActiveFilters ? (
+              <Button variant="secondary" onClick={clearExploration}>
+                Clear filters
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : (
+        <>
+          <div className="glass-surface rounded-xl p-2">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Session</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Agent</TableHead>
+                  <TableHead>Duration</TableHead>
+                  <TableHead>Started</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="w-10" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {items.map((session) => (
+                  <TableRow key={session.id}>
+                    <TableCell>
+                      <Link
+                        to="/sessions/$sessionId"
+                        params={{ sessionId: String(session.id) }}
+                        search={(prev) => prev}
+                        className="text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis/70"
+                      >
+                        {session.external_id || session.id}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="text-foreground-muted">{session.data_source_id}</TableCell>
+                    <TableCell className="text-foreground-muted">
+                      {session.agent_id == null ? '—' : session.agent_id}
+                    </TableCell>
+                    <TableCell>{formatDurationMs(session.duration_ms)}</TableCell>
+                    <TableCell className="text-foreground-muted">{formatInstant(session.started_at)}</TableCell>
+                    <TableCell>
+                      <Badge tone={outcomeTone(session.outcome)}>{formatOutcome(session.outcome)}</Badge>
+                    </TableCell>
+                    <TableCell>
+                      <OverflowMenu
+                        items={[{ label: 'Open', onSelect: () => openSession(session.id) }]}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div className="mt-4 flex items-center justify-between gap-3">
+            <p className="text-secondary text-foreground-muted">
+              {formatCount(from)}–{formatCount(to)} of {formatCount(total)}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="secondary" size="sm" disabled={!canPrev} onClick={() => setOffset(Math.max(0, offset - limit))}>
+                Previous
+              </Button>
+              <Button variant="secondary" size="sm" disabled={!canNext} onClick={() => setOffset(offset + limit)}>
+                Next
+              </Button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
