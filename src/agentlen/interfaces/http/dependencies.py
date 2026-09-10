@@ -79,9 +79,7 @@ def get_structure_analyzer() -> StructureAnalyzer:
     return build_structure_analyzer()
 
 
-def get_analyzer_factory() -> Callable[
-    [str | None, str | None], StructureAnalyzer
-]:
+def get_analyzer_factory() -> Callable[[str | None, str | None], StructureAnalyzer]:
     def build(
         provider: str | None,
         model: str | None,
