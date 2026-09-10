@@ -11,6 +11,10 @@ class ProfileFileCommand:
     file_id: int
     path: str
     sample_size: int = 500
+    # Pass the format recorded at upload time (`file_upload.format`) whenever
+    # it's known: storage is content-addressed, so `path` itself has no
+    # extension for the profiler to infer a format from.
+    format: str | None = None
 
 
 class ProfileFile:
@@ -24,5 +28,7 @@ class ProfileFile:
         self._profiler = profiler
 
     async def execute(self, command: ProfileFileCommand) -> FileProfile:
-        profile = await self._profiler.profile(command.path, sample_size=command.sample_size)
+        profile = await self._profiler.profile(
+            command.path, sample_size=command.sample_size, format=command.format
+        )
         return replace(profile, file_id=command.file_id)

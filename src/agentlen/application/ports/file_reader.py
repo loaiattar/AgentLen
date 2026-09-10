@@ -12,7 +12,17 @@ class FileProfiler(Protocol):
     Implemented by Polars in infrastructure/files/.
     """
 
-    async def profile(self, path: str, *, sample_size: int = 500) -> FileProfile: ...
+    async def profile(
+        self, path: str, *, sample_size: int = 500, format: str | None = None
+    ) -> FileProfile:
+        """Profile the file at `path`.
+
+        `format` should be passed whenever it is already known (it always is,
+        once a file is stored: `file_upload.format`) — storage is
+        content-addressed (`infrastructure/files/local_storage.py`), so the
+        path itself carries no extension to infer a format from.
+        """
+        ...
 
 
 class FileReader(Protocol):

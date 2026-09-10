@@ -18,6 +18,11 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Fixed — `POST /files/{id}/profile` returned 500 on every real upload
+- Found during Nabil's Docker smoke test: `PolarsFileProfiler.profile()` infers the file format from the path's extension, but `LocalFileStorage` writes uploads content-addressed (`<root>/<hash[:2]>/<hash>`, no extension at all — #47) — `infer_format` raised `ValueError` on literally any real upload, surfaced as a raw 500.
+- The format is already known at profile time (`file_upload.format`, set from the magic bytes at upload); it just wasn't threaded through. Added an optional `format` parameter to the `FileProfiler` port, `PolarsFileProfiler.profile()` (falls back to `infer_format(path)` only when `format` is omitted — existing callers/fixtures unaffected) and `ProfileFileCommand`; the `/files/{id}/profile` route now passes `record.format` through instead of leaving the profiler to re-guess it from an extensionless path.
+- `tests/unit/test_polars_profiler.py`: reproduces the exact bug (a content-addressed path with no suffix) and confirms `format=` fixes it, plus confirms the no-format/no-extension case still fails with a clear error rather than silently guessing wrong.
+
 ### Added — issue #56 (`/imports` router — preview, launch, history, status, issues)
 - `interfaces/http/routers/imports.py`: `POST /api/v1/imports/preview` (dry-run, on top of the existing `PreviewImport` use case), `POST /api/v1/imports` (202, creates the `import_run` row in `pending` — exactly what `interfaces/cli/seed.py` already does by hand; the worker from #55 claims and runs it, nothing here reimplements that loop), `GET /api/v1/imports` (paginated history), `GET /api/v1/imports/{id}` (status + report, joined with the source/file/mapping refs), `GET /api/v1/imports/{id}/issues` (paginated, filterable by severity).
 - `interfaces/http/schemas/imports.py`: wire shapes matching API.md §5 exactly (`ImportPreviewOut`, `ImportStatusOut`, `ImportIssueOut`, ...).

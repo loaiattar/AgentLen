@@ -230,3 +230,30 @@ async def test_sample_size_bounds_memory_even_on_a_larger_file(tmp_path):
 
     assert profile.record_count == LARGE_FILE_ROW_COUNT
     assert profile.sampled_records == requested_sample_size
+
+
+async def test_explicit_format_profiles_a_path_with_no_extension_at_all(tmp_path):
+    # LocalFileStorage writes uploads content-addressed (<root>/<hash[:2]>/<hash>,
+    # no extension) — infer_format(path) can never guess a format from that, so
+    # a caller who already knows it (file_upload.format) must be able to pass it
+    # straight through instead of relying on the path's suffix.
+    df = pl.DataFrame({"key": ["a", "b", "c"]})
+    path = tmp_path / "9f2c" / "9f2c1234"  # content-addressed shape, no suffix
+    path.parent.mkdir(parents=True)
+    df.write_ndjson(path)
+
+    profiler = PolarsFileProfiler()
+    profile = await profiler.profile(str(path), format="jsonl")
+
+    assert profile.format == "jsonl"
+    assert profile.record_count == 3
+
+
+async def test_no_format_and_no_extension_still_fails_clearly(tmp_path):
+    df = pl.DataFrame({"key": ["a"]})
+    path = tmp_path / "no_extension_here"
+    df.write_ndjson(path)
+
+    profiler = PolarsFileProfiler()
+    with pytest.raises(ValueError, match="Cannot infer"):
+        await profiler.profile(str(path))
