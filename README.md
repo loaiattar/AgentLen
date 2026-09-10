@@ -18,6 +18,11 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Fixed — mapping validator error codes, ahead of issue #52 (`/mappings` router)
+- `domain/errors.py`: `UnsupportedOperatorError`/`UnknownTargetFieldError` carried `UNSUPPORTED_OPERATOR`/`UNKNOWN_TARGET_FIELD` — neither matches what API.md and MAPPING_CONTRACT.md §4 actually document (`MAPPING_UNKNOWN_OPERATOR`/`MAPPING_UNKNOWN_TARGET`), and #52's acceptance criteria tests for the documented codes specifically. Renamed both.
+- Added `MissingNaturalKeyError` (`MAPPING_MISSING_NATURAL_KEY`) and wired it into `mapping_validator._validate_entity`: an entity with no `natural_key` was never flagged — MAPPING_CONTRACT.md §4 lists this as a required structural check ("`natural_key` complète"), and #52 tests for it explicitly.
+- Updated `tests/unit/domain/test_mapping_validator.py` and `tests/e2e/test_error_envelope.py` for the renamed codes; added coverage for the new check.
+
 ### Added — issue #56 (`/imports` router — preview, launch, history, status, issues)
 - `interfaces/http/routers/imports.py`: `POST /api/v1/imports/preview` (dry-run, on top of the existing `PreviewImport` use case), `POST /api/v1/imports` (202, creates the `import_run` row in `pending` — exactly what `interfaces/cli/seed.py` already does by hand; the worker from #55 claims and runs it, nothing here reimplements that loop), `GET /api/v1/imports` (paginated history), `GET /api/v1/imports/{id}` (status + report, joined with the source/file/mapping refs), `GET /api/v1/imports/{id}/issues` (paginated, filterable by severity).
 - `interfaces/http/schemas/imports.py`: wire shapes matching API.md §5 exactly (`ImportPreviewOut`, `ImportStatusOut`, `ImportIssueOut`, ...).

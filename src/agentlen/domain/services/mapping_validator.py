@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from agentlen.domain.errors import (
+    MissingNaturalKeyError,
     UnknownTargetFieldError,
     UnsupportedOperatorError,
     ValidationError,
@@ -96,6 +97,16 @@ def _validate_entity(entity: EntityMapping) -> list[ValidationError]:
             )
         )
         return errors  # no point checking fields if entity itself is unknown
+
+    # Structural: deduplication (INSERT ... ON CONFLICT DO NOTHING) has nothing
+    # to key off without a natural_key.
+    if not entity.natural_key:
+        errors.append(
+            MissingNaturalKeyError(
+                target=entity.target,
+                field_path=f"entities[target={entity.target}]",
+            )
+        )
 
     for field_rule in entity.fields:
         errors.extend(_validate_field(field_rule, entity.target, allowed_fields))

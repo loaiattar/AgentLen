@@ -84,7 +84,7 @@ def assert_envelope(payload: dict[str, object]) -> dict[str, object]:
 @pytest.mark.parametrize(
     ("path", "expected_status", "expected_code"),
     [
-        ("/boom/unknown-target", 422, "UNKNOWN_TARGET_FIELD"),
+        ("/boom/unknown-target", 422, "MAPPING_UNKNOWN_TARGET"),
         ("/boom/domain-rule", 422, "DOMAIN_RULE_VIOLATED"),
         ("/boom/not-found", 404, "NOT_FOUND"),
         ("/boom/conflict", 409, "CONFLICT"),
