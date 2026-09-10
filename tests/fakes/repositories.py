@@ -25,7 +25,7 @@ from agentlen.application.dto.persistence import (
     ToolCallRow,
 )
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
-from agentlen.domain.model.mapping import Mapping
+from agentlen.domain.model.mapping import Mapping, MappingProposal
 from agentlen.domain.model.session import Session
 
 
@@ -56,6 +56,8 @@ class _Store:
     reports: dict[int, ImportReport] = field(default_factory=dict)
     issues: list[tuple[int, ImportIssue, int | None]] = field(default_factory=list)
     mappings: dict[int, tuple[Mapping, int]] = field(default_factory=dict)
+    mapping_proposals: dict[int, MappingProposal] = field(default_factory=dict)
+    proposal_messages: list[tuple[int, str, str]] = field(default_factory=list)
     data_sources: dict[str, int] = field(default_factory=dict)
     referentials: dict[tuple[str, str, str], int] = field(default_factory=dict)
     file_uploads: dict[str, FileUploadRecord] = field(default_factory=dict)
@@ -77,6 +79,8 @@ class _Store:
             "reports": dict(self.reports),
             "issues": list(self.issues),
             "mappings": dict(self.mappings),
+            "mapping_proposals": dict(self.mapping_proposals),
+            "proposal_messages": list(self.proposal_messages),
             "data_sources": dict(self.data_sources),
             "referentials": dict(self.referentials),
             "file_uploads": dict(self.file_uploads),
@@ -352,6 +356,31 @@ class InMemoryReferentialRepository:
         return self._s.referentials[key]
 
 
+class InMemoryMappingProposalRepository:
+    def __init__(self, store: _Store) -> None:
+        self._s = store
+
+    async def save(
+        self,
+        proposal: MappingProposal,
+        *,
+        file_upload_id: int,
+        data_source_id: int | None = None,
+    ) -> int:
+        proposal_id = self._s.ids.take()
+        self._s.mapping_proposals[proposal_id] = proposal
+        return proposal_id
+
+    async def get(self, proposal_id: int) -> MappingProposal | None:
+        return self._s.mapping_proposals.get(proposal_id)
+
+    async def update(self, proposal_id: int, proposal: MappingProposal) -> None:
+        self._s.mapping_proposals[proposal_id] = proposal
+
+    async def add_message(self, proposal_id: int, *, role: str, content: str) -> None:
+        self._s.proposal_messages.append((proposal_id, role, content))
+
+
 class InMemoryUnitOfWork:
     """Real rollback: state is snapshotted on entry and restored unless
     `commit()` was called, so a test can assert that a failure left nothing
@@ -368,6 +397,7 @@ class InMemoryUnitOfWork:
         self.import_runs = InMemoryImportRunRepository(self._store)
         self.import_issues = InMemoryImportIssueRepository(self._store)
         self.mappings = InMemoryMappingRepository(self._store)
+        self.mapping_proposals = InMemoryMappingProposalRepository(self._store)
         self.data_sources = InMemoryDataSourceRepository(self._store)
         self.file_uploads = InMemoryFileUploadRepository(self._store)
         self.referentials = InMemoryReferentialRepository(self._store)
