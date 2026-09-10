@@ -99,11 +99,9 @@ async def test_version_reports_null_revision_when_database_is_down(
 async def test_engine_is_disposed_on_shutdown(live_engine: AsyncEngine) -> None:
     """The lifespan hook must close the pool, or a reloading dev server leaks
     one pool per restart until Postgres refuses connections."""
-    from httpx import ASGITransport
-
     from agentlen.interfaces.http.app import create_app
+    from tests.e2e.conftest import asgi_client
 
     app = create_app(engine=live_engine)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with asgi_client(app) as c:
         assert (await c.get("/api/v1/health")).status_code == 200

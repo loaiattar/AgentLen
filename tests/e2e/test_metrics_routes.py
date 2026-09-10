@@ -12,15 +12,14 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.dependencies import get_dashboard_queries
+from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 from tests.fakes.dashboard_queries import InMemoryDashboardQueries
 from tests.integration.conftest import requires_postgres
-
-from .conftest import UNREACHABLE_URL
 
 DAY = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
 
@@ -46,8 +45,7 @@ async def stub_client() -> AsyncIterator[AsyncClient]:
     app.dependency_overrides[get_dashboard_queries] = lambda: InMemoryDashboardQueries(
         sessions=list(SESSIONS), model_calls=list(MODEL_CALLS), tool_calls=list(TOOL_CALLS)
     )
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with asgi_client(app) as c:
         yield c
 
 

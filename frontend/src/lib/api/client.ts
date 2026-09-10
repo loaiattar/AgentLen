@@ -1,5 +1,6 @@
 /** Backend prefix from API.md. Paths passed to apiClient are relative to this (e.g. `/metrics/overview`). */
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
+const API_KEY = import.meta.env.VITE_API_KEY ?? ''
 
 export class ApiError extends Error {
   status: number
@@ -41,6 +42,7 @@ async function request<TResponse>(path: string, options: RequestOptions = {}): P
     ...rest,
     headers: {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
       ...headers,
     },
     body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,

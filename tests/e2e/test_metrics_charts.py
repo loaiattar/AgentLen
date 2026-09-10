@@ -12,15 +12,14 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.dto.dashboard import DashboardFilters
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.dependencies import get_dashboard_queries
+from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 from tests.fakes.dashboard_queries import InMemoryDashboardQueries
-
-from .conftest import UNREACHABLE_URL
 
 DAY_1 = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
 DAY_2 = datetime(2026, 8, 2, 9, 0, tzinfo=UTC)
@@ -103,8 +102,7 @@ def reference() -> InMemoryDashboardQueries:
 async def charts() -> AsyncIterator[AsyncClient]:
     app = create_app(engine=create_async_engine(UNREACHABLE_URL))
     app.dependency_overrides[get_dashboard_queries] = reference
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with asgi_client(app) as c:
         yield c
 
 
