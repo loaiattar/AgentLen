@@ -53,6 +53,24 @@ class InvalidOperatorParamError(ValidationError):
         super().__init__(code="INVALID_OPERATOR_PARAM", field_path=field_path, message=message)
 
 
+class InvalidEmailError(ValidationError):
+    """Raised when a user-supplied e-mail address fails the format check."""
+
+    def __init__(self, email: str) -> None:
+        super().__init__(
+            code="INVALID_EMAIL",
+            field_path="email",
+            message=f"'{email}' n'est pas une adresse e-mail valide.",
+        )
+
+
+class WeakPasswordError(ValidationError):
+    """Raised when a password fails the minimum-strength policy."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(code="WEAK_PASSWORD", field_path="password", message=message)
+
+
 class OperatorFailedError(DomainError):
     """Raised by an operator on a data-level failure, carrying a stable ImportIssue code.
 

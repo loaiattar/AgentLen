@@ -16,7 +16,7 @@ UUID → id mapping; reads take the database id. See ADR-012.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Protocol
 
 from agentlen.application.dto.persistence import (
@@ -26,6 +26,8 @@ from agentlen.application.dto.persistence import (
     ModelCallRow,
     SessionRow,
     ToolCallRow,
+    UserRecord,
+    UserSessionRecord,
 )
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
 from agentlen.domain.model.mapping import Mapping, MappingProposal
@@ -213,6 +215,30 @@ class DataSourceRepository(Protocol):
         dataset_version: str | None = None,
         retrieved_at: date | None = None,
     ) -> int: ...
+
+
+class UserRepository(Protocol):
+    async def get_by_email(self, email: str) -> UserRecord | None: ...
+
+    async def get_by_id(self, user_id: int) -> UserRecord | None: ...
+
+    async def create(self, *, email: str, password_hash: str) -> UserRecord:
+        """Raises on a duplicate e-mail; the use case checks first so it can
+        raise the application-level `ConflictError` with a clean message
+        instead of surfacing a raw integrity error."""
+        ...
+
+
+class UserSessionRepository(Protocol):
+    async def create(
+        self, *, user_id: int, token: str, expires_at: datetime | None
+    ) -> UserSessionRecord: ...
+
+    async def get_by_token(self, token: str) -> UserSessionRecord | None: ...
+
+    async def delete_by_token(self, token: str) -> None:
+        """No-op if the token is already gone — logout is idempotent."""
+        ...
 
 
 class ReferentialRepository(Protocol):

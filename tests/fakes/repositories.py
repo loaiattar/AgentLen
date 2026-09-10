@@ -25,7 +25,10 @@ from agentlen.application.dto.persistence import (
     ModelCallRow,
     SessionRow,
     ToolCallRow,
+    UserRecord,
+    UserSessionRecord,
 )
+from agentlen.application.errors import ConflictError
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
 from agentlen.domain.model.mapping import Mapping, MappingProposal
 from agentlen.domain.model.session import Session
@@ -65,6 +68,9 @@ class _Store:
     data_source_records: dict[int, DataSourceRecord] = field(default_factory=dict)
     referentials: dict[tuple[str, str, str], int] = field(default_factory=dict)
     file_uploads: dict[str, FileUploadRecord] = field(default_factory=dict)
+    users_by_email: dict[str, UserRecord] = field(default_factory=dict)
+    users_by_id: dict[int, UserRecord] = field(default_factory=dict)
+    user_sessions: dict[str, UserSessionRecord] = field(default_factory=dict)
     ids: _Sequence = field(default_factory=_Sequence)
 
     def snapshot(self) -> dict[str, Any]:
@@ -89,6 +95,9 @@ class _Store:
             "data_source_records": dict(self.data_source_records),
             "referentials": dict(self.referentials),
             "file_uploads": dict(self.file_uploads),
+            "users_by_email": dict(self.users_by_email),
+            "users_by_id": dict(self.users_by_id),
+            "user_sessions": dict(self.user_sessions),
         }
 
     def restore(self, snap: dict[str, Any]) -> None:
@@ -506,6 +515,52 @@ class InMemoryMappingProposalRepository:
         self._s.proposal_messages.append((proposal_id, role, content))
 
 
+class InMemoryUserRepository:
+    def __init__(self, store: _Store) -> None:
+        self._s = store
+
+    async def get_by_email(self, email: str) -> UserRecord | None:
+        return self._s.users_by_email.get(email)
+
+    async def get_by_id(self, user_id: int) -> UserRecord | None:
+        return self._s.users_by_id.get(user_id)
+
+    async def create(self, *, email: str, password_hash: str) -> UserRecord:
+        if email in self._s.users_by_email:
+            raise ConflictError(
+                f"Un compte existe déjà pour l'adresse '{email}'.", details={"email": email}
+            )
+        record = UserRecord(
+            id=self._s.ids.take(),
+            email=email,
+            password_hash=password_hash,
+            created_at=datetime.now(UTC),
+        )
+        self._s.users_by_email[email] = record
+        self._s.users_by_id[record.id] = record
+        return record
+
+
+class InMemoryUserSessionRepository:
+    def __init__(self, store: _Store) -> None:
+        self._s = store
+
+    async def create(
+        self, *, user_id: int, token: str, expires_at: datetime | None
+    ) -> UserSessionRecord:
+        record = UserSessionRecord(
+            token=token, user_id=user_id, created_at=datetime.now(UTC), expires_at=expires_at
+        )
+        self._s.user_sessions[token] = record
+        return record
+
+    async def get_by_token(self, token: str) -> UserSessionRecord | None:
+        return self._s.user_sessions.get(token)
+
+    async def delete_by_token(self, token: str) -> None:
+        self._s.user_sessions.pop(token, None)
+
+
 class InMemoryUnitOfWork:
     """Real rollback: state is snapshotted on entry and restored unless
     `commit()` was called, so a test can assert that a failure left nothing
@@ -526,6 +581,8 @@ class InMemoryUnitOfWork:
         self.data_sources = InMemoryDataSourceRepository(self._store)
         self.file_uploads = InMemoryFileUploadRepository(self._store)
         self.referentials = InMemoryReferentialRepository(self._store)
+        self.users = InMemoryUserRepository(self._store)
+        self.user_sessions = InMemoryUserSessionRepository(self._store)
 
     async def __aenter__(self) -> InMemoryUnitOfWork:
         self._snapshot = self._store.snapshot()

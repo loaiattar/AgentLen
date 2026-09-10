@@ -29,6 +29,11 @@ dependencies = [
     # taken straight from trace files; RE2 cannot backtrack, so no future
     # edit to those patterns can reintroduce a quadratic blow-up.
     "google-re2>=1.1",
+    # Password hashing for user auth (issue: email/password login). Standalone,
+    # well-audited, no framework baggage — deliberately not passlib (largely
+    # unmaintained) nor argon2-cffi (heavier C bindings for a single-tenant
+    # feature that does not need OWASP's top pick).
+    "bcrypt>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -183,7 +188,9 @@ ignore = ["S101"]   # allow assert in tests
 # Alembic writes these; reflowing machine output on every regeneration is noise.
 "alembic/versions/*" = ["E501"]
 # Literal expectations are the point of a test, not a magic number to extract.
-"tests/*" = ["PLR2004"]
+# S105/S106: every auth test passes a literal password — that is the fixture,
+# not a leaked credential.
+"tests/*" = ["PLR2004", "S105", "S106"]
 # The transformation engine dispatches over the operator whitelist: one branch
 # per operator, by design. MAPPING_CONTRACT.md §3 defines that whitelist as a
 # single closed set, and issue #43 adds six more operators to it. Splitting the

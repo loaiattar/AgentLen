@@ -12,6 +12,8 @@ from agentlen.infrastructure.persistence.repositories.sql import (
     SqlAlchemyReferentialRepository,
     SqlAlchemySessionRepository,
     SqlAlchemyToolCallRepository,
+    SqlAlchemyUserRepository,
+    SqlAlchemyUserSessionRepository,
 )
 
 __all__ = [
@@ -26,4 +28,6 @@ __all__ = [
     "SqlAlchemyReferentialRepository",
     "SqlAlchemySessionRepository",
     "SqlAlchemyToolCallRepository",
+    "SqlAlchemyUserRepository",
+    "SqlAlchemyUserSessionRepository",
 ]

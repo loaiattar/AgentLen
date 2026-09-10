@@ -25,6 +25,8 @@ from agentlen.application.ports.repositories import (
     ReferentialRepository,
     SessionRepository,
     ToolCallRepository,
+    UserRepository,
+    UserSessionRepository,
 )
 
 
@@ -46,6 +48,8 @@ class UnitOfWork(Protocol):
     data_sources: DataSourceRepository
     file_uploads: FileUploadRepository
     referentials: ReferentialRepository
+    users: UserRepository
+    user_sessions: UserSessionRepository
 
     async def __aenter__(self) -> UnitOfWork: ...
 
