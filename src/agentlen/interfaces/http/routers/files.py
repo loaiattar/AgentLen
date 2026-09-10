@@ -110,5 +110,7 @@ async def profile_file(
         raise NotFoundError("FileUpload", file_id)
 
     use_case = ProfileFile(profiler)
-    profile = await use_case.execute(ProfileFileCommand(file_id=file_id, path=record.storage_path))
+    profile = await use_case.execute(
+        ProfileFileCommand(file_id=file_id, path=record.storage_path, format=record.format)
+    )
     return _to_profile_out(profile)

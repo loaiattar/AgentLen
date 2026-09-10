@@ -18,6 +18,12 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Fixed — `POST /files/{id}/profile` returned 500 on every real upload
+- Found during Nabil's Docker smoke test: `PolarsFileProfiler.profile()` infers the file format from the path's extension, but `LocalFileStorage` writes uploads content-addressed (`<root>/<hash[:2]>/<hash>`, no extension at all — #47) — `infer_format` raised `ValueError` on literally any real upload, surfaced as a raw 500.
+- The format is already known at profile time (`file_upload.format`, set from the magic bytes at upload); it just wasn't threaded through. Added an optional `format` parameter to the `FileProfiler` port, `PolarsFileProfiler.profile()` (falls back to `infer_format(path)` only when `format` is omitted — existing callers/fixtures unaffected) and `ProfileFileCommand`; the `/files/{id}/profile` route now passes `record.format` through instead of leaving the profiler to re-guess it from an extensionless path.
+- `tests/unit/test_polars_profiler.py`: reproduces the exact bug (a content-addressed path with no suffix) and confirms `format=` fixes it, plus confirms the no-format/no-extension case still fails with a clear error rather than silently guessing wrong.
+- Fixed on `feat/50-data-sources-files-routers` (PR #94) and merged into this branch since it inherited the same broken code.
+
 ### Added — issue #52 (`/mappings` router — CRUD, validation, versioning)
 - `interfaces/http/routers/mappings.py`: `GET /api/v1/mappings` (filterable by `data_source_id`/`status`, paginated), `POST /api/v1/mappings` (201, validated before write — 422 with every error otherwise, nothing partial), `GET /api/v1/mappings/{id}`, `PUT /api/v1/mappings/{id}` (creates version N+1, marks the previous version `superseded`), `POST /api/v1/mappings/validate` (validates without saving — no `UnitOfWork` dependency at all, since nothing is ever written).
 - `interfaces/http/schemas/mappings.py`: wire shapes matching MAPPING_CONTRACT.md §2 (`FieldRuleIn/Out`, `EntityMappingIn/Out`, `MappingOut`, `MappingValidateOut`).
