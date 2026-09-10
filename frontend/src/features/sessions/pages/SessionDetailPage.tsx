@@ -39,7 +39,13 @@ function eventTone(type: 'model_call' | 'tool_call', status: string): TimelineIt
 function BackButton() {
   return (
     <Button variant="secondary" asChild>
-      <Link to="/sessions">Back</Link>
+      {/* Preserve the list's drill-down filters (#28) round-trip: they live in
+          the shared /_app search state, carried into this route on the way in
+          (openSession/useSessionIdSearch) — dropping them here would return to
+          the unfiltered list. */}
+      <Link to="/sessions" search={(prev) => prev}>
+        Back
+      </Link>
     </Button>
   )
 }
@@ -133,7 +139,14 @@ export function SessionDetailPage() {
 
   const { session: info, model_calls: modelCalls, tool_calls: toolCalls } = session.data
   const events = timeline.data ?? []
-  const totalTokens = modelCalls.reduce(
+  // null isn't 0 (same rule as the dashboard): a call with no token counts at
+  // all must not silently sum into a confident-looking 0. Only calls that
+  // report *something* feed the total; "—" means truly nothing is known, not
+  // "zero calls".
+  const callsWithTokenData = modelCalls.filter(
+    (call) => call.input_tokens != null || call.output_tokens != null,
+  )
+  const totalTokens = callsWithTokenData.reduce(
     (sum, call) => sum + (call.input_tokens ?? 0) + (call.output_tokens ?? 0),
     0,
   )
@@ -152,7 +165,7 @@ export function SessionDetailPage() {
           <Kpi label="Duration" value={formatDurationMs(info.duration_ms)} />
         </BentoModule>
         <BentoModule cols={1} padding="none">
-          <Kpi label="Tokens" value={modelCalls.length === 0 ? '—' : formatCount(totalTokens)} />
+          <Kpi label="Tokens" value={callsWithTokenData.length === 0 ? '—' : formatCount(totalTokens)} />
         </BentoModule>
         <BentoModule cols={1} padding="none">
           <Kpi label="Model calls" value={formatCount(modelCalls.length)} />

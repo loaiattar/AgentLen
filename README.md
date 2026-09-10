@@ -18,6 +18,10 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Fixed — two review findings on the #29 session detail page
+- **Tokens KPI showed `0` instead of `—` for a real "no data" case.** The sum only guarded `modelCalls.length === 0`; a session with model calls but every `input_tokens`/`output_tokens` null (common with TraceLab) still summed to `0` and displayed it — violating the project's own "null isn't 0" rule (same as the dashboard). Fixed by tracking which calls report *any* token data at all: `—` now means "nothing known", not "zero calls".
+- **The Back link dropped the list's drill-down filters.** `<Link to="/sessions">` with no `search` prop resets the shared `/_app` search state — returning from a session opened while filtered by tool/day landed back on the unfiltered list. Added `search={(prev) => prev}`, the same pattern already used everywhere else this route is entered (`openSession`, `useSessionIdSearch`, the list row links).
+
 ### Added — issue #29 (frontend: session detail page)
 - `frontend/src/features/sessions/pages/SessionDetailPage.tsx`: replaced the static design-mock (hardcoded "gpt-4.1", fake timeline) with a real page wired to the API. The data layer (`sessionsQueries.detail/.timeline/.record`, the `useSessionQuery`/`useSessionTimelineQuery`/`useRawRecordQuery` hooks, and the matching TypeScript types) already existed from #28 — this only builds the page that consumes it.
 - General info: duration, total tokens (summed across model calls, `—` when there are none — never a bare `0` for "no data"), model/tool call counts, agent/source ids, outcome badge, start/end instants — reusing `formatDurationMs`/`formatCount`/`formatInstant`/`outcomeTone` from `sessions/lib/format.ts` rather than duplicating formatting logic.
