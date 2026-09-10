@@ -34,15 +34,17 @@ class OpenAIAnalyzer(BaseAnalyzerAdapter):
         return f"{base}/chat/completions"
 
     def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        # `Bearer ` sans jeton derrière : certains hôtes locaux rejettent
+        # l'en-tête vide plutôt que de l'ignorer. Absent vaut mieux que vide.
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        return headers
 
     def _build_request(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         return {
             "model": self._settings.model,
-            "max_tokens": self._settings.max_output_tokens,
+            self._settings.max_tokens_parameter: self._settings.max_output_tokens,
             "tools": to_openai(),
             "messages": messages,
         }
