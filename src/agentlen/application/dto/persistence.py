@@ -93,3 +93,29 @@ class FileUploadRecord:
     format: str
     size_bytes: int
     content_hash: str
+
+
+@dataclass(frozen=True)
+class UserRecord:
+    """One person able to authenticate.
+
+    `password_hash` never leaves the application layer: the HTTP schemas
+    (`interfaces/http/schemas/auth.py`) map this to `UserOut`, which does not
+    carry the field at all — there is no serializer bug possible, only a
+    missing attribute.
+    """
+
+    id: int
+    email: str
+    password_hash: str
+    created_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class UserSessionRecord:
+    """One active login — the bearer token a client presents after `/auth/login`."""
+
+    token: str
+    user_id: int
+    created_at: datetime | None = None
+    expires_at: datetime | None = None

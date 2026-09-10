@@ -17,12 +17,13 @@ identifier comes from a request — the target schema is closed and known.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from agentlen.application.dto.persistence import (
@@ -32,7 +33,10 @@ from agentlen.application.dto.persistence import (
     ModelCallRow,
     SessionRow,
     ToolCallRow,
+    UserRecord,
+    UserSessionRecord,
 )
+from agentlen.application.errors import ConflictError
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
 from agentlen.domain.model.mapping import Mapping, MappingProposal
 from agentlen.domain.model.session import Session
@@ -807,3 +811,76 @@ class SqlAlchemyReferentialRepository(_Base):
                 else table.c[column] == values[column]
             )
         return int((await self._conn.execute(query)).scalar_one())
+
+
+class SqlAlchemyUserRepository(_Base):
+    async def get_by_email(self, email: str) -> UserRecord | None:
+        row = (
+            (await self._conn.execute(select(t.user).where(t.user.c.email == email)))
+            .mappings()
+            .one_or_none()
+        )
+        return _to_user(row) if row else None
+
+    async def get_by_id(self, user_id: int) -> UserRecord | None:
+        row = (
+            (await self._conn.execute(select(t.user).where(t.user.c.id == user_id)))
+            .mappings()
+            .one_or_none()
+        )
+        return _to_user(row) if row else None
+
+    async def create(self, *, email: str, password_hash: str) -> UserRecord:
+        statement = (
+            insert(t.user).values(email=email, password_hash=password_hash).returning(t.user)
+        )
+        try:
+            row = (await self._conn.execute(statement)).mappings().one()
+        except IntegrityError as exc:
+            # Defense in depth: the use case already checks get_by_email
+            # first, this only fires on a genuine race between two concurrent
+            # registrations for the same address.
+            raise ConflictError(
+                f"Un compte existe déjà pour l'adresse '{email}'.",
+                details={"email": email},
+            ) from exc
+        return _to_user(row)
+
+
+def _to_user(row: Any) -> UserRecord:
+    return UserRecord(
+        id=row["id"],
+        email=row["email"],
+        password_hash=row["password_hash"],
+        created_at=row["created_at"],
+    )
+
+
+class SqlAlchemyUserSessionRepository(_Base):
+    async def create(
+        self, *, user_id: int, token: str, expires_at: datetime | None
+    ) -> UserSessionRecord:
+        statement = (
+            insert(t.user_session)
+            .values(user_id=user_id, token=token, expires_at=expires_at)
+            .returning(t.user_session)
+        )
+        row = (await self._conn.execute(statement)).mappings().one()
+        return _to_user_session(row)
+
+    async def get_by_token(self, token: str) -> UserSessionRecord | None:
+        query = select(t.user_session).where(t.user_session.c.token == token)
+        row = (await self._conn.execute(query)).mappings().one_or_none()
+        return _to_user_session(row) if row else None
+
+    async def delete_by_token(self, token: str) -> None:
+        await self._conn.execute(delete(t.user_session).where(t.user_session.c.token == token))
+
+
+def _to_user_session(row: Any) -> UserSessionRecord:
+    return UserSessionRecord(
+        token=row["token"],
+        user_id=row["user_id"],
+        created_at=row["created_at"],
+        expires_at=row["expires_at"],
+    )

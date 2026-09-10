@@ -411,6 +411,45 @@ mapping_proposal_message = Table(
 )
 
 
+# ---------------------------------------------------------------------------
+# User auth — orthogonal to the rest of the schema: no other table references
+# `users` or `user_session`. This is per-person login, distinct from the
+# app-wide `X-API-Key` the front presents on every request.
+#
+# Table named "users" (plural), unlike every other table in this schema — the
+# singular "user" is a reserved word in the SQL standard (a synonym for
+# CURRENT_USER), so a bare, unquoted `user` breaks the moment anything issues
+# raw SQL against it (as tests/integration/conftest.py's TRUNCATE did during
+# development). Not worth carrying that landmine for naming-convention purity.
+# ---------------------------------------------------------------------------
+
+user = Table(
+    "users",
+    metadata,
+    _pk(),
+    Column("email", Text, nullable=False, unique=True),
+    Column("password_hash", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    comment="One person able to authenticate against the API.",
+)
+
+user_session = Table(
+    "user_session",
+    metadata,
+    _pk(),
+    Column("token", Text, nullable=False, unique=True),
+    Column("user_id", BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # NULL would mean "never expires" — every session created by LoginUser
+    # sets this, but the column stays nullable rather than NOT NULL so a
+    # future non-expiring token type isn't a schema change.
+    _tz("expires_at"),
+    comment="One active login, identified by its opaque bearer token.",
+)
+
+Index("ix_user_session_user_id", user_session.c.user_id)
+
+
 ALL_TABLES = (
     data_source,
     file_upload,
@@ -428,6 +467,8 @@ ALL_TABLES = (
     tool_call,
     mapping_proposal,
     mapping_proposal_message,
+    user,
+    user_session,
 )
 
 #: Measure columns that must never become NOT NULL or gain a default.

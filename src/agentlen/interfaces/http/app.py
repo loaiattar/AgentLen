@@ -19,6 +19,7 @@ from agentlen.interfaces.http.auth import ApiKeyMiddleware
 from agentlen.interfaces.http.errors import register_error_handlers
 from agentlen.interfaces.http.routers import (
     ai,
+    auth,
     data_sources,
     exploration,
     files,
@@ -90,7 +91,7 @@ def create_app(*, engine: AsyncEngine | None = None, settings: Settings | None =
         CORSMiddleware,
         allow_origins=resolved.allowed_origins,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
-        allow_headers=["X-API-Key", "Content-Type"],
+        allow_headers=["X-API-Key", "Content-Type", "Authorization"],
     )
 
     # Service routes stay unprefixed as well as prefixed: orchestrators and
@@ -98,6 +99,7 @@ def create_app(*, engine: AsyncEngine | None = None, settings: Settings | None =
     # versioned path. Both point at the same handler.
     versioned = APIRouter(prefix=API_PREFIX)
     versioned.include_router(service.router)
+    versioned.include_router(auth.router)
     versioned.include_router(metrics.router)
     versioned.include_router(ai.router)
     versioned.include_router(data_sources.router)

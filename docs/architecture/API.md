@@ -35,7 +35,9 @@ Toutes les erreurs partagent la même enveloppe :
 
 ### Authentification
 
-Toutes les routes exigent le header `X-API-Key`, dont la valeur est celle de la variable d'environnement `API_KEY`.
+Toutes les routes exigent le header `X-API-Key`, dont la valeur est celle de la variable d'environnement `API_KEY`. Cette clé authentifie **l'application front**, pas une personne : elle est unique et partagée, au niveau de tout le service.
+
+L'authentification **par personne** (compte e-mail/mot de passe, jeton de session) est une couche distincte, ajoutée par-dessus — voir [§10 Authentification utilisateur](#10-authentification-utilisateur-comptes). `X-API-Key` reste exigé sur `/auth/*` comme sur toute autre route.
 
 Exceptions (sondes d'orchestration, sans clé) :
 
@@ -331,3 +333,39 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
 5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé de fournisseur IA ne quitte le serveur, aucune n'est livrée au navigateur. La clé `X-API-Key` d'AgentLen est distincte : c'est elle que le front envoie à l'API.
 6. **Toujours proposer la prévisualisation avant l'import.** `POST /imports/preview` n'écrit rien et sert de garde-fou avant validation.
 7. **Chaque requête authentifiée porte `X-API-Key`.** Seuls `/health` et `/version` en sont exemptés.
+
+---
+
+## 10. Authentification utilisateur (comptes)
+
+Couche distincte de `X-API-Key` (§1) : ces routes identifient **une personne**, pas l'application. Toutes exigent quand même `X-API-Key`, comme le reste de l'API.
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `POST` | `/auth/register` | Crée un compte (e-mail + mot de passe) |
+| `POST` | `/auth/login` | Échange e-mail + mot de passe contre un jeton de session |
+| `POST` | `/auth/logout` | Invalide le jeton de session courant |
+| `GET` | `/auth/me` | Le compte associé au jeton de session courant |
+
+**`POST /auth/register` → `201`**
+
+```json
+{ "id": 1, "email": "alice@example.com", "created_at": "2026-09-10T12:00:00Z" }
+```
+
+Ni `password` ni son hash n'apparaissent jamais dans une réponse. `409` si l'e-mail est déjà utilisé, `422` (`INVALID_EMAIL` / `WEAK_PASSWORD`) si l'e-mail ou le mot de passe échoue à la validation.
+
+**`POST /auth/login` → `200`**
+
+```json
+{ "token": "opaque-random-string",
+  "user": { "id": 1, "email": "alice@example.com", "created_at": "2026-09-10T12:00:00Z" } }
+```
+
+`401` (`INVALID_CREDENTIALS`) pour un mot de passe incorrect **ou** un compte inexistant — volontairement la même erreur dans les deux cas, pour ne pas laisser deviner quels e-mails ont un compte.
+
+Le jeton est un **jeton de session opaque stocké en base** (`user_session`), pas un JWT : la révocation au logout est un simple `DELETE`, sans clé de signature à gérer. Il se présente en `Authorization: Bearer <token>` sur toute route protégée.
+
+**`POST /auth/logout` → `204`.** Idempotent : appeler la route sans jeton, ou avec un jeton déjà invalidé, renvoie aussi `204`.
+
+**`GET /auth/me` → `200`** avec le même corps que la partie `user` de `/auth/login`, ou `401` (`UNAUTHENTICATED`) si le jeton est absent, inconnu ou expiré (30 jours).

@@ -282,6 +282,8 @@ class StructureAnalyzer(Protocol):
 | `JobQueue` | File d'imports | Postgres · InProcess (tests) |
 | `Clock`, `IdGenerator` | Temps et identifiants | Système · Figé (tests déterministes) |
 | `DashboardQueries` | Lectures analytiques (CQRS léger) | SQL Postgres · InMemory |
+| `PasswordHasher` | Hash des mots de passe utilisateur | bcrypt · Faux (tests) |
+| `UserRepository`, `UserSessionRepository` | Comptes et sessions de connexion | SQLAlchemy · InMemory (tests) |
 
 > **Note CQRS.** Les écritures passent par les repositories et les entités. Les lectures du dashboard passent par `DashboardQueries`, qui exécute du SQL agrégé et renvoie des DTO. On ne charge pas des milliers d'entités pour calculer une moyenne.
 
@@ -442,6 +444,9 @@ Chaque adaptateur convertit la réponse brute du fournisseur vers le **même** o
 | Fuite de données sensibles vers le fournisseur IA | Un `SampleSanitizer` s'exécute **avant** tout appel : troncature des valeurs longues, masquage des motifs sensibles (clés `sk-…`, jetons, e-mails, chemins absolus), envoi limité à N lignes d'échantillon. Testé unitairement. |
 | Secrets dans le dépôt | Clés uniquement en variables d'environnement. `.env` dans `.gitignore`, `.env.example` sans valeurs réelles. Scan de secrets dans la CI. **Aucune clé de fournisseur IA n'est jamais exposée à l'API HTTP** — le front n'appelle jamais le fournisseur IA directement. |
 | Accès anonyme à l'API | Middleware `X-API-Key` sur toutes les routes sauf `/health` et `/version`. Clé lue dans `API_KEY`, jamais journalisée. CORS limité à `ALLOWED_ORIGINS`. |
+| Mot de passe utilisateur en clair | Jamais stocké tel quel : hashé par `PasswordHasher` (bcrypt, salé automatiquement) avant tout appel à un repository. Aucun code applicatif ne peut écrire `password` en base — seul `password_hash` existe côté schéma. |
+| Énumération de comptes via `/auth/login` | `InvalidCredentialsError` est levée à l'identique pour un e-mail inconnu et pour un mot de passe incorrect : la réponse ne distingue jamais les deux cas. |
+| Session utilisateur qui ne meurt jamais | Chaque jeton de `/auth/login` porte un `expires_at` (30 jours) vérifié à chaque requête protégée ; `/auth/logout` supprime la ligne, révocation immédiate sans liste de blocage. |
 | Upload malveillant | Extension et taille contrôlées, format détecté par contenu, parsing en flux (pas de chargement intégral en mémoire). |
 | Injection SQL | Requêtes paramétrées via SQLAlchemy, y compris dans les read models. Aucun nom de table ou de colonne ne provient d'une entrée utilisateur (le mapping cible un **schéma fermé et connu**). |
 
