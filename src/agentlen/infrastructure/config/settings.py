@@ -9,7 +9,7 @@ to set the variable. Not choosing for the operator is the point.
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -58,9 +58,35 @@ class ProviderKeys(BaseSettings):
     ai_api_key: str = ""
 
 
+class Settings(BaseSettings):
+    """HTTP process configuration: API key auth and CORS.
+
+    `api_key` is `repr=False` so it cannot leak through logs that stringify
+    the settings object. Compare it in constant time; never interpolate it
+    into a log line.
+    """
+
+    model_config = SettingsConfigDict(extra="ignore", populate_by_name=True)
+
+    api_key: str = Field(default="", repr=False)
+    origins: str = Field(
+        default="http://localhost:5173",
+        validation_alias=AliasChoices("ALLOWED_ORIGINS", "allowed_origins", "origins"),
+    )
+
+    @property
+    def allowed_origins(self) -> list[str]:
+        """Comma-separated `ALLOWED_ORIGINS` as a list of origins."""
+        return [part.strip() for part in self.origins.split(",") if part.strip()]
+
+
 def load_ai_settings() -> AISettings:
     return AISettings()
 
 
 def load_provider_keys() -> ProviderKeys:
     return ProviderKeys()
+
+
+def load_settings() -> Settings:
+    return Settings()

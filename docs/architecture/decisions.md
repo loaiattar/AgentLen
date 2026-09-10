@@ -188,3 +188,18 @@ Les ports d'écriture prennent donc des entités et renvoient un `InsertOutcome`
 **Conséquences.** Aucune migration, aucune colonne de bruit. Les signatures des ports du Lot A qui annonçaient `UUID` en lecture sont corrigées — elles n'avaient aucune implémentation ni aucun appelant, le coût est nul. En contrepartie, `_to_session()` frappe un nouvel UUID à la lecture : il n'a pas de sens hors d'un lot d'import, et le code qui en dépendrait serait déjà en faute.
 
 **Ce qui reste vrai d'ADR-011.** Le domaine reste ignorant de SQLAlchemy, et la traduction entité ↔ ligne est écrite à la main. C'est cette traduction explicite qui rend la distinction ci-dessus visible plutôt qu'implicite.
+
+---
+
+## ADR-013 — Authentification par API Key et CORS
+
+**Statut :** accepté
+
+**Contexte.** L'API était ouverte sur le réseau local : n'importe quel client pouvait importer des fichiers et lire les traces. Le frontend tourne sur un autre port (Vite, 5173) ; sans CORS le navigateur bloque les appels.
+
+**Décision.** Un middleware FastAPI exige le header `X-API-Key` sur toutes les routes sauf `/health` et `/version`. La clé vient de `API_KEY`. Les origines autorisées viennent de `ALLOWED_ORIGINS` (liste CSV). Comparaison en temps constant (`hmac.compare_digest`) ; la valeur n'est jamais journalisée.
+
+**Alternatives.** JWT / sessions : trop lourd pour un monolithe de sprint, et le front n'a pas d'utilisateurs nommés. Basic Auth : moins pratique à envoyer depuis `fetch` et à documenter dans OpenAPI.
+
+**Conséquences.** Le front envoie `X-API-Key` (variable `VITE_API_KEY`). Un oubli de `API_KEY` en production ferme toute l'API (401), ce qui est le comportement voulu.
+
