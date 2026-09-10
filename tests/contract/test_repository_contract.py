@@ -13,7 +13,7 @@ enforced wherever a database exists.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -360,3 +360,95 @@ async def test_issues_are_listed_and_filterable_by_severity(uow: Any) -> None:
         rejected = await uow.import_issues.list(import_run_id=p["run"], severity="rejected")
         assert len(rejected) == 1
         assert rejected[0].code == "CAST_FAILED"
+
+
+async def test_import_run_list_returns_most_recent_first_and_count_matches(uow: Any) -> None:
+    async with uow:
+        p = await _provenance(uow)
+        second_run = await uow.import_runs.create(
+            data_source_id=p["source"], file_upload_id=1, mapping_id=1
+        )
+        await uow.commit()
+
+    async with uow:
+        history = await uow.import_runs.list(limit=50, offset=0)
+        total = await uow.import_runs.count()
+
+    ids = [row["id"] for row in history]
+    assert ids.index(second_run) < ids.index(p["run"])
+    assert total == len(history)
+
+
+async def test_import_run_list_is_paginated(uow: Any) -> None:
+    async with uow:
+        p = await _provenance(uow)
+        for _ in range(2):
+            await uow.import_runs.create(data_source_id=p["source"], file_upload_id=1, mapping_id=1)
+        await uow.commit()
+
+    async with uow:
+        total = await uow.import_runs.count()
+        page = await uow.import_runs.list(limit=1, offset=0)
+
+    assert total >= 3
+    assert len(page) == 1
+
+
+# ---------------------------------------------------------------------------
+# Data sources (issue #50)
+# ---------------------------------------------------------------------------
+
+
+async def test_created_data_source_is_retrievable_by_id_with_its_full_record(uow: Any) -> None:
+    async with uow:
+        source_id = await uow.data_sources.create(
+            slug="tracelab",
+            name="TraceLab",
+            description="Traces d'agents de developpement IA",
+            url="https://github.com/uw-syfi/TraceLab",
+            license="MIT",
+            dataset_version="v0.0.1",
+            retrieved_at=date(2026, 9, 7),
+        )
+        await uow.commit()
+
+    async with uow:
+        record = await uow.data_sources.get_by_id(source_id)
+
+    assert record is not None
+    assert record.slug == "tracelab"
+    assert record.name == "TraceLab"
+    assert record.dataset_version == "v0.0.1"
+    assert record.retrieved_at == date(2026, 9, 7)
+
+
+async def test_get_by_id_returns_none_for_an_unknown_id(uow: Any) -> None:
+    async with uow:
+        assert await uow.data_sources.get_by_id(999_999) is None
+
+
+async def test_list_returns_every_declared_source(uow: Any) -> None:
+    async with uow:
+        await uow.data_sources.create(slug="tracelab", name="TraceLab")
+        await uow.data_sources.create(slug="swe-chat", name="SWE-chat")
+        await uow.commit()
+
+    async with uow:
+        records = await uow.data_sources.list()
+
+    slugs = {r.slug for r in records}
+    assert {"tracelab", "swe-chat"} <= slugs
+
+
+async def test_creating_the_same_slug_twice_returns_the_existing_row_not_a_second_one(
+    uow: Any,
+) -> None:
+    async with uow:
+        first_id = await uow.data_sources.create(slug="tracelab", name="TraceLab")
+        second_id = await uow.data_sources.create(slug="tracelab", name="TraceLab (retry)")
+        await uow.commit()
+
+    assert first_id == second_id
+    async with uow:
+        records = await uow.data_sources.list()
+    assert sum(1 for r in records if r.slug == "tracelab") == 1

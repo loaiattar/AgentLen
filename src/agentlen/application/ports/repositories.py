@@ -16,9 +16,11 @@ UUID → id mapping; reads take the database id. See ADR-012.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Protocol
 
 from agentlen.application.dto.persistence import (
+    DataSourceRecord,
     FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
@@ -86,6 +88,12 @@ class ImportRunRepository(Protocol):
         """The run's identifying columns: source, file, mapping, status."""
         ...
 
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        """Most recent first — the history view (API.md §5)."""
+        ...
+
+    async def count(self) -> int: ...
+
     async def save_report(
         self, import_run_id: int, report: ImportReport, *, status: str
     ) -> None: ...
@@ -105,6 +113,8 @@ class ImportIssueRepository(Protocol):
     async def list(
         self, *, import_run_id: int, severity: str | None = None, limit: int = 50, offset: int = 0
     ) -> list[ImportIssue]: ...
+
+    async def count(self, *, import_run_id: int, severity: str | None = None) -> int: ...
 
 
 class MappingRepository(Protocol):
@@ -152,7 +162,24 @@ class MappingProposalRepository(Protocol):
 
 class DataSourceRepository(Protocol):
     async def get_by_slug(self, slug: str) -> int | None: ...
-    async def create(self, *, slug: str, name: str) -> int: ...
+
+    async def get_by_id(self, data_source_id: int) -> DataSourceRecord | None: ...
+
+    async def list(self) -> list[DataSourceRecord]:
+        """All declared sources — GET /data-sources (API.md §2)."""
+        ...
+
+    async def create(  # noqa: PLR0913
+        self,
+        *,
+        slug: str,
+        name: str,
+        description: str | None = None,
+        url: str | None = None,
+        license: str | None = None,
+        dataset_version: str | None = None,
+        retrieved_at: date | None = None,
+    ) -> int: ...
 
 
 class ReferentialRepository(Protocol):
