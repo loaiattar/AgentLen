@@ -25,7 +25,9 @@ export function ImportListPage() {
             <p className="mt-4 max-w-sm text-body text-foreground-muted">JSONL, CSV or Parquet. The assistant proposes a mapping. You validate.</p>
           </div>
           <Button asChild>
-            <Link to="/import-assistant">Start import</Link>
+            <Link to="/import-assistant" search={(prev) => prev}>
+              Start import
+            </Link>
           </Button>
         </BentoModule>
         <BentoModule cols={2} padding="none">

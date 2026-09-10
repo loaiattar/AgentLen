@@ -42,7 +42,7 @@ async def _profile(file_id: int, uow: UnitOfWorkDep, profiler: FileProfilerDep) 
     if stored is None:
         raise NotFoundError("File", file_id)
     return await ProfileFile(profiler).execute(
-        ProfileFileCommand(file_id=file_id, path=stored.storage_path)
+        ProfileFileCommand(file_id=file_id, path=stored.storage_path, format=stored.format)
     )
 
 

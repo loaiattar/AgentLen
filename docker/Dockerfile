@@ -56,6 +56,9 @@ COPY --chown=agentlen:agentlen src ./src
 COPY --chown=agentlen:agentlen alembic ./alembic
 COPY --chown=agentlen:agentlen alembic.ini pyproject.toml ./
 COPY --chown=agentlen:agentlen data ./data
+# FakeAnalyzer replays these offline. Path is resolved from
+# `src/agentlen/infrastructure/ai/fake_adapter.py` as `/app/tests/fixtures/ai_responses`.
+COPY --chown=agentlen:agentlen tests/fixtures/ai_responses ./tests/fixtures/ai_responses
 
 # Writable at runtime by the app user: uploaded files land here (LocalFileStorage).
 RUN mkdir -p /app/storage && chown agentlen:agentlen /app/storage
