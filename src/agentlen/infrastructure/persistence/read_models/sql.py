@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import Row, text
+from sqlalchemy import Row, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agentlen.application.dto.dashboard import (
@@ -21,7 +21,15 @@ from agentlen.application.dto.dashboard import (
     OverviewTotals,
     ToolUsagePoint,
 )
+from agentlen.application.dto.exploration import (
+    ModelCallDetail,
+    RawRecordDetail,
+    SessionDetail,
+    SessionWithCalls,
+    ToolCallDetail,
+)
 from agentlen.domain.model.metrics import Coverage
+from agentlen.infrastructure.persistence import tables as t
 
 
 def _session_predicates(filters: DashboardFilters) -> tuple[list[str], dict[str, Any]]:
@@ -40,6 +48,12 @@ def _session_predicates(filters: DashboardFilters) -> tuple[list[str], dict[str,
         if value is not None:
             where.append(f"sm.{column} = :{column}")
             params[column] = value
+
+    if filters.status is not None:
+        where.append(
+            "EXISTS (SELECT 1 FROM session s WHERE s.id = sm.session_id AND s.outcome = :status)"
+        )
+        params["status"] = filters.status
 
     if filters.date_from is not None:
         where.append("sm.started_at >= :date_from")
@@ -188,15 +202,19 @@ class SqlDashboardQueries:
 
     async def tool_usage(self, filters: DashboardFilters) -> list[ToolUsagePoint]:
         where, params = _session_predicates(filters)
+        if filters.tool_id is not None:
+            where.append("tc.tool_id = :tool_id")
         sql = text(f"""
-            SELECT tu.tool_id, tu.tool_name, tu.data_source_id,
-                   tu.call_count, tu.error_count, tu.status_known_count
-            FROM v_tool_usage tu
-            WHERE EXISTS (
-                SELECT 1 FROM v_session_metrics sm
-                {_clause([*where, "sm.data_source_id = tu.data_source_id"])}
-            )
-            ORDER BY tu.call_count DESC, tu.tool_name
+            SELECT tc.tool_id, t.name AS tool_name, sm.data_source_id,
+                   count(*) AS call_count,
+                   count(*) FILTER (WHERE tc.status = 'error') AS error_count,
+                   count(*) FILTER (WHERE tc.status IN ('ok', 'error')) AS status_known_count
+            FROM tool_call tc
+            JOIN tool t ON t.id = tc.tool_id
+            JOIN v_session_metrics sm ON sm.session_id = tc.session_id
+            {_clause(where)}
+            GROUP BY tc.tool_id, t.name, sm.data_source_id
+            ORDER BY call_count DESC, t.name
         """)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(sql, params)).all()
@@ -215,14 +233,22 @@ class SqlDashboardQueries:
 
     async def model_usage(self, filters: DashboardFilters) -> list[ModelUsagePoint]:
         where, params = _session_predicates(filters)
+        if filters.model_id is not None:
+            where.append("mc.model_id = :model_id")
         sql = text(f"""
-            SELECT mu.*
-            FROM v_model_usage mu
-            WHERE EXISTS (
-                SELECT 1 FROM v_session_metrics sm
-                {_clause([*where, "sm.data_source_id = mu.data_source_id"])}
-            )
-            ORDER BY mu.call_count DESC, mu.model_name NULLS LAST
+            SELECT mc.model_id, m.name AS model_name, p.name AS provider_name,
+                   sm.data_source_id, count(*) AS call_count,
+                   sum(mc.input_tokens) AS input_tokens, sum(mc.output_tokens) AS output_tokens,
+                   count(mc.input_tokens) AS token_records_present, count(*) AS token_records_total,
+                   sum(mc.cache_read_tokens) AS cache_read_tokens,
+                   count(mc.cache_read_tokens) AS cache_records_present
+            FROM model_call mc
+            JOIN v_session_metrics sm ON sm.session_id = mc.session_id
+            LEFT JOIN model m ON m.id = mc.model_id
+            LEFT JOIN provider p ON p.id = m.provider_id
+            {_clause(where)}
+            GROUP BY mc.model_id, m.name, p.name, sm.data_source_id
+            ORDER BY call_count DESC, m.name NULLS LAST
         """)
         async with self._engine.connect() as conn:
             rows = (await conn.execute(sql, params)).all()
@@ -253,6 +279,25 @@ class SqlDashboardQueries:
             where.append("iq.import_run_id = :import_run_id")
             params["import_run_id"] = filters.import_run_id
 
+        if any(
+            value is not None
+            for value in (
+                filters.agent_id,
+                filters.model_id,
+                filters.tool_id,
+                filters.date_from,
+                filters.date_to,
+                filters.status,
+            )
+        ):
+            session_where, session_params = _session_predicates(filters)
+            where.append(
+                "EXISTS (SELECT 1 FROM v_session_metrics sm "
+                + _clause([*session_where, "sm.import_run_id = iq.import_run_id"])
+                + ")"
+            )
+            params.update(session_params)
+
         sql = text(f"""
             SELECT iq.* FROM v_import_quality iq
             {_clause(where)}
@@ -275,3 +320,80 @@ class SqlDashboardQueries:
             )
             for r in rows
         ]
+
+
+class SqlExplorationQueries:
+    """SQL-paginated reads using the dashboard's exact session predicates."""
+
+    def __init__(self, engine: AsyncEngine) -> None:
+        self._engine = engine
+
+    async def sessions(
+        self, filters: DashboardFilters, limit: int, offset: int
+    ) -> tuple[list[SessionDetail], int]:
+        where, params = _session_predicates(filters)
+        scope = "FROM session s JOIN v_session_metrics sm ON sm.session_id = s.id " + _clause(where)
+        async with self._engine.connect() as conn:
+            total = (await conn.execute(text("SELECT count(*) " + scope), params)).scalar_one()
+            rows = (
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT s.* "
+                            + scope
+                            + " ORDER BY s.started_at DESC NULLS LAST, s.id DESC"
+                            " LIMIT :limit OFFSET :offset"
+                        ),
+                        {**params, "limit": limit, "offset": offset},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [SessionDetail(**r) for r in rows], total
+
+    async def session(self, identifier: int) -> SessionWithCalls | None:
+        async with self._engine.connect() as conn:
+            row = (
+                (await conn.execute(select(t.session).where(t.session.c.id == identifier)))
+                .mappings()
+                .one_or_none()
+            )
+            if row is None:
+                return None
+            models = (
+                (
+                    await conn.execute(
+                        select(t.model_call)
+                        .where(t.model_call.c.session_id == identifier)
+                        .order_by(t.model_call.c.sequence_index, t.model_call.c.id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            tools = (
+                (
+                    await conn.execute(
+                        select(t.tool_call)
+                        .where(t.tool_call.c.session_id == identifier)
+                        .order_by(t.tool_call.c.sequence_index, t.tool_call.c.id)
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return SessionWithCalls(
+            SessionDetail(**row),
+            [ModelCallDetail(**r) for r in models],
+            [ToolCallDetail(**r) for r in tools],
+        )
+
+    async def record(self, identifier: int) -> RawRecordDetail | None:
+        async with self._engine.connect() as conn:
+            row = (
+                (await conn.execute(select(t.raw_record).where(t.raw_record.c.id == identifier)))
+                .mappings()
+                .one_or_none()
+            )
+        return RawRecordDetail(**row) if row is not None else None
