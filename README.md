@@ -18,6 +18,16 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Added — issue #52 (`/mappings` router — CRUD, validation, versioning)
+- `interfaces/http/routers/mappings.py`: `GET /api/v1/mappings` (filterable by `data_source_id`/`status`, paginated), `POST /api/v1/mappings` (201, validated before write — 422 with every error otherwise, nothing partial), `GET /api/v1/mappings/{id}`, `PUT /api/v1/mappings/{id}` (creates version N+1, marks the previous version `superseded`), `POST /api/v1/mappings/validate` (validates without saving — no `UnitOfWork` dependency at all, since nothing is ever written).
+- `interfaces/http/schemas/mappings.py`: wire shapes matching MAPPING_CONTRACT.md §2 (`FieldRuleIn/Out`, `EntityMappingIn/Out`, `MappingOut`, `MappingValidateOut`).
+- `application/ports/repositories.py`: extended `MappingRepository` with `get_by_id`/`list_records`/`count`/`supersede` — additive, the existing `get`/`save`/`list` (used by `RunImport`/`PreviewImport`) are untouched. Reuses `mapping_codec.mapping_to_document`/`document_to_mapping` (#45) rather than re-serialising the document by hand.
+- `POST /mappings` checks the referenced `data_source_id` exists (404) and that the name isn't already taken for that source (409) before writing — same pattern as `/data-sources` and `/imports`.
+- Hit a real `mypy --strict` gotcha: a Protocol/class with a method literally named `list` shadows the builtin `list[...]` in every bare-generic annotation that follows it in the same class body (mypy resolves the name against the class's own namespace once `list` exists there). Fixed by ordering `get_by_id`/`list_records`/`count`/`supersede` before `get`/`save`/`list` in both `MappingRepository` and `SqlAlchemyMappingRepository`.
+- `tests/contract/test_repository_contract.py`: coverage for the new repository methods (get_by_id, filtering, pagination, supersede leaves the document untouched), run against both implementations.
+- `tests/e2e/test_mappings_routes.py`: full route coverage. The `/validate` tests and the "invalid document" 422 on `POST /mappings` need no database at all (validation runs before the `UnitOfWork` is even opened) and genuinely ran this session — the rest need Postgres (Docker unavailable locally), written but unverified against a real database.
+- Branch built on top of `feat/50-data-sources-files-routers` (PR #94, not yet merged) rather than `develop`, to reuse its plumbing (`UnitOfWork` wiring, `DataSourceRepository.get_by_id`) instead of redoing it — will need a `git rebase origin/develop` once #94 merges.
+
 ### Fixed — mapping validator error codes, ahead of issue #52 (`/mappings` router)
 - `domain/errors.py`: `UnsupportedOperatorError`/`UnknownTargetFieldError` carried `UNSUPPORTED_OPERATOR`/`UNKNOWN_TARGET_FIELD` — neither matches what API.md and MAPPING_CONTRACT.md §4 actually document (`MAPPING_UNKNOWN_OPERATOR`/`MAPPING_UNKNOWN_TARGET`), and #52's acceptance criteria tests for the documented codes specifically. Renamed both.
 - Added `MissingNaturalKeyError` (`MAPPING_MISSING_NATURAL_KEY`) and wired it into `mapping_validator._validate_entity`: an entity with no `natural_key` was never flagged — MAPPING_CONTRACT.md §4 lists this as a required structural check ("`natural_key` complète"), and #52 tests for it explicitly.

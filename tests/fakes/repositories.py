@@ -57,7 +57,8 @@ class _Store:
     import_runs: dict[int, dict[str, Any]] = field(default_factory=dict)
     reports: dict[int, ImportReport] = field(default_factory=dict)
     issues: list[tuple[int, ImportIssue, int | None]] = field(default_factory=list)
-    mappings: dict[int, tuple[Mapping, int]] = field(default_factory=dict)
+    # (mapping, data_source_id, status, created_at)
+    mappings: dict[int, tuple[Mapping, int, str, datetime]] = field(default_factory=dict)
     data_sources: dict[str, int] = field(default_factory=dict)
     data_source_records: dict[int, DataSourceRecord] = field(default_factory=dict)
     referentials: dict[tuple[str, str, str], int] = field(default_factory=dict)
@@ -309,15 +310,71 @@ class InMemoryMappingRepository:
 
     async def save(self, mapping: Mapping, *, data_source_id: int) -> int:
         new_id = self._s.ids.take()
-        self._s.mappings[new_id] = (mapping, data_source_id)
+        self._s.mappings[new_id] = (mapping, data_source_id, "active", datetime.now(UTC))
         return new_id
 
     async def list(self, *, data_source_id: int | None = None) -> list[Mapping]:
         return [
             m
-            for m, source in self._s.mappings.values()
+            for m, source, _status, _created_at in self._s.mappings.values()
             if data_source_id is None or source == data_source_id
         ]
+
+    async def get_by_id(self, mapping_id: int) -> dict[str, Any] | None:
+        found = self._s.mappings.get(mapping_id)
+        if found is None:
+            return None
+        return self._to_row(mapping_id, found)
+
+    async def list_records(
+        self,
+        *,
+        data_source_id: int | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        matched = [
+            (mapping_id, entry)
+            for mapping_id, entry in self._s.mappings.items()
+            if (data_source_id is None or entry[1] == data_source_id)
+            and (status is None or entry[2] == status)
+        ]
+        matched.sort(key=lambda item: (item[1][3], item[0]), reverse=True)
+        page = matched[offset : offset + limit]
+        return [self._to_row(mapping_id, entry) for mapping_id, entry in page]
+
+    async def count(self, *, data_source_id: int | None = None, status: str | None = None) -> int:
+        return sum(
+            1
+            for _mapping, source, st, _created_at in self._s.mappings.values()
+            if (data_source_id is None or source == data_source_id)
+            and (status is None or st == status)
+        )
+
+    async def supersede(self, mapping_id: int) -> None:
+        found = self._s.mappings.get(mapping_id)
+        if found is not None:
+            mapping, source, _status, created_at = found
+            self._s.mappings[mapping_id] = (mapping, source, "superseded", created_at)
+
+    @staticmethod
+    def _to_row(mapping_id: int, entry: tuple[Mapping, int, str, datetime]) -> dict[str, Any]:
+        from agentlen.infrastructure.persistence.repositories.mapping_codec import (
+            mapping_to_document,
+        )
+
+        mapping, data_source_id, status, created_at = entry
+        return {
+            "id": mapping_id,
+            "data_source_id": data_source_id,
+            "name": mapping.name,
+            "version": mapping.version,
+            "source_format": mapping.source_format,
+            "status": status,
+            "document": mapping_to_document(mapping),
+            "created_at": created_at,
+        }
 
 
 class InMemoryDataSourceRepository:
