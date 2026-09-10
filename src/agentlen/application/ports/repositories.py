@@ -88,6 +88,12 @@ class ImportRunRepository(Protocol):
         """The run's identifying columns: source, file, mapping, status."""
         ...
 
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        """Most recent first — the history view (API.md §5)."""
+        ...
+
+    async def count(self) -> int: ...
+
     async def save_report(
         self, import_run_id: int, report: ImportReport, *, status: str
     ) -> None: ...
@@ -107,6 +113,8 @@ class ImportIssueRepository(Protocol):
     async def list(
         self, *, import_run_id: int, severity: str | None = None, limit: int = 50, offset: int = 0
     ) -> list[ImportIssue]: ...
+
+    async def count(self, *, import_run_id: int, severity: str | None = None) -> int: ...
 
 
 class MappingRepository(Protocol):

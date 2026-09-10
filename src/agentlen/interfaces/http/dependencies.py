@@ -6,24 +6,18 @@ swapping Postgres, Polars or the AI provider touches this file and nothing else.
 
 Everything here is overridable in tests via `app.dependency_overrides`, which is
 why the providers are plain functions rather than module-level singletons.
-
-Ports whose adapters do not exist yet (repositories, storage, the analyzer) are
-declared as `_not_wired` placeholders: a route asking for one gets a clear 503
-naming the issue that will provide it, instead of an import error at start-up
-or a mystery `None`.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from agentlen.application.errors import ApplicationError
 from agentlen.application.ports.clock import Clock, SystemClock
 from agentlen.application.ports.dashboard_queries import DashboardQueries
 from agentlen.application.ports.file_reader import FileProfiler, FileReader
@@ -44,22 +38,6 @@ from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWor
 #: locally.
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 STORAGE_ROOT = _PROJECT_ROOT / "storage" / "uploads"
-
-
-class DependencyNotWiredError(ApplicationError):
-    """A port has no adapter yet. -> 503, with the issue number that lands it."""
-
-    code = "DEPENDENCY_NOT_WIRED"
-
-
-def _not_wired(port: str, issue: str) -> Callable[[], Any]:
-    def provider() -> Any:
-        raise DependencyNotWiredError(
-            f"Le port '{port}' n'a pas encore d'implémentation (voir {issue}).",
-            details={"port": port, "issue": issue},
-        )
-
-    return provider
 
 
 # ---------------------------------------------------------------------------

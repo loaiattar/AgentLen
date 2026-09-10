@@ -362,6 +362,38 @@ async def test_issues_are_listed_and_filterable_by_severity(uow: Any) -> None:
         assert rejected[0].code == "CAST_FAILED"
 
 
+async def test_import_run_list_returns_most_recent_first_and_count_matches(uow: Any) -> None:
+    async with uow:
+        p = await _provenance(uow)
+        second_run = await uow.import_runs.create(
+            data_source_id=p["source"], file_upload_id=1, mapping_id=1
+        )
+        await uow.commit()
+
+    async with uow:
+        history = await uow.import_runs.list(limit=50, offset=0)
+        total = await uow.import_runs.count()
+
+    ids = [row["id"] for row in history]
+    assert ids.index(second_run) < ids.index(p["run"])
+    assert total == len(history)
+
+
+async def test_import_run_list_is_paginated(uow: Any) -> None:
+    async with uow:
+        p = await _provenance(uow)
+        for _ in range(2):
+            await uow.import_runs.create(data_source_id=p["source"], file_upload_id=1, mapping_id=1)
+        await uow.commit()
+
+    async with uow:
+        total = await uow.import_runs.count()
+        page = await uow.import_runs.list(limit=1, offset=0)
+
+    assert total >= 3
+    assert len(page) == 1
+
+
 # ---------------------------------------------------------------------------
 # Data sources (issue #50)
 # ---------------------------------------------------------------------------

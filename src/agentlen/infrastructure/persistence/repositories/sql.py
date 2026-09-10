@@ -288,6 +288,22 @@ class SqlAlchemyImportRunRepository(_Base):
         )
         return dict(row) if row else None
 
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        query = (
+            select(t.import_run)
+            .order_by(t.import_run.c.created_at.desc(), t.import_run.c.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [dict(r) for r in (await self._conn.execute(query)).mappings()]
+
+    async def count(self) -> int:
+        from sqlalchemy import func
+
+        return int(
+            (await self._conn.execute(select(func.count()).select_from(t.import_run))).scalar_one()
+        )
+
     async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
         from sqlalchemy import func
 
@@ -362,6 +378,18 @@ class SqlAlchemyImportIssueRepository(_Base):
             )
             for r in (await self._conn.execute(query)).mappings()
         ]
+
+    async def count(self, *, import_run_id: int, severity: str | None = None) -> int:
+        from sqlalchemy import func
+
+        query = (
+            select(func.count())
+            .select_from(t.import_issue)
+            .where(t.import_issue.c.import_run_id == import_run_id)
+        )
+        if severity is not None:
+            query = query.where(t.import_issue.c.severity == severity)
+        return int((await self._conn.execute(query)).scalar_one())
 
 
 class SqlAlchemyMappingRepository(_Base):

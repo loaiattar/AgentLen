@@ -225,6 +225,15 @@ class InMemoryImportRunRepository:
             "file_upload_id": file_upload_id,
             "mapping_id": mapping_id,
             "status": "pending",
+            "records_read": 0,
+            "records_imported": 0,
+            "records_duplicate": 0,
+            "records_rejected": 0,
+            "fields_missing": None,
+            "error_summary": None,
+            "started_at": None,
+            "finished_at": None,
+            "created_at": datetime.now(UTC),
         }
         return new_id
 
@@ -232,10 +241,31 @@ class InMemoryImportRunRepository:
         run = self._s.import_runs.get(import_run_id)
         return dict(run, id=import_run_id) if run else None
 
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        # `id` breaks ties: two runs created in the same clock tick must still
+        # sort most-recent-first, deterministically.
+        ids = sorted(
+            self._s.import_runs,
+            key=lambda i: (self._s.import_runs[i]["created_at"], i),
+            reverse=True,
+        )
+        page = ids[offset : offset + limit]
+        return [dict(self._s.import_runs[i], id=i) for i in page]
+
+    async def count(self) -> int:
+        return len(self._s.import_runs)
+
     async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
         self._s.reports[import_run_id] = report
         if import_run_id in self._s.import_runs:
-            self._s.import_runs[import_run_id]["status"] = status
+            self._s.import_runs[import_run_id].update(
+                status=status,
+                records_read=report.records_read,
+                records_imported=report.records_imported,
+                records_duplicate=report.records_duplicate,
+                records_rejected=report.records_rejected,
+                finished_at=datetime.now(UTC),
+            )
 
     async def get_report(self, import_run_id: int) -> ImportReport | None:
         return self._s.reports.get(import_run_id)
@@ -260,6 +290,13 @@ class InMemoryImportIssueRepository:
             if run_id == import_run_id and (severity is None or issue.severity == severity)
         ]
         return found[offset : offset + limit]
+
+    async def count(self, *, import_run_id: int, severity: str | None = None) -> int:
+        return sum(
+            1
+            for run_id, issue, _ in self._s.issues
+            if run_id == import_run_id and (severity is None or issue.severity == severity)
+        )
 
 
 class InMemoryMappingRepository:

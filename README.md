@@ -18,6 +18,16 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Added — issue #56 (`/imports` router — preview, launch, history, status, issues)
+- `interfaces/http/routers/imports.py`: `POST /api/v1/imports/preview` (dry-run, on top of the existing `PreviewImport` use case), `POST /api/v1/imports` (202, creates the `import_run` row in `pending` — exactly what `interfaces/cli/seed.py` already does by hand; the worker from #55 claims and runs it, nothing here reimplements that loop), `GET /api/v1/imports` (paginated history), `GET /api/v1/imports/{id}` (status + report, joined with the source/file/mapping refs), `GET /api/v1/imports/{id}/issues` (paginated, filterable by severity).
+- `interfaces/http/schemas/imports.py`: wire shapes matching API.md §5 exactly (`ImportPreviewOut`, `ImportStatusOut`, `ImportIssueOut`, ...).
+- `application/ports/repositories.py`: extended `ImportRunRepository` with `list()`/`count()` and `ImportIssueRepository` with `count()` — both additive, needed for the paginated envelope (`{items, total, limit, offset}`).
+- `GET /imports/{id}` and the history list read `data_source`/`file`/`mapping` via three reads on the already-open `UnitOfWork` rather than a dedicated SQL view — the same call this project already made for the dashboard reads, not worth a view for three scalars.
+- `POST /imports` and `POST /imports/preview` validate the referenced ids up front (`NotFoundError` -> 404) instead of letting a foreign-key violation reach the client as a raw 500.
+- `tests/contract/test_repository_contract.py`: coverage for `import_runs.list()`/`.count()` ordering and pagination, run against both the in-memory and SQL implementations.
+- `tests/e2e/test_imports_routes.py`: full route coverage — launch, unknown-ref 404s, joined status, paginated history, issues + severity filter, invalid-mapping 422 on preview. Everything but the malformed-body case needs Postgres (Docker), so only that one ran locally this session — the rest are unverified against a real database until CI or a Docker-equipped machine runs them.
+- Second half of the reconciliation with Nabil's PR #92 (issue #89): his branch's plumbing didn't cover `/imports` at all (only the DTO/port/UoW/dependencies changes, no router), so this was built from scratch against the existing `PreviewImport`/`RunImport`/`PostgresJobQueue` use cases from #51/#55.
+
 ### Added — issue #50 (`/files` router — upload, metadata, profiling)
 - `interfaces/http/routers/files.py`: `POST /api/v1/files` (multipart upload, 201), `GET /api/v1/files/{id}` (metadata), `POST /api/v1/files/{id}/profile` (200) — the second half of #50, closing it out on top of `/data-sources`.
 - `interfaces/http/schemas/files.py`: `FileUploadOut`/`FieldProfileOut`/`FileProfileOut` wire shapes.
