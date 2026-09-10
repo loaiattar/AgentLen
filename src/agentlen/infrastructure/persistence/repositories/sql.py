@@ -393,6 +393,52 @@ class SqlAlchemyImportIssueRepository(_Base):
 
 
 class SqlAlchemyMappingRepository(_Base):
+    # Ordered so no method named `list` precedes a bare `list[...]` return
+    # annotation in this class body — mypy resolves that bare name against the
+    # class's own namespace once `list` the method exists, not the builtin.
+    async def get_by_id(self, mapping_id: int) -> dict[str, Any] | None:
+        row = (
+            (await self._conn.execute(select(t.mapping).where(t.mapping.c.id == mapping_id)))
+            .mappings()
+            .one_or_none()
+        )
+        return dict(row) if row else None
+
+    async def list_records(
+        self,
+        *,
+        data_source_id: int | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        query = select(t.mapping)
+        if data_source_id is not None:
+            query = query.where(t.mapping.c.data_source_id == data_source_id)
+        if status is not None:
+            query = query.where(t.mapping.c.status == status)
+        query = (
+            query.order_by(t.mapping.c.created_at.desc(), t.mapping.c.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return [dict(r) for r in (await self._conn.execute(query)).mappings()]
+
+    async def count(self, *, data_source_id: int | None = None, status: str | None = None) -> int:
+        from sqlalchemy import func
+
+        query = select(func.count()).select_from(t.mapping)
+        if data_source_id is not None:
+            query = query.where(t.mapping.c.data_source_id == data_source_id)
+        if status is not None:
+            query = query.where(t.mapping.c.status == status)
+        return int((await self._conn.execute(query)).scalar_one())
+
+    async def supersede(self, mapping_id: int) -> None:
+        await self._conn.execute(
+            t.mapping.update().where(t.mapping.c.id == mapping_id).values(status="superseded")
+        )
+
     async def get(self, mapping_id: int) -> Mapping | None:
         row = (
             (await self._conn.execute(select(t.mapping).where(t.mapping.c.id == mapping_id)))

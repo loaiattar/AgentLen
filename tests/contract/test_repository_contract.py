@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.dto.persistence import ModelCallRow, SessionRow
+from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.model.model_call import ModelCall, TokenUsage
 from agentlen.domain.model.session import Session
 from agentlen.infrastructure.persistence.engine import to_async_url
@@ -452,3 +453,85 @@ async def test_creating_the_same_slug_twice_returns_the_existing_row_not_a_secon
     async with uow:
         records = await uow.data_sources.list()
     assert sum(1 for r in records if r.slug == "tracelab") == 1
+
+
+# ---------------------------------------------------------------------------
+# Mappings (issue #52)
+# ---------------------------------------------------------------------------
+
+
+def _mapping(*, name: str = "tracelab-jsonl") -> Mapping:
+    return Mapping(
+        id=uuid4(),
+        name=name,
+        version=1,
+        source_format="jsonl",
+        entities=(
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=(FieldRule(target="external_id", source="$.sid", required=True),),
+            ),
+        ),
+    )
+
+
+async def test_saved_mapping_is_retrievable_by_id_with_its_full_record(uow: Any) -> None:
+    async with uow:
+        source_id = await uow.data_sources.create(slug="tracelab", name="TraceLab")
+        mapping_id = await uow.mappings.save(_mapping(), data_source_id=source_id)
+        await uow.commit()
+
+    async with uow:
+        record = await uow.mappings.get_by_id(mapping_id)
+
+    assert record is not None
+    assert record["data_source_id"] == source_id
+    assert record["name"] == "tracelab-jsonl"
+    assert record["version"] == 1
+    assert record["status"] == "active"
+    assert record["document"]["entities"][0]["target"] == "session"
+
+
+async def test_get_by_id_returns_none_for_an_unknown_mapping(uow: Any) -> None:
+    async with uow:
+        record = await uow.mappings.get_by_id(999999)
+
+    assert record is None
+
+
+async def test_list_records_is_filterable_by_data_source_and_paginated(uow: Any) -> None:
+    async with uow:
+        source_id = await uow.data_sources.create(slug="tracelab", name="TraceLab")
+        other_source_id = await uow.data_sources.create(slug="swe-chat", name="SWE-chat")
+        await uow.mappings.save(_mapping(name="a"), data_source_id=source_id)
+        await uow.mappings.save(_mapping(name="b"), data_source_id=source_id)
+        await uow.mappings.save(_mapping(name="c"), data_source_id=other_source_id)
+        await uow.commit()
+
+    async with uow:
+        for_source = await uow.mappings.list_records(data_source_id=source_id, limit=50, offset=0)
+        total_for_source = await uow.mappings.count(data_source_id=source_id)
+        one_page = await uow.mappings.list_records(data_source_id=source_id, limit=1, offset=0)
+
+    assert total_for_source == 2
+    assert len(for_source) == 2
+    assert len(one_page) == 1
+
+
+async def test_supersede_changes_the_status_and_leaves_the_document_untouched(uow: Any) -> None:
+    async with uow:
+        source_id = await uow.data_sources.create(slug="tracelab", name="TraceLab")
+        mapping_id = await uow.mappings.save(_mapping(), data_source_id=source_id)
+        await uow.commit()
+
+    async with uow:
+        await uow.mappings.supersede(mapping_id)
+        await uow.commit()
+
+    async with uow:
+        record = await uow.mappings.get_by_id(mapping_id)
+
+    assert record is not None
+    assert record["status"] == "superseded"
+    assert record["document"]["entities"][0]["target"] == "session"

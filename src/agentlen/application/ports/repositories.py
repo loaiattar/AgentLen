@@ -118,6 +118,35 @@ class ImportIssueRepository(Protocol):
 
 
 class MappingRepository(Protocol):
+    # get_by_id/list_records/count/supersede are declared before `get`/`list`
+    # below: a method named `list` in this class shadows the builtin `list[...]`
+    # in every annotation that follows it (mypy resolves the bare name against
+    # the class's own namespace), so anything using a bare `list[...]` return
+    # type has to come first.
+    async def get_by_id(self, mapping_id: int) -> dict[str, Any] | None:
+        """The full stored row: status, data_source_id, timestamps, and the raw
+        document — API.md §4 surfaces more than the transformation-engine's
+        `Mapping` carries."""
+        ...
+
+    async def list_records(
+        self,
+        *,
+        data_source_id: int | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
+
+    async def count(
+        self, *, data_source_id: int | None = None, status: str | None = None
+    ) -> int: ...
+
+    async def supersede(self, mapping_id: int) -> None:
+        """Marks a mapping 'superseded' — called when a PUT creates its
+        successor (MAPPING_CONTRACT.md §6)."""
+        ...
+
     async def get(self, mapping_id: int) -> Mapping | None: ...
     async def save(self, mapping: Mapping, *, data_source_id: int) -> int: ...
     async def list(self, *, data_source_id: int | None = None) -> list[Mapping]: ...

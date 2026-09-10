@@ -17,7 +17,7 @@ class UnsupportedOperatorError(ValidationError):
 
     def __init__(self, operator: str, field_path: str) -> None:
         super().__init__(
-            code="UNSUPPORTED_OPERATOR",
+            code="MAPPING_UNKNOWN_OPERATOR",
             field_path=field_path,
             message=f"Operator '{operator}' is not in the allowed whitelist.",
         )
@@ -28,9 +28,21 @@ class UnknownTargetFieldError(ValidationError):
 
     def __init__(self, target: str, field_path: str) -> None:
         super().__init__(
-            code="UNKNOWN_TARGET_FIELD",
+            code="MAPPING_UNKNOWN_TARGET",
             field_path=field_path,
             message=f"Target field '{target}' does not exist in the schema.",
+        )
+
+
+class MissingNaturalKeyError(ValidationError):
+    """Raised when an entity declares no natural_key (MAPPING_CONTRACT.md §4:
+    structural check — deduplication has nothing to key off)."""
+
+    def __init__(self, target: str, field_path: str) -> None:
+        super().__init__(
+            code="MAPPING_MISSING_NATURAL_KEY",
+            field_path=field_path,
+            message=f"Entity '{target}' declares no natural_key.",
         )
 
 

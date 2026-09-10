@@ -20,6 +20,7 @@ from agentlen.interfaces.http.routers import (
     exploration,
     files,
     imports,
+    mappings,
     metrics,
     service,
 )
@@ -85,6 +86,7 @@ def create_app(*, engine: AsyncEngine | None = None) -> FastAPI:
     versioned.include_router(data_sources.router)
     versioned.include_router(files.router)
     versioned.include_router(imports.router)
+    versioned.include_router(mappings.router)
     versioned.include_router(exploration.router)
 
     app.include_router(versioned)
