@@ -18,6 +18,9 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Fixed — one remaining fragile `slug="tracelab"` literal
+- `test_preview_rejects_an_invalid_mapping_with_422` worked today only because of pytest's current file collection order relative to `test_data_sources_routes.py`'s own (non-idempotent, HTTP-level) `"tracelab"` — the repository-level `create()` it calls is idempotent by slug, but a reordering would have exposed the same class of collision fixed above (this time silently returning the wrong data source rather than erroring). Gave it its own unique slug rather than wait for a third CI round-trip on the same root cause.
+
 ### Fixed — two CI failures on the real-Postgres e2e suite
 - `test_missing_required_field_is_a_422_not_a_500` (`test_data_sources_routes.py`) asserted the wrong status: a malformed request body is remapped to 400 (API.md §1 reserves 422 for business validation), not 422 — the test was wrong, not the app. Renamed and fixed the assertion.
 - `test_imports_routes.py`'s `_seed()` helper reused the same mapping name (`"tracelab-jsonl"`) on every call. `live_client`/`live_engine` share one Postgres across the whole CI run with no truncation between tests (unlike the contract suite's `clean_db`), and `mappings.save()` has no idempotence to fall back on the way `data_sources.create()`/`file_uploads.create()` do — so the second test to call `_seed()` collided on `uq_mapping_name_version` (`UniqueViolationError`). Fixed by generating a unique slug/name/hash per call.

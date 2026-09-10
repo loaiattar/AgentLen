@@ -14,8 +14,14 @@ from fastapi import APIRouter, FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agentlen.interfaces.http.errors import register_error_handlers
-from agentlen.interfaces.http.routers import data_sources, files, imports, metrics, service, exploration
-
+from agentlen.interfaces.http.routers import (
+    data_sources,
+    exploration,
+    files,
+    imports,
+    metrics,
+    service,
+)
 
 API_PREFIX = "/api/v1"
 

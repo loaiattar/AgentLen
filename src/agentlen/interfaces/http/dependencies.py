@@ -20,9 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agentlen.application.ports.clock import Clock, SystemClock
 from agentlen.application.ports.dashboard_queries import DashboardQueries
+from agentlen.application.ports.exploration_queries import ExplorationQueries
 from agentlen.application.ports.file_reader import FileProfiler, FileReader
 from agentlen.application.ports.file_storage import FileStorage
-from agentlen.application.ports.exploration_queries import ExplorationQueries
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
 from agentlen.application.ports.unit_of_work import UnitOfWork
 from agentlen.infrastructure.ai.factory import build_structure_analyzer
@@ -31,8 +31,8 @@ from agentlen.infrastructure.files.polars_profiler import PolarsFileProfiler
 from agentlen.infrastructure.files.polars_record_reader import PolarsRecordReader
 from agentlen.infrastructure.persistence.engine import create_engine, get_database_url
 from agentlen.infrastructure.persistence.read_models import SqlDashboardQueries
-from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from agentlen.infrastructure.persistence.read_models.sql import SqlExplorationQueries
+from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 
 #: Repository root, from this file: src/agentlen/interfaces/http/ -> up 4.
 #: Same convention as the CLI seed (interfaces/cli/seed.py): resolves to
@@ -112,6 +112,7 @@ UnitOfWorkDep = Annotated[UnitOfWork, Depends(get_unit_of_work)]
 FileStorageDep = Annotated[FileStorage, Depends(get_file_storage)]
 FileReaderDep = Annotated[FileReader, Depends(get_file_reader)]
 FileProfilerDep = Annotated[FileProfiler, Depends(get_file_profiler)]
+
 
 def get_exploration_queries(engine: EngineDep) -> ExplorationQueries:
     return SqlExplorationQueries(engine)
