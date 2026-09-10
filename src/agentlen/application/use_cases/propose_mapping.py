@@ -7,8 +7,10 @@ from typing import Any
 
 from agentlen.application.dto.mapping_document import document_to_mapping
 from agentlen.application.errors import NotFoundError
+from agentlen.application.ports.file_reader import FileProfiler, ProfileSanitizer
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
 from agentlen.application.ports.unit_of_work import UnitOfWork
+from agentlen.application.use_cases.profile_file import ProfileFile, ProfileFileCommand
 from agentlen.domain.model.mapping import Mapping, MappingProposal
 from agentlen.domain.model.profile import FileProfile
 from agentlen.domain.services import mapping_validator
@@ -71,18 +73,37 @@ class MappingValidationTools:
 
 
 class ProposeMapping:
-    def __init__(self, uow: UnitOfWork, analyzer: StructureAnalyzer) -> None:
+    def __init__(
+        self,
+        uow: UnitOfWork,
+        analyzer: StructureAnalyzer,
+        profiler: FileProfiler,
+        sanitizer: ProfileSanitizer,
+    ) -> None:
         self._uow = uow
         self._analyzer = analyzer
+        self._profiler = profiler
+        self._sanitizer = sanitizer
 
     async def execute(
         self,
         *,
         file_id: int,
         data_source_id: int | None,
-        profile: FileProfile,
         hint: str | None = None,
     ) -> StoredProposal:
+        async with self._uow as uow:
+            stored_file = await uow.file_uploads.get_by_id(file_id)
+        if stored_file is None:
+            raise NotFoundError("File", file_id)
+        profile = await ProfileFile(self._profiler).execute(
+            ProfileFileCommand(
+                file_id=file_id,
+                path=stored_file.storage_path,
+                format=stored_file.format,
+            )
+        )
+        profile = self._sanitizer.sanitize(profile)
         proposal = await self._analyzer.run_agent_loop(
             profile, MappingValidationTools(profile), hint
         )
@@ -90,8 +111,6 @@ class ProposeMapping:
         # proposals remain normal, editable results.
         mapping_validator.validate(proposal.mapping)
         async with self._uow as uow:
-            if await uow.file_uploads.get_by_id(file_id) is None:
-                raise NotFoundError("File", file_id)
             proposal_id = await uow.mapping_proposals.save(
                 proposal, file_upload_id=file_id, data_source_id=data_source_id
             )
@@ -109,27 +128,6 @@ class GetMappingProposal:
         if proposal is None:
             raise NotFoundError("Mapping proposal", proposal_id)
         return StoredProposal(proposal_id, proposal)
-
-
-class RefineMapping:
-    def __init__(self, uow: UnitOfWork, analyzer: StructureAnalyzer) -> None:
-        self._uow = uow
-        self._analyzer = analyzer
-
-    async def execute(self, proposal_id: int, message: str, profile: FileProfile) -> StoredProposal:
-        current = await GetMappingProposal(self._uow).execute(proposal_id)
-        refined = await self._analyzer.refine(
-            current.proposal, message, MappingValidationTools(profile)
-        )
-        mapping_validator.validate(refined.mapping)
-        async with self._uow as uow:
-            await uow.mapping_proposals.add_message(proposal_id, role="user", content=message)
-            await uow.mapping_proposals.update(proposal_id, refined)
-            await uow.mapping_proposals.add_message(
-                proposal_id, role="assistant", content="Proposition mise à jour."
-            )
-            await uow.commit()
-        return StoredProposal(proposal_id, refined)
 
 
 class PatchMappingProposal:

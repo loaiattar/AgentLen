@@ -37,10 +37,11 @@ class AISettings(BaseSettings):
             "which is how Groq, Mistral, OpenRouter, Ollama and the rest are reached."
         ),
     )
-    timeout_seconds: float = 60.0
-    max_output_tokens: int = 8000
-    max_iterations: int = 10
-    max_conversation_turns: int = 10
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    max_output_tokens: int = Field(default=8000, ge=1)
+    max_iterations: int = Field(default=10, ge=1)
+    max_conversation_turns: int = Field(default=10, ge=1)
+    max_refinement_iterations: int = Field(default=10, ge=1)
 
 
 class ProviderKeys(BaseSettings):

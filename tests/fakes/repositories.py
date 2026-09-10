@@ -514,6 +514,15 @@ class InMemoryMappingProposalRepository:
     async def add_message(self, proposal_id: int, *, role: str, content: str) -> None:
         self._s.proposal_messages.append((proposal_id, role, content))
 
+    async def list_messages(self, proposal_id: int, *, limit: int) -> list[dict[str, str | int]]:
+        all_messages = [m for m in self._s.proposal_messages if m[0] == proposal_id]
+        start = max(len(all_messages) - limit, 0)
+        messages = all_messages[start:] if limit > 0 else []
+        return [
+            {"turn_index": start + index, "role": role, "content": content}
+            for index, (_, role, content) in enumerate(messages)
+        ]
+
 
 class InMemoryUserRepository:
     def __init__(self, store: _Store) -> None:

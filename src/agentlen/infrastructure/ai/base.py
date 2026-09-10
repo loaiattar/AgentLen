@@ -226,16 +226,23 @@ class BaseAnalyzerAdapter:
         proposal: MappingProposal,
         user_message: str,
         tool_executor: ImportAgentToolExecutor,
+        history: tuple[dict[str, str | int], ...] = (),
     ) -> MappingProposal:
         """Apply an operator's correction and re-validate through the tools."""
         from agentlen.infrastructure.ai.prompts.analysis import build_refinement_prompt
 
+        history_text = json.dumps(history, ensure_ascii=False)
+        instruction = (
+            f"Conversation récente :\n{history_text}\n\nNouvelle instruction :\n{user_message}"
+            if history_text
+            else user_message
+        )
         prompt = build_refinement_prompt(
-            mapping=_mapping_payload(proposal.mapping), instruction=user_message
+            mapping=_mapping_payload(proposal.mapping), instruction=instruction
         )
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
 
-        for _ in range(self._settings.max_conversation_turns):
+        for _ in range(self._settings.max_refinement_iterations):
             turn = self._parse_turn(await self._post(self._build_request(messages)))
             if turn.stop_reason != "tool_use":
                 return self._to_proposal(turn.text)
@@ -246,7 +253,7 @@ class BaseAnalyzerAdapter:
             messages.append(self._assistant_message(turn))
             messages.extend(self._tool_results_message(results))
 
-        raise AgentMaxIterationsError(self._settings.max_conversation_turns)
+        raise AgentMaxIterationsError(self._settings.max_refinement_iterations)
 
     def _to_proposal(self, text: str) -> MappingProposal:
         """Parse the model's answer into the one shape the application accepts.

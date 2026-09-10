@@ -5,19 +5,19 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from agentlen.application.dto.mapping_document import document_to_mapping, mapping_to_document
-from agentlen.application.errors import NotFoundError
-from agentlen.application.use_cases.profile_file import ProfileFile, ProfileFileCommand
 from agentlen.application.use_cases.propose_mapping import (
     GetMappingProposal,
     PatchMappingProposal,
     ProposeMapping,
-    RefineMapping,
     StoredProposal,
 )
+from agentlen.application.use_cases.refine_mapping import RefineMapping
 from agentlen.domain.model.profile import FileProfile
 from agentlen.interfaces.http.dependencies import (
     AnalyzerFactoryDep,
+    ConversationLimitDep,
     FileProfilerDep,
+    ProfileSanitizerDep,
     ProviderStatusDep,
     UnitOfWorkDep,
 )
@@ -34,16 +34,6 @@ router = APIRouter(tags=["AI mapping"])
 @router.get("/ai/providers")
 async def providers(status: ProviderStatusDep) -> dict[str, object]:
     return status
-
-
-async def _profile(file_id: int, uow: UnitOfWorkDep, profiler: FileProfilerDep) -> FileProfile:
-    async with uow as transaction:
-        stored = await transaction.file_uploads.get_by_id(file_id)
-    if stored is None:
-        raise NotFoundError("File", file_id)
-    return await ProfileFile(profiler).execute(
-        ProfileFileCommand(file_id=file_id, path=stored.storage_path)
-    )
 
 
 def _response(stored: StoredProposal) -> ProposalResponse:
@@ -64,14 +54,13 @@ async def propose(
     body: ProposalRequest,
     uow: UnitOfWorkDep,
     profiler: FileProfilerDep,
+    sanitizer: ProfileSanitizerDep,
     analyzer_factory: AnalyzerFactoryDep,
 ) -> ProposalResponse:
-    profile = await _profile(body.file_id, uow, profiler)
     analyzer = analyzer_factory(body.provider, body.model)
-    result = await ProposeMapping(uow, analyzer).execute(
+    result = await ProposeMapping(uow, analyzer, profiler, sanitizer).execute(
         file_id=body.file_id,
         data_source_id=body.data_source_id,
-        profile=profile,
         hint=body.hint,
     )
     return _response(result)
@@ -88,6 +77,7 @@ async def refine(
     body: ProposalMessageRequest,
     uow: UnitOfWorkDep,
     analyzer_factory: AnalyzerFactoryDep,
+    max_conversation_turns: ConversationLimitDep,
 ) -> ProposalResponse:
     current = await GetMappingProposal(uow).execute(proposal_id)
     # Refinement validation only needs the mapping tools; an empty profile does
@@ -99,7 +89,11 @@ async def refine(
         str(current.proposal.analyzer_descriptor["provider"]),
         str(current.proposal.analyzer_descriptor["model"]),
     )
-    return _response(await RefineMapping(uow, analyzer).execute(proposal_id, body.message, profile))
+    return _response(
+        await RefineMapping(uow, analyzer, max_conversation_turns=max_conversation_turns).execute(
+            proposal_id, body.message, profile
+        )
+    )
 
 
 @router.patch("/mappings/proposals/{proposal_id}", response_model=ProposalResponse)

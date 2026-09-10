@@ -22,7 +22,7 @@ from agentlen.application.dto.persistence import UserRecord
 from agentlen.application.ports.clock import Clock, SystemClock
 from agentlen.application.ports.dashboard_queries import DashboardQueries
 from agentlen.application.ports.exploration_queries import ExplorationQueries
-from agentlen.application.ports.file_reader import FileProfiler, FileReader
+from agentlen.application.ports.file_reader import FileProfiler, FileReader, ProfileSanitizer
 from agentlen.application.ports.file_storage import FileStorage
 from agentlen.application.ports.password_hasher import PasswordHasher
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
@@ -32,6 +32,7 @@ from agentlen.infrastructure.ai.factory import (
     build_structure_analyzer,
     provider_status,
 )
+from agentlen.infrastructure.ai.sanitizer import ProfileExampleSanitizer
 from agentlen.infrastructure.config.settings import load_ai_settings
 from agentlen.infrastructure.files.local_storage import LocalFileStorage
 from agentlen.infrastructure.files.polars_profiler import PolarsFileProfiler
@@ -144,6 +145,14 @@ def get_file_profiler() -> FileProfiler:
     return PolarsFileProfiler()
 
 
+def get_profile_sanitizer() -> ProfileSanitizer:
+    return ProfileExampleSanitizer()
+
+
+def get_max_conversation_turns() -> int:
+    return load_ai_settings().max_conversation_turns
+
+
 # ---------------------------------------------------------------------------
 # Clock
 # ---------------------------------------------------------------------------
@@ -216,4 +225,12 @@ FileReaderDep = Annotated[
 FileProfilerDep = Annotated[
     FileProfiler,
     Depends(get_file_profiler),
+]
+ProfileSanitizerDep = Annotated[
+    ProfileSanitizer,
+    Depends(get_profile_sanitizer),
+]
+ConversationLimitDep = Annotated[
+    int,
+    Depends(get_max_conversation_turns),
 ]
