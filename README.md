@@ -18,6 +18,10 @@ python -m pytest -v
 
 ## Changes and improvements
 
+### Fixed — two CI failures on the real-Postgres e2e suite
+- `test_missing_required_field_is_a_422_not_a_500` (`test_data_sources_routes.py`) asserted the wrong status: a malformed request body is remapped to 400 (API.md §1 reserves 422 for business validation), not 422 — the test was wrong, not the app. Renamed and fixed the assertion.
+- `test_imports_routes.py`'s `_seed()` helper reused the same mapping name (`"tracelab-jsonl"`) on every call. `live_client`/`live_engine` share one Postgres across the whole CI run with no truncation between tests (unlike the contract suite's `clean_db`), and `mappings.save()` has no idempotence to fall back on the way `data_sources.create()`/`file_uploads.create()` do — so the second test to call `_seed()` collided on `uq_mapping_name_version` (`UniqueViolationError`). Fixed by generating a unique slug/name/hash per call.
+
 ### Fixed — `POST /files/{id}/profile` returned 500 on every real upload
 - Found during Nabil's Docker smoke test: `PolarsFileProfiler.profile()` infers the file format from the path's extension, but `LocalFileStorage` writes uploads content-addressed (`<root>/<hash[:2]>/<hash>`, no extension at all — #47) — `infer_format` raised `ValueError` on literally any real upload, surfaced as a raw 500.
 - The format is already known at profile time (`file_upload.format`, set from the magic bytes at upload); it just wasn't threaded through. Added an optional `format` parameter to the `FileProfiler` port, `PolarsFileProfiler.profile()` (falls back to `infer_format(path)` only when `format` is omitted — existing callers/fixtures unaffected) and `ProfileFileCommand`; the `/files/{id}/profile` route now passes `record.format` through instead of leaving the profiler to re-guess it from an extensionless path.
