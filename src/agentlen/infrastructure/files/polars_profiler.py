@@ -150,13 +150,21 @@ def _profile_leaf(path: str, series: pl.Series) -> FieldProfile:
 
 
 class PolarsFileProfiler:
-    """Implements the `FileProfiler` port. Format is inferred from the path suffix."""
+    """Implements the `FileProfiler` port.
 
-    async def profile(self, path: str, *, sample_size: int = 500) -> FileProfile:
+    `format` is inferred from the path suffix only as a fallback (test
+    fixtures, callers that don't already know it) — the storage layer writes
+    content-addressed paths with no extension at all, so a caller that has
+    already stored the file must pass the format it recorded.
+    """
+
+    async def profile(
+        self, path: str, *, sample_size: int = 500, format: str | None = None
+    ) -> FileProfile:
         if sample_size <= 0:
             raise ValueError(f"sample_size must be positive, got {sample_size!r}.")
 
-        format_ = infer_format(path)
+        format_ = format or infer_format(path)
 
         # An empty file has no data to infer a schema from — scan_ndjson in
         # particular raises a raw Polars ComputeError rather than a sensible

@@ -37,7 +37,10 @@ async def client() -> AsyncIterator[AsyncClient]:
     them, and all of the error-handling behaviour.
     """
     app = create_app(engine=create_async_engine(UNREACHABLE_URL))
-    transport = ASGITransport(app=app)
+    # Starlette's ServerErrorMiddleware sends the 500 response *and* re-raises
+    # the original exception (so an ASGI server can still log/crash on it).
+    # httpx's default would re-raise that instead of returning the response.
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 

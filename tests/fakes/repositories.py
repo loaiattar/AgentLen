@@ -13,11 +13,13 @@ and against the SQLAlchemy implementations, which is what keeps the claim true.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from types import TracebackType
 from typing import Any
 from uuid import UUID
 
 from agentlen.application.dto.persistence import (
+    DataSourceRecord,
     FileUploadRecord,
     InsertOutcome,
     ModelCallRow,
@@ -59,6 +61,7 @@ class _Store:
     mapping_proposals: dict[int, MappingProposal] = field(default_factory=dict)
     proposal_messages: list[tuple[int, str, str]] = field(default_factory=list)
     data_sources: dict[str, int] = field(default_factory=dict)
+    data_source_records: dict[int, DataSourceRecord] = field(default_factory=dict)
     referentials: dict[tuple[str, str, str], int] = field(default_factory=dict)
     file_uploads: dict[str, FileUploadRecord] = field(default_factory=dict)
     ids: _Sequence = field(default_factory=_Sequence)
@@ -82,6 +85,7 @@ class _Store:
             "mapping_proposals": dict(self.mapping_proposals),
             "proposal_messages": list(self.proposal_messages),
             "data_sources": dict(self.data_sources),
+            "data_source_records": dict(self.data_source_records),
             "referentials": dict(self.referentials),
             "file_uploads": dict(self.file_uploads),
         }
@@ -225,6 +229,15 @@ class InMemoryImportRunRepository:
             "file_upload_id": file_upload_id,
             "mapping_id": mapping_id,
             "status": "pending",
+            "records_read": 0,
+            "records_imported": 0,
+            "records_duplicate": 0,
+            "records_rejected": 0,
+            "fields_missing": None,
+            "error_summary": None,
+            "started_at": None,
+            "finished_at": None,
+            "created_at": datetime.now(UTC),
         }
         return new_id
 
@@ -232,10 +245,31 @@ class InMemoryImportRunRepository:
         run = self._s.import_runs.get(import_run_id)
         return dict(run, id=import_run_id) if run else None
 
+    async def list(self, *, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+        # `id` breaks ties: two runs created in the same clock tick must still
+        # sort most-recent-first, deterministically.
+        ids = sorted(
+            self._s.import_runs,
+            key=lambda i: (self._s.import_runs[i]["created_at"], i),
+            reverse=True,
+        )
+        page = ids[offset : offset + limit]
+        return [dict(self._s.import_runs[i], id=i) for i in page]
+
+    async def count(self) -> int:
+        return len(self._s.import_runs)
+
     async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
         self._s.reports[import_run_id] = report
         if import_run_id in self._s.import_runs:
-            self._s.import_runs[import_run_id]["status"] = status
+            self._s.import_runs[import_run_id].update(
+                status=status,
+                records_read=report.records_read,
+                records_imported=report.records_imported,
+                records_duplicate=report.records_duplicate,
+                records_rejected=report.records_rejected,
+                finished_at=datetime.now(UTC),
+            )
 
     async def get_report(self, import_run_id: int) -> ImportReport | None:
         return self._s.reports.get(import_run_id)
@@ -260,6 +294,13 @@ class InMemoryImportIssueRepository:
             if run_id == import_run_id and (severity is None or issue.severity == severity)
         ]
         return found[offset : offset + limit]
+
+    async def count(self, *, import_run_id: int, severity: str | None = None) -> int:
+        return sum(
+            1
+            for run_id, issue, _ in self._s.issues
+            if run_id == import_run_id and (severity is None or issue.severity == severity)
+        )
 
 
 class InMemoryMappingRepository:
@@ -290,11 +331,38 @@ class InMemoryDataSourceRepository:
     async def get_by_slug(self, slug: str) -> int | None:
         return self._s.data_sources.get(slug)
 
-    async def create(self, *, slug: str, name: str) -> int:
+    async def get_by_id(self, data_source_id: int) -> DataSourceRecord | None:
+        return self._s.data_source_records.get(data_source_id)
+
+    async def list(self) -> list[DataSourceRecord]:
+        return sorted(self._s.data_source_records.values(), key=lambda r: r.name)
+
+    async def create(  # noqa: PLR0913
+        self,
+        *,
+        slug: str,
+        name: str,
+        description: str | None = None,
+        url: str | None = None,
+        license: str | None = None,
+        dataset_version: str | None = None,
+        retrieved_at: date | None = None,
+    ) -> int:
         if slug in self._s.data_sources:
             return self._s.data_sources[slug]
         new_id = self._s.ids.take()
         self._s.data_sources[slug] = new_id
+        self._s.data_source_records[new_id] = DataSourceRecord(
+            id=new_id,
+            slug=slug,
+            name=name,
+            description=description,
+            url=url,
+            license=license,
+            dataset_version=dataset_version,
+            retrieved_at=retrieved_at,
+            created_at=datetime.now(UTC),
+        )
         return new_id
 
 

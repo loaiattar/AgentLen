@@ -16,6 +16,18 @@ from types import TracebackType
 
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from agentlen.application.ports.repositories import (
+    DataSourceRepository,
+    FileUploadRepository,
+    ImportIssueRepository,
+    ImportRunRepository,
+    MappingRepository,
+    ModelCallRepository,
+    RawRecordRepository,
+    ReferentialRepository,
+    SessionRepository,
+    ToolCallRepository,
+)
 from agentlen.infrastructure.persistence.repositories import (
     SqlAlchemyDataSourceRepository,
     SqlAlchemyFileUploadRepository,
@@ -32,6 +44,21 @@ from agentlen.infrastructure.persistence.repositories import (
 
 
 class SqlAlchemyUnitOfWork:
+    # Declared as the port types (not inferred from the concrete adapters
+    # assigned in __aenter__), because Protocol attribute matching is
+    # invariant: an inferred `SqlAlchemyDataSourceRepository` attribute type
+    # would not satisfy `data_sources: DataSourceRepository` on `UnitOfWork`.
+    sessions: SessionRepository
+    model_calls: ModelCallRepository
+    tool_calls: ToolCallRepository
+    raw_records: RawRecordRepository
+    import_runs: ImportRunRepository
+    import_issues: ImportIssueRepository
+    mappings: MappingRepository
+    data_sources: DataSourceRepository
+    file_uploads: FileUploadRepository
+    referentials: ReferentialRepository
+
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
         self._conn: AsyncConnection | None = None
