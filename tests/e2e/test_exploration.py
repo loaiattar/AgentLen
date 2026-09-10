@@ -3,11 +3,11 @@
 from datetime import UTC, datetime
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text, update
 
 from agentlen.infrastructure.persistence import tables as t
 from agentlen.interfaces.http.app import create_app
+from tests.e2e.conftest import asgi_client
 from tests.integration.conftest import clean_db, requires_postgres  # noqa: F401
 from tests.integration.test_read_models import dataset  # noqa: F401
 
@@ -48,9 +48,7 @@ async def exploration_dataset(dataset, live_engine):  # noqa: F811
 async def test_exploration_and_drill_down(exploration_dataset, live_engine):
     ref, sources = exploration_dataset
     app = create_app(engine=live_engine)
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test/api/v1"
-    ) as client:
+    async with asgi_client(app, base_url="http://test/api/v1") as client:
         response = await client.get(
             "sessions",
             params={"data_source_id": sources["tracelab"], "date_from": "2026-01-01", "limit": 2},

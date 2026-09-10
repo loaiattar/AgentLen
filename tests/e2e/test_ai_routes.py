@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import insert, select, text
 
 from agentlen.application.dto.mapping_document import document_to_mapping
@@ -18,7 +17,7 @@ from agentlen.infrastructure.persistence import tables as t
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.dependencies import get_analyzer_factory, get_provider_status
 
-from .conftest import requires_postgres
+from .conftest import asgi_client, requires_postgres
 
 
 @pytest.fixture
@@ -60,9 +59,7 @@ async def ai_client(live_engine, tmp_path: Path):
             {"provider": "fake", "configured": True},
         ],
     }
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test/api/v1"
-    ) as client:
+    async with asgi_client(app, base_url="http://test/api/v1") as client:
         yield client, live_engine, file_id, source_id, app
 
     async with live_engine.begin() as conn:

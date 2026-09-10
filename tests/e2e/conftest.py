@@ -9,6 +9,7 @@ fixtures rather than starting a second one.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -16,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from agentlen.infrastructure.persistence.engine import to_async_url
 from agentlen.interfaces.http.app import create_app
+from tests.conftest import AUTH_HEADERS
 
 # Re-exported so the postgres container is shared with tests/integration
 # instead of a second one being started for this package.
@@ -29,6 +31,17 @@ from tests.integration.conftest import (  # noqa: F401
 UNREACHABLE_URL = "postgresql+asyncpg://nobody:nobody@127.0.0.1:1/agentlen"
 
 
+def asgi_client(
+    app: Any,
+    *,
+    raise_app_exceptions: bool = True,
+    base_url: str = "http://test",
+) -> AsyncClient:
+    """HTTP client that presents the test API key on every request."""
+    transport = ASGITransport(app=app, raise_app_exceptions=raise_app_exceptions)
+    return AsyncClient(transport=transport, base_url=base_url, headers=AUTH_HEADERS)
+
+
 @pytest.fixture
 async def client() -> AsyncIterator[AsyncClient]:
     """A client on an app with no reachable database.
@@ -40,8 +53,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     # Starlette's ServerErrorMiddleware sends the 500 response *and* re-raises
     # the original exception (so an ASGI server can still log/crash on it).
     # httpx's default would re-raise that instead of returning the response.
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with asgi_client(app, raise_app_exceptions=False) as c:
         yield c
 
 
@@ -65,6 +77,5 @@ async def live_engine(database_url: str) -> AsyncIterator[AsyncEngine]:  # noqa:
 async def live_client(live_engine: AsyncEngine) -> AsyncIterator[AsyncClient]:
     """A client on an app wired to the real, migrated database."""
     app = create_app(engine=live_engine)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with asgi_client(app) as c:
         yield c

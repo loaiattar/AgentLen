@@ -60,7 +60,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health/ready', timeout=3)",
+          "import os, urllib.request as u; u.urlopen(u.Request('http://localhost:8000/api/v1/health/ready', headers={'X-API-Key': os.environ.get('API_KEY', '')}), timeout=3)",
         ]
       interval: 5s
       timeout: 5s

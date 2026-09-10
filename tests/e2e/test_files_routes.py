@@ -11,15 +11,14 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from agentlen.infrastructure.files.local_storage import LocalFileStorage
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.dependencies import get_file_storage
+from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 from tests.integration.conftest import requires_postgres
-
-from .conftest import UNREACHABLE_URL
 
 JSONL_SAMPLE = (
     b'{"session_id": "a1", "usage": {"input_tokens": 10}}\n'
@@ -34,8 +33,7 @@ async def live_client_with_storage(
     """A live_client whose file storage is rooted in a throwaway directory."""
     app = create_app(engine=live_engine)
     app.dependency_overrides[get_file_storage] = lambda: LocalFileStorage(tmp_path)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with asgi_client(app) as c:
         yield c
 
 
@@ -45,8 +43,7 @@ async def client_with_storage(tmp_path: Path) -> AsyncIterator[AsyncClient]:
     refused by the storage layer before any row is ever touched."""
     app = create_app(engine=create_async_engine(UNREACHABLE_URL))
     app.dependency_overrides[get_file_storage] = lambda: LocalFileStorage(tmp_path)
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with asgi_client(app) as c:
         yield c
 
 

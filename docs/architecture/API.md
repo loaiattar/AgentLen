@@ -27,10 +27,35 @@ Toutes les erreurs partagent la même enveloppe :
 | HTTP | Signification |
 |---|---|
 | `400` | Requête malformée |
+| `401` | Clé API manquante ou invalide (`X-API-Key`) |
 | `404` | Ressource inexistante |
 | `409` | Conflit (fichier déjà importé avec ce mapping) |
 | `422` | Validation métier échouée (mapping invalide, format non supporté) |
 | `502` | Le fournisseur IA a échoué ou renvoyé une réponse non conforme |
+
+### Authentification
+
+Toutes les routes exigent le header `X-API-Key`, dont la valeur est celle de la variable d'environnement `API_KEY`.
+
+Exceptions (sondes d'orchestration, sans clé) :
+
+- `GET /health` et `GET /api/v1/health`
+- `GET /version` et `GET /api/v1/version`
+
+Une clé absente ou invalide renvoie `401` :
+
+```json
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Clé API manquante ou invalide.",
+    "field_path": null,
+    "details": {}
+  }
+}
+```
+
+Le front envoie ce header sur chaque appel (voir `VITE_API_KEY`). Les origines autorisées pour le CORS sont `ALLOWED_ORIGINS` (liste séparée par des virgules, `http://localhost:5173` en développement).
 
 ### Pagination
 
@@ -303,5 +328,6 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
 2. **`null` n'est pas `0`.** Un indicateur `null` avec `coverage.ratio = 0` signifie *non disponible* et doit s'afficher comme tel, pas comme une valeur nulle.
 3. **`comparability: per_source_only`** interdit l'agrégation multi-sources. L'API renvoie un `warning` que le front doit rendre visible.
 4. **Le drill-down est fourni clé en main** via l'objet `filters` de chaque point.
-5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé API ne quitte le serveur, aucune n'est livrée au navigateur.
+5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé de fournisseur IA ne quitte le serveur, aucune n'est livrée au navigateur. La clé `X-API-Key` d'AgentLen est distincte : c'est elle que le front envoie à l'API.
 6. **Toujours proposer la prévisualisation avant l'import.** `POST /imports/preview` n'écrit rien et sert de garde-fou avant validation.
+7. **Chaque requête authentifiée porte `X-API-Key`.** Seuls `/health` et `/version` en sont exemptés.
