@@ -11,17 +11,10 @@ from agentlen.application.use_cases.authenticate_user import AuthenticateUser
 from agentlen.application.use_cases.login_user import LoginUser
 from agentlen.application.use_cases.logout_user import LogoutUser
 from agentlen.application.use_cases.register_user import RegisterUser
+from tests.fakes.password_hasher import FakePasswordHasher
 from tests.fakes.repositories import InMemoryUnitOfWork
 
 FIXED_NOW = datetime(2026, 9, 10, 12, 0, tzinfo=UTC)
-
-
-class FakePasswordHasher:
-    def hash(self, password: str) -> str:
-        return f"hashed:{password}"
-
-    def verify(self, password: str, password_hash: str) -> bool:
-        return password_hash == f"hashed:{password}"
 
 
 class FixedClock:

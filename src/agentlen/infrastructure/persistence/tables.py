@@ -446,17 +446,23 @@ user_session = Table(
     "user_session",
     metadata,
     _pk(),
-    Column("token", Text, nullable=False, unique=True),
+    # SHA-256 of the bearer token, never the token itself
+    # (domain/services/session_tokens.py). The CHECK below rejects anything
+    # that is not a digest, so a plaintext token cannot be stored by mistake.
+    Column("token_hash", Text, nullable=False, unique=True),
     Column("user_id", BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     # NULL would mean "never expires" — every session created by LoginUser
     # sets this, but the column stays nullable rather than NOT NULL so a
     # future non-expiring token type isn't a schema change.
     _tz("expires_at"),
-    comment="One active login, identified by its opaque bearer token.",
+    CheckConstraint("token_hash ~ '^[0-9a-f]{64}$'", name="token_hash_is_sha256"),
+    comment="One active login, identified by the SHA-256 of its bearer token.",
 )
 
 Index("ix_user_session_user_id", user_session.c.user_id)
+# Serves the purge of expired sessions run on every login.
+Index("ix_user_session_expires_at", user_session.c.expires_at)
 
 
 ALL_TABLES = (
