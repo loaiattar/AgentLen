@@ -74,6 +74,38 @@ async def test_validate_flags_an_operator_outside_the_whitelist(client: AsyncCli
     assert body["errors"][0]["code"] == "MAPPING_UNKNOWN_OPERATOR"
 
 
+async def test_validate_localizes_an_invalid_operator_parameter(client: AsyncClient) -> None:
+    document = {
+        "source_format": "jsonl",
+        "entities": [
+            {
+                "target": "session",
+                "natural_key": ["external_id"],
+                "fields": [
+                    {
+                        "target": "external_id",
+                        "source": "$.sid",
+                        "operators": [{"op": "cast"}],
+                    }
+                ],
+            }
+        ],
+    }
+
+    response = await client.post("/api/v1/mappings/validate", json=document)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert body["errors"] == [
+        {
+            "code": "INVALID_OPERATOR_PARAM",
+            "field_path": "entities[target=session].fields[target=external_id].operators[0].to",
+            "message": "Required parameter 'to' is missing for 'cast'.",
+        }
+    ]
+
+
 async def test_validate_flags_an_entity_without_a_natural_key(client: AsyncClient) -> None:
     document = {
         "source_format": "jsonl",

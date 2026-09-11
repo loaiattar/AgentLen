@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
 from agentlen.domain.errors import (
+    InvalidOperatorParamError,
     MissingNaturalKeyError,
     UnknownTargetFieldError,
     UnsupportedOperatorError,
@@ -22,25 +29,161 @@ _SCHEMA: dict[str, frozenset[str]] = {
 #: for the same list, with nothing holding the two together.
 VALID_TARGETS: frozenset[str] = frozenset(_SCHEMA)
 
-# Only these operator names are allowed in a field rule.
-OPERATOR_WHITELIST: frozenset[str] = frozenset(
-    {
-        "cast",
-        "parse_datetime",
-        "default",
-        "coalesce",
-        "unit_convert",
-        "map_values",
-        "trim",
-        "lower",
-        "upper",
-        "regex_extract",
-        "concat",
-        "hash",
-        "json_passthrough",
-        "split_rows",
-    }
-)
+OperatorCheck = Callable[[dict[str, Any]], list[tuple[str, str]]]
+
+
+@dataclass(frozen=True)
+class OperatorSpec:
+    required: frozenset[str] = frozenset()
+    optional: frozenset[str] = frozenset()
+    check: OperatorCheck | None = None
+
+
+def _choice(parameter: str, allowed: frozenset[str]) -> OperatorCheck:
+    def check(operator: dict[str, Any]) -> list[tuple[str, str]]:
+        value = operator.get(parameter)
+        if value is None or value in allowed:
+            return []
+        return [(parameter, f"must be one of {sorted(allowed)}, got {value!r}")]
+
+    return check
+
+
+def _sources(operator: dict[str, Any]) -> list[tuple[str, str]]:
+    sources = operator.get("sources")
+    if sources is None:
+        return []
+    if not isinstance(sources, list) or not sources or not all(isinstance(v, str) for v in sources):
+        return [("sources", "must be a non-empty list of source paths")]
+    return []
+
+
+def _concat(operator: dict[str, Any]) -> list[tuple[str, str]]:
+    errors = _sources(operator)
+    separator = operator.get("separator")
+    if separator is not None and not isinstance(separator, str):
+        errors.append(("separator", "must be a string"))
+    return errors
+
+
+def _parse_datetime_format(operator: dict[str, Any]) -> list[tuple[str, str]]:
+    value = operator.get("format")
+    if value is None:
+        return []
+    if not isinstance(value, str) or not value:
+        return [("format", "must be a non-empty format string")]
+    errors: list[tuple[str, str]] = []
+    if value not in {"iso8601", "unix_seconds", "unix_millis"}:
+        try:
+            datetime.strptime("", value)  # noqa: DTZ007 - syntax probe only
+        except ValueError as exc:
+            text = str(exc)
+            if "bad directive" in text or "stray %" in text:
+                errors.append(("format", f"invalid strptime format: {text}"))
+    timezone = operator.get("timezone")
+    if timezone is not None and timezone != "UTC":
+        errors.append(("timezone", "only UTC is supported"))
+    return errors
+
+
+def _unit_conversion(operator: dict[str, Any]) -> list[tuple[str, str]]:
+    source = operator.get("from")
+    target = operator.get("to")
+    if source is None or target is None:
+        return []
+    supported = {("s", "ms"), ("min", "ms"), ("ns", "ms"), ("ms", "s"), ("kb", "b"), ("mb", "b")}
+    if not isinstance(source, str) or not isinstance(target, str):
+        return [("from", "from and to must be strings")]
+    if (source.lower(), target.lower()) not in supported:
+        return [("to", f"unsupported conversion {source!r} -> {target!r}")]
+    return []
+
+
+def _map_values(operator: dict[str, Any]) -> list[tuple[str, str]]:
+    errors: list[tuple[str, str]] = []
+    table = operator.get("table")
+    if table is not None and not isinstance(table, dict):
+        errors.append(("table", "must be an object"))
+    mode = operator.get("on_unknown")
+    allowed = {"passthrough", "null", "reject", "constant"}
+    if mode is not None and mode not in allowed:
+        errors.append(("on_unknown", f"must be one of {sorted(allowed)}"))
+    if mode == "constant" and "constant" not in operator:
+        errors.append(("constant", "is required when on_unknown is 'constant'"))
+    return errors
+
+
+def _regex(operator: dict[str, Any]) -> list[tuple[str, str]]:
+    pattern = operator.get("pattern")
+    group = operator.get("group", 0)
+    errors: list[tuple[str, str]] = []
+    compiled: re.Pattern[str] | None = None
+    if pattern is not None:
+        if not isinstance(pattern, str) or not pattern:
+            errors.append(("pattern", "must be a non-empty string"))
+        else:
+            try:
+                compiled = re.compile(pattern)
+            except re.error as exc:
+                errors.append(("pattern", f"invalid regular expression: {exc}"))
+            unsupported = ("(?=", "(?!", "(?<=", "(?<!", "\\1", "\\2", "\\3")
+            if any(token in pattern for token in unsupported):
+                errors.append(("pattern", "uses a construct unsupported by the RE2 extractor"))
+    if not isinstance(group, int) or isinstance(group, bool) or group < 0:
+        errors.append(("group", "must be a non-negative integer"))
+    elif compiled is not None and group > compiled.groups:
+        errors.append(("group", f"capture group {group} does not exist"))
+    return errors
+
+
+def _positive_max_bytes(operator: dict[str, Any]) -> list[tuple[str, str]]:
+    value = operator.get("max_bytes")
+    if value is None:
+        return []
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        return [("max_bytes", "must be a positive integer")]
+    return []
+
+
+OPERATOR_SPECS: dict[str, OperatorSpec] = {
+    "cast": OperatorSpec(
+        required=frozenset({"to"}),
+        optional=frozenset({"on_error"}),
+        check=lambda op: (
+            _choice("to", frozenset({"string", "integer", "float", "boolean"}))(op)
+            + _choice("on_error", frozenset({"reject", "null"}))(op)
+        ),
+    ),
+    "parse_datetime": OperatorSpec(
+        required=frozenset({"format"}),
+        optional=frozenset({"timezone"}),
+        check=_parse_datetime_format,
+    ),
+    "default": OperatorSpec(required=frozenset({"value"})),
+    "coalesce": OperatorSpec(required=frozenset({"sources"}), check=_sources),
+    "unit_convert": OperatorSpec(required=frozenset({"from", "to"}), check=_unit_conversion),
+    "map_values": OperatorSpec(
+        required=frozenset({"table", "on_unknown"}),
+        optional=frozenset({"constant"}),
+        check=_map_values,
+    ),
+    "trim": OperatorSpec(),
+    "lower": OperatorSpec(),
+    "upper": OperatorSpec(),
+    "regex_extract": OperatorSpec(
+        required=frozenset({"pattern"}), optional=frozenset({"group"}), check=_regex
+    ),
+    "concat": OperatorSpec(
+        required=frozenset({"sources"}), optional=frozenset({"separator"}), check=_concat
+    ),
+    "hash": OperatorSpec(
+        required=frozenset({"algorithm", "sources"}),
+        check=lambda op: _sources(op) + _choice("algorithm", frozenset({"sha256"}))(op),
+    ),
+    "json_passthrough": OperatorSpec(optional=frozenset({"max_bytes"}), check=_positive_max_bytes),
+}
+
+OPERATOR_WHITELIST: frozenset[str] = frozenset(OPERATOR_SPECS)
 
 
 def validate(mapping: Mapping) -> list[ValidationError]:
@@ -108,5 +251,30 @@ def _validate_field(
                     field_path=f"{field_path}.operators[{i}]",
                 )
             )
+            continue
+        spec = OPERATOR_SPECS[op_name]
+        operator_path = f"{field_path}.operators[{i}]"
+        for missing in sorted(spec.required - op.keys()):
+            errors.append(
+                InvalidOperatorParamError(
+                    field_path=f"{operator_path}.{missing}",
+                    message=f"Required parameter '{missing}' is missing for '{op_name}'.",
+                )
+            )
+        allowed_parameters = spec.required | spec.optional | {"op"}
+        for unexpected in sorted(op.keys() - allowed_parameters):
+            errors.append(
+                InvalidOperatorParamError(
+                    field_path=f"{operator_path}.{unexpected}",
+                    message=f"Parameter '{unexpected}' is not allowed for '{op_name}'.",
+                )
+            )
+        if spec.check is not None:
+            for parameter, message in spec.check(op):
+                errors.append(
+                    InvalidOperatorParamError(
+                        field_path=f"{operator_path}.{parameter}", message=message
+                    )
+                )
 
     return errors
