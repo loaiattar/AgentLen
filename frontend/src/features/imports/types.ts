@@ -65,6 +65,8 @@ export type ImportSeverity = 'rejected' | 'duplicate' | 'warning'
 
 export interface ImportIssue {
   line_number: number | null
+  /** Source record, openable on `/records/{id}`. Absent on preview issues, `null` when no single line is concerned. */
+  raw_record_id?: number | null
   severity: ImportSeverity
   code: string
   message: string

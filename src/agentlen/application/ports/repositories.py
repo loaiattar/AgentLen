@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from agentlen.application.dto.persistence import (
     DataSourceRecord,
     FileUploadRecord,
+    ImportIssueRecord,
     InsertOutcome,
     ModelCallRow,
     SessionRow,
@@ -114,7 +115,9 @@ class ImportIssueRepository(Protocol):
 
     async def list(
         self, *, import_run_id: int, severity: str | None = None, limit: int = 50, offset: int = 0
-    ) -> list[ImportIssue]: ...
+    ) -> list[ImportIssueRecord]:
+        """Oldest first. The line number comes from the linked raw_record."""
+        ...
 
     async def count(self, *, import_run_id: int, severity: str | None = None) -> int: ...
 

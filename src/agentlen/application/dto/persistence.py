@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from uuid import UUID
 
+from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.model_call import ModelCall
 from agentlen.domain.model.session import Session
 from agentlen.domain.model.tool_call import ToolCall
@@ -66,6 +67,21 @@ class InsertOutcome:
     @property
     def duplicate_count(self) -> int:
         return len(self.duplicates)
+
+
+@dataclass(frozen=True)
+class ImportIssueRecord:
+    """A stored import issue and the source record it points at.
+
+    `import_issue` has no line number of its own: `issue.line_number` is read
+    back from the linked `raw_record`, and stays `None` when there is none (a
+    run-level issue such as `ALREADY_IMPORTED`). `raw_record_id` is storage
+    provenance, so it lives here rather than on the domain `ImportIssue`; it
+    is what lets a client open `GET /records/{raw_record_id}`.
+    """
+
+    issue: ImportIssue
+    raw_record_id: int | None = None
 
 
 @dataclass(frozen=True)
