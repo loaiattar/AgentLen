@@ -9,6 +9,7 @@ calmly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from sqlalchemy import text
@@ -43,8 +44,13 @@ class DatabaseHealth:
         return self.reachable and self.migrations_up_to_date
 
 
+@lru_cache(maxsize=1)
 def head_revision() -> str | None:
-    """The newest revision on disk, per the alembic/ directory."""
+    """The newest revision on disk, per the alembic/ directory.
+
+    Read once per process: the scripts ship with the build and do not change
+    under a running server, so re-parsing them on every probe is pure cost.
+    """
     try:
         from alembic.config import Config
         from alembic.script import ScriptDirectory

@@ -17,6 +17,7 @@ from agentlen.application.use_cases.upload_file import UploadFile as UploadFileU
 from agentlen.application.use_cases.upload_file import UploadResult
 from agentlen.domain.model.profile import FileProfile
 from agentlen.interfaces.http.dependencies import FileProfilerDep, FileStorageDep, UnitOfWorkDep
+from agentlen.interfaces.http.ids import EntityId
 from agentlen.interfaces.http.schemas.files import FieldProfileOut, FileProfileOut, FileUploadOut
 
 router = APIRouter(prefix="/files", tags=["files"])
@@ -78,7 +79,7 @@ async def create_file(
 
 
 @router.get("/{file_id}", response_model=FileUploadOut, summary="A file's metadata")
-async def get_file(file_id: int, uow: UnitOfWorkDep) -> FileUploadOut:
+async def get_file(file_id: EntityId, uow: UnitOfWorkDep) -> FileUploadOut:
     async with uow:
         record = await uow.file_uploads.get_by_id(file_id)
         if record is None:
@@ -109,7 +110,7 @@ async def get_file(file_id: int, uow: UnitOfWorkDep) -> FileUploadOut:
     summary="Profile a stored file: types, cardinality, null ratio, examples",
 )
 async def profile_file(
-    file_id: int, profiler: FileProfilerDep, uow: UnitOfWorkDep
+    file_id: EntityId, profiler: FileProfilerDep, uow: UnitOfWorkDep
 ) -> FileProfileOut:
     async with uow:
         record = await uow.file_uploads.get_by_id(file_id)

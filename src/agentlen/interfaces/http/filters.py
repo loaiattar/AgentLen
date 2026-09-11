@@ -15,17 +15,22 @@ from typing import Annotated, Literal
 from fastapi import Depends, Query
 
 from agentlen.application.dto.dashboard import DashboardFilters
+from agentlen.interfaces.http.ids import EntityId
 
 
 def dashboard_filters(  # noqa: PLR0913, PLR0917
     # Eight parameters because API.md §6 documents eight filters. FastAPI
     # derives the query string from this signature, so collapsing them into
     # an object would remove them from the OpenAPI the front generates from.
-    data_source_id: Annotated[int | None, Query(description="Restrict to one source.")] = None,
-    agent_id: Annotated[int | None, Query(description="Restrict to one agent.")] = None,
-    model_id: Annotated[int | None, Query(description="Sessions that used this model.")] = None,
-    tool_id: Annotated[int | None, Query(description="Sessions that used this tool.")] = None,
-    import_run_id: Annotated[int | None, Query(description="Restrict to one import run.")] = None,
+    data_source_id: Annotated[EntityId | None, Query(description="Restrict to one source.")] = None,
+    agent_id: Annotated[EntityId | None, Query(description="Restrict to one agent.")] = None,
+    model_id: Annotated[
+        EntityId | None, Query(description="Sessions that used this model.")
+    ] = None,
+    tool_id: Annotated[EntityId | None, Query(description="Sessions that used this tool.")] = None,
+    import_run_id: Annotated[
+        EntityId | None, Query(description="Restrict to one import run.")
+    ] = None,
     date_from: Annotated[
         datetime | None, Query(description="Sessions started at or after this instant.")
     ] = None,
