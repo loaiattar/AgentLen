@@ -438,6 +438,16 @@ class SqlAlchemyMappingRepository(_Base):
             query = query.where(t.mapping.c.status == status)
         return int((await self._conn.execute(query)).scalar_one())
 
+    async def latest_version(self, *, data_source_id: int, name: str) -> int | None:
+        from sqlalchemy import func
+
+        query = select(func.max(t.mapping.c.version)).where(
+            t.mapping.c.data_source_id == data_source_id,
+            t.mapping.c.name == name,
+        )
+        highest = (await self._conn.execute(query)).scalar_one_or_none()
+        return int(highest) if highest is not None else None
+
     async def supersede(self, mapping_id: int) -> None:
         await self._conn.execute(
             t.mapping.update().where(t.mapping.c.id == mapping_id).values(status="superseded")

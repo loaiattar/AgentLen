@@ -365,6 +365,14 @@ class InMemoryMappingRepository:
             and (status is None or st == status)
         )
 
+    async def latest_version(self, *, data_source_id: int, name: str) -> int | None:
+        versions = [
+            mapping.version
+            for mapping, source, _status, _created_at in self._s.mappings.values()
+            if source == data_source_id and mapping.name == name
+        ]
+        return max(versions) if versions else None
+
     async def supersede(self, mapping_id: int) -> None:
         found = self._s.mappings.get(mapping_id)
         if found is not None:

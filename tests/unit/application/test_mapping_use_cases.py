@@ -292,6 +292,55 @@ async def test_save_mapping_validates_before_any_write_and_versions() -> None:
     assert len(uow._store.mappings) == before
 
 
+async def test_versioning_a_superseded_version_is_refused() -> None:
+    """Two PUTs against v1 both used to compute v1 + 1.
+
+    The version was derived from the row the caller named rather than from the
+    highest one stored, so the second insert violated
+    `uq_mapping_name_version` — an unhandled IntegrityError, i.e. a 500 on an
+    ordinary double click. Refusing is deliberate: the caller was editing a
+    document someone has since replaced.
+    """
+    uow = InMemoryUnitOfWork()
+    source_id = await stored_data_source(uow, "superseded-src")
+    first_id = await SaveMapping(uow).execute(
+        valid_mapping(name="versioned"), data_source_id=source_id
+    )
+    await SaveMapping(uow).execute(
+        valid_mapping(), data_source_id=None, previous_mapping_id=first_id
+    )
+    before = len(uow._store.mappings)
+
+    with pytest.raises(ConflictError) as caught:
+        await SaveMapping(uow).execute(
+            valid_mapping(), data_source_id=None, previous_mapping_id=first_id
+        )
+
+    assert caught.value.details["version"] == 1
+    assert caught.value.details["latest_version"] == 2
+    assert len(uow._store.mappings) == before, "nothing should have been written"
+
+
+async def test_versioning_the_latest_version_still_works() -> None:
+    """The refusal must not catch the ordinary case."""
+    uow = InMemoryUnitOfWork()
+    source_id = await stored_data_source(uow, "chain-src")
+    first_id = await SaveMapping(uow).execute(
+        valid_mapping(name="chained"), data_source_id=source_id
+    )
+    second_id = await SaveMapping(uow).execute(
+        valid_mapping(), data_source_id=None, previous_mapping_id=first_id
+    )
+    third_id = await SaveMapping(uow).execute(
+        valid_mapping(), data_source_id=None, previous_mapping_id=second_id
+    )
+
+    async with uow as transaction:
+        third = await transaction.mappings.get(third_id)
+    assert third is not None
+    assert (third.name, third.version) == ("chained", 3)
+
+
 async def test_versioning_rejects_a_data_source_change() -> None:
     uow = InMemoryUnitOfWork()
     source_id = await stored_data_source(uow, "first-source")
