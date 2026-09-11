@@ -12,7 +12,7 @@ Importer depuis `@/components/ui/<Name>`. Ne pas dupliquer les classes d’un co
 </Button>
 ```
 
-Variantes : `primary` (cyan filled), `secondary` (glass), `ghost`, `text`, `ai` (magenta), `danger` (pink).
+Variantes : `primary` (`bg-primary` + `text-on-dark`), `secondary` (glass), `ghost`, `text`, `ai` (magenta), `danger` (pink).
 
 Sizes : `sm`, `default`, `lg`, `icon`.
 
@@ -88,6 +88,6 @@ AiPanel : insights courts, confidence optionnelle, pas un chat générique.
 
 ## Shell
 
-`AtmosphericBackground`, `AppSidebar`, `TopNav`, `MobileNav`, `PageHeader`.
+`AtmosphericBackground`, `AppSidebar`, `TopNav`, `MobileNav`, `PageHeader`, `Wordmark`, `PublicHeader`.
 
 Sidebar active : fond `primary-soft` + filet cyan + texte dark. Pas de gros bloc coloré.

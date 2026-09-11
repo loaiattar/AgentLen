@@ -10,11 +10,15 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
-import { Route as AppIndexRouteImport } from './routes/_app.index'
+import { Route as PublicRouteImport } from './routes/_public'
+import { Route as PublicIndexRouteImport } from './routes/_public.index'
+import { Route as PublicLoginRouteImport } from './routes/_public.login'
+import { Route as PublicRegisterRouteImport } from './routes/_public.register'
 import { Route as AppImportAssistantIndexRouteImport } from './routes/_app.import-assistant.index'
 import { Route as AppImportsIndexRouteImport } from './routes/_app.imports.index'
 import { Route as AppImportsImportIdRouteImport } from './routes/_app.imports.$importId'
 import { Route as AppMappingsIndexRouteImport } from './routes/_app.mappings.index'
+import { Route as AppOverviewIndexRouteImport } from './routes/_app.overview.index'
 import { Route as AppQualityIndexRouteImport } from './routes/_app.quality.index'
 import { Route as AppSessionsIndexRouteImport } from './routes/_app.sessions.index'
 import { Route as AppSessionsSessionIdRouteImport } from './routes/_app.sessions.$sessionId'
@@ -24,10 +28,24 @@ const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppIndexRoute = AppIndexRouteImport.update({
+const PublicRoute = PublicRouteImport.update({
+  id: '/_public',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PublicIndexRoute = PublicIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => AppRoute,
+  getParentRoute: () => PublicRoute,
+} as any)
+const PublicLoginRoute = PublicLoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => PublicRoute,
+} as any)
+const PublicRegisterRoute = PublicRegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
+  getParentRoute: () => PublicRoute,
 } as any)
 const AppImportAssistantIndexRoute = AppImportAssistantIndexRouteImport.update({
   id: '/import-assistant/',
@@ -47,6 +65,11 @@ const AppImportsImportIdRoute = AppImportsImportIdRouteImport.update({
 const AppMappingsIndexRoute = AppMappingsIndexRouteImport.update({
   id: '/mappings/',
   path: '/mappings/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOverviewIndexRoute = AppOverviewIndexRouteImport.update({
+  id: '/overview/',
+  path: '/overview/',
   getParentRoute: () => AppRoute,
 } as any)
 const AppQualityIndexRoute = AppQualityIndexRouteImport.update({
@@ -71,23 +94,29 @@ const AppSourcesIndexRoute = AppSourcesIndexRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof AppIndexRoute
+  '/': typeof PublicIndexRoute
+  '/login': typeof PublicLoginRoute
+  '/register': typeof PublicRegisterRoute
   '/imports/$importId': typeof AppImportsImportIdRoute
   '/sessions/$sessionId': typeof AppSessionsSessionIdRoute
   '/import-assistant/': typeof AppImportAssistantIndexRoute
   '/imports/': typeof AppImportsIndexRoute
   '/mappings/': typeof AppMappingsIndexRoute
+  '/overview/': typeof AppOverviewIndexRoute
   '/quality/': typeof AppQualityIndexRoute
   '/sessions/': typeof AppSessionsIndexRoute
   '/sources/': typeof AppSourcesIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof AppIndexRoute
+  '/': typeof PublicIndexRoute
+  '/login': typeof PublicLoginRoute
+  '/register': typeof PublicRegisterRoute
   '/imports/$importId': typeof AppImportsImportIdRoute
   '/sessions/$sessionId': typeof AppSessionsSessionIdRoute
   '/import-assistant': typeof AppImportAssistantIndexRoute
   '/imports': typeof AppImportsIndexRoute
   '/mappings': typeof AppMappingsIndexRoute
+  '/overview': typeof AppOverviewIndexRoute
   '/quality': typeof AppQualityIndexRoute
   '/sessions': typeof AppSessionsIndexRoute
   '/sources': typeof AppSourcesIndexRoute
@@ -95,12 +124,16 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
-  '/_app/': typeof AppIndexRoute
+  '/_public': typeof PublicRouteWithChildren
+  '/_public/login': typeof PublicLoginRoute
+  '/_public/register': typeof PublicRegisterRoute
+  '/_public/': typeof PublicIndexRoute
   '/_app/imports/$importId': typeof AppImportsImportIdRoute
   '/_app/sessions/$sessionId': typeof AppSessionsSessionIdRoute
   '/_app/import-assistant/': typeof AppImportAssistantIndexRoute
   '/_app/imports/': typeof AppImportsIndexRoute
   '/_app/mappings/': typeof AppMappingsIndexRoute
+  '/_app/overview/': typeof AppOverviewIndexRoute
   '/_app/quality/': typeof AppQualityIndexRoute
   '/_app/sessions/': typeof AppSessionsIndexRoute
   '/_app/sources/': typeof AppSourcesIndexRoute
@@ -109,34 +142,44 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/login'
+    | '/register'
     | '/imports/$importId'
     | '/sessions/$sessionId'
     | '/import-assistant/'
     | '/imports/'
     | '/mappings/'
+    | '/overview/'
     | '/quality/'
     | '/sessions/'
     | '/sources/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/login'
+    | '/register'
     | '/imports/$importId'
     | '/sessions/$sessionId'
     | '/import-assistant'
     | '/imports'
     | '/mappings'
+    | '/overview'
     | '/quality'
     | '/sessions'
     | '/sources'
   id:
     | '__root__'
     | '/_app'
-    | '/_app/'
+    | '/_public'
+    | '/_public/login'
+    | '/_public/register'
+    | '/_public/'
     | '/_app/imports/$importId'
     | '/_app/sessions/$sessionId'
     | '/_app/import-assistant/'
     | '/_app/imports/'
     | '/_app/mappings/'
+    | '/_app/overview/'
     | '/_app/quality/'
     | '/_app/sessions/'
     | '/_app/sources/'
@@ -144,6 +187,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  PublicRoute: typeof PublicRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -155,12 +199,33 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_app/': {
-      id: '/_app/'
+    '/_public': {
+      id: '/_public'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof PublicRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_public/': {
+      id: '/_public/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof AppIndexRouteImport
-      parentRoute: typeof AppRoute
+      preLoaderRoute: typeof PublicIndexRouteImport
+      parentRoute: typeof PublicRoute
+    }
+    '/_public/login': {
+      id: '/_public/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof PublicLoginRouteImport
+      parentRoute: typeof PublicRoute
+    }
+    '/_public/register': {
+      id: '/_public/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof PublicRegisterRouteImport
+      parentRoute: typeof PublicRoute
     }
     '/_app/import-assistant/': {
       id: '/_app/import-assistant/'
@@ -188,6 +253,13 @@ declare module '@tanstack/react-router' {
       path: '/mappings'
       fullPath: '/mappings/'
       preLoaderRoute: typeof AppMappingsIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/overview/': {
+      id: '/_app/overview/'
+      path: '/overview'
+      fullPath: '/overview/'
+      preLoaderRoute: typeof AppOverviewIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/quality/': {
@@ -222,24 +294,24 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
-  AppIndexRoute: typeof AppIndexRoute
   AppImportsImportIdRoute: typeof AppImportsImportIdRoute
   AppSessionsSessionIdRoute: typeof AppSessionsSessionIdRoute
   AppImportAssistantIndexRoute: typeof AppImportAssistantIndexRoute
   AppImportsIndexRoute: typeof AppImportsIndexRoute
   AppMappingsIndexRoute: typeof AppMappingsIndexRoute
+  AppOverviewIndexRoute: typeof AppOverviewIndexRoute
   AppQualityIndexRoute: typeof AppQualityIndexRoute
   AppSessionsIndexRoute: typeof AppSessionsIndexRoute
   AppSourcesIndexRoute: typeof AppSourcesIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppIndexRoute: AppIndexRoute,
   AppImportsImportIdRoute: AppImportsImportIdRoute,
   AppSessionsSessionIdRoute: AppSessionsSessionIdRoute,
   AppImportAssistantIndexRoute: AppImportAssistantIndexRoute,
   AppImportsIndexRoute: AppImportsIndexRoute,
   AppMappingsIndexRoute: AppMappingsIndexRoute,
+  AppOverviewIndexRoute: AppOverviewIndexRoute,
   AppQualityIndexRoute: AppQualityIndexRoute,
   AppSessionsIndexRoute: AppSessionsIndexRoute,
   AppSourcesIndexRoute: AppSourcesIndexRoute,
@@ -247,8 +319,24 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface PublicRouteChildren {
+  PublicLoginRoute: typeof PublicLoginRoute
+  PublicRegisterRoute: typeof PublicRegisterRoute
+  PublicIndexRoute: typeof PublicIndexRoute
+}
+
+const PublicRouteChildren: PublicRouteChildren = {
+  PublicLoginRoute: PublicLoginRoute,
+  PublicRegisterRoute: PublicRegisterRoute,
+  PublicIndexRoute: PublicIndexRoute,
+}
+
+const PublicRouteWithChildren =
+  PublicRoute._addFileChildren(PublicRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  PublicRoute: PublicRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

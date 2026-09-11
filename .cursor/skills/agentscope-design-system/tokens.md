@@ -30,8 +30,8 @@ Blanc pur interdit comme fond dominant.
 
 | Token | Valeur | Usage |
 |---|---|---|
-| `--primary-emphasis` | `#00F7FF` | Fill bouton primary, charts, glow, focus ring |
-| `--primary` | `#008B94` | Liens, icônes, texte accent |
+| `--primary-emphasis` | `#00F7FF` | Charts, glow, focus ring — jamais texte de bouton |
+| `--primary` | `#008B94` | Fill bouton primary, liens, icônes |
 | `--accent-mint` | `#B0FFFA` | Healthy / décoratif |
 | `--accent-magenta` | `#FF0087` | IA, charts modèles |
 | `--accent-pink` | `#FF7DB0` | Décoratif |
@@ -40,7 +40,7 @@ Blanc pur interdit comme fond dominant.
 | `--warning` | `#FFD38A` | Warning |
 | `--error` | `#FF4F91` | Erreur / danger |
 
-`#00F7FF` n’est pas une couleur de body text. Texte sur fill cyan : `--foreground`.
+`#00F7FF` n’est pas une couleur de body text ni de libellé de bouton. Texte sur fill primary (`--primary`) : `--on-dark`.
 
 ## Typographie
 

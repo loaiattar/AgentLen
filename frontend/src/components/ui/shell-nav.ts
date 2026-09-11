@@ -10,13 +10,13 @@ import {
 } from 'lucide-react'
 
 export interface ShellNavItem {
-  to: '/' | '/sessions' | '/imports' | '/sources' | '/mappings' | '/quality'
+  to: '/overview' | '/sessions' | '/imports' | '/sources' | '/mappings' | '/quality'
   label: string
   icon: LucideIcon
 }
 
 export const SHELL_NAV_ITEMS: readonly ShellNavItem[] = [
-  { to: '/', label: 'Overview', icon: LayoutGrid },
+  { to: '/overview', label: 'Overview', icon: LayoutGrid },
   { to: '/sessions', label: 'Sessions', icon: Activity },
   { to: '/imports', label: 'Imports', icon: FolderInput },
   { to: '/sources', label: 'Data Sources', icon: Database },
@@ -25,7 +25,7 @@ export const SHELL_NAV_ITEMS: readonly ShellNavItem[] = [
 ] as const
 
 export const MOBILE_PRIMARY_NAV = SHELL_NAV_ITEMS.filter((item) =>
-  item.to === '/' || item.to === '/sessions' || item.to === '/imports' || item.to === '/quality',
+  item.to === '/overview' || item.to === '/sessions' || item.to === '/imports' || item.to === '/quality',
 )
 
 export const MOBILE_MORE_NAV = SHELL_NAV_ITEMS.filter(
@@ -33,7 +33,7 @@ export const MOBILE_MORE_NAV = SHELL_NAV_ITEMS.filter(
 )
 
 export function isShellNavActive(pathname: string, to: ShellNavItem['to']) {
-  if (to === '/') return pathname === '/'
+  if (to === '/overview') return pathname === '/overview' || pathname === '/overview/'
   return pathname === to || pathname.startsWith(`${to}/`)
 }
 

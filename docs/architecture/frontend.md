@@ -264,6 +264,8 @@ Un élément reste dans sa feature tant qu'il n'est utilisé que par elle. Il n'
 | `dashboard/` | Indicateurs, visualisations, filtres. |
 | `sources/` | Origines des datasets (TraceLab, SWE-chat, etc.). |
 | `quality/` | Intégrité des données importées, issues expliquées. |
+| `landing/` | Page d'accueil publique. |
+| `auth/` | Connexion et inscription (session Bearer, distincte de `X-API-Key`). |
 
 #### Cas particulier : `import-assistant/` vs `mappings/`
 
