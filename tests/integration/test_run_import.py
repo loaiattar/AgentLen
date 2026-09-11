@@ -158,6 +158,81 @@ async def test_children_stay_attached_to_their_session(
         assert dict(by_session) == {"s1": 2, "s2": 1}
 
 
+async def test_non_iterated_calls_on_separate_lines_keep_their_explicit_indices(
+    clean_db: Connection, importer: Any, engine: Any
+) -> None:
+    """One session may span source lines; each explicit index must survive."""
+    mapping = Mapping(
+        id=uuid4(),
+        name="calls-per-line",
+        version=1,
+        source_format="jsonl",
+        entities=(
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=(FieldRule(target="external_id", source="$.sid", required=True),),
+            ),
+            EntityMapping(
+                target="model_call",
+                natural_key=("sequence_index",),
+                parent={"entity": "session", "via": "external_id"},
+                fields=(
+                    FieldRule(target="sequence_index", source="$.call.index", required=True),
+                    FieldRule(target="model_name", source="$.call.model"),
+                ),
+            ),
+        ),
+    )
+    source_id = clean_db.execute(
+        insert(t.data_source)
+        .values(slug="calls-per-line", name="Calls per line")
+        .returning(t.data_source.c.id)
+    ).scalar_one()
+    file_id = clean_db.execute(
+        insert(t.file_upload)
+        .values(
+            original_name="calls.jsonl",
+            storage_path=PATH,
+            format="jsonl",
+            size_bytes=1,
+            content_hash="b" * 64,
+        )
+        .returning(t.file_upload.c.id)
+    ).scalar_one()
+    mapping_id = clean_db.execute(
+        insert(t.mapping)
+        .values(
+            data_source_id=source_id,
+            name=mapping.name,
+            version=1,
+            source_format="jsonl",
+            document=mapping_to_document(mapping),
+            status="active",
+        )
+        .returning(t.mapping.c.id)
+    ).scalar_one()
+    clean_db.commit()
+    records = [
+        {"sid": "shared-session", "call": {"index": index, "model": f"model-{index}"}}
+        for index in range(3)
+    ]
+    run_import, uow = importer(records)
+
+    await run_import.execute(
+        await _new_run(
+            uow,
+            {"source": source_id, "file_id": file_id, "mapping_id": mapping_id},
+        )
+    )
+
+    with engine.connect() as conn:
+        indices = conn.execute(
+            select(t.model_call.c.sequence_index).order_by(t.model_call.c.sequence_index)
+        ).scalars()
+        assert list(indices) == [0, 1, 2]
+
+
 async def test_every_row_points_at_the_raw_record_it_came_from(
     seeded: dict[str, Any], importer: Any, engine: Any
 ) -> None:

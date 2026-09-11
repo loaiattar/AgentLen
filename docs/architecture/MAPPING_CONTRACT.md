@@ -67,7 +67,7 @@ Trois règles non négociables :
       "target": "model_call",
       "iterate": "$.events[?(@.type=='llm_call')]",   // 1 enregistrement -> N lignes
       "parent": { "entity": "session", "via": "external_id" },
-      "natural_key": ["session_external_id", "sequence_index"],
+      "natural_key": ["sequence_index"],
       "fields": [
         { "target": "sequence_index", "source": "$.index" },
         { "target": "model_name",     "source": "$.model" },
@@ -85,7 +85,7 @@ Trois règles non négociables :
       "target": "tool_call",
       "iterate": "$.events[?(@.type=='tool_use')]",
       "parent": { "entity": "session", "via": "external_id" },
-      "natural_key": ["session_external_id", "sequence_index"],
+      "natural_key": ["sequence_index"],
       "fields": [
         { "target": "sequence_index", "source": "$.index" },
         { "target": "tool_name",      "source": "$.name", "required": true },
@@ -137,7 +137,7 @@ Trois règles non négociables :
 |---|---|---|
 | **Syntaxique** | Conformité au JSON Schema du mapping | `entities[1].fields[0].target` manquant |
 | **Sémantique** | Champs cibles existants, types compatibles, opérateurs whitelistés | `MAPPING_UNKNOWN_TARGET: 'session.user_email' n'existe pas dans le schéma` |
-| **Structurel** | `natural_key` complète, `parent` résoluble, pas de cycle | `MAPPING_MISSING_NATURAL_KEY: 'model_call' n'a pas de clé naturelle` |
+| **Structurel** | `natural_key` complète et produite par les champs déclarés (ou `sequence_index` implicite d'une itération), `parent` résoluble, pas de cycle ; un appel non itéré déclare son `sequence_index` | `MAPPING_INVALID_NATURAL_KEY: 'session_external_id' n'est pas produit` |
 | **Exécution à blanc** | Application sur un échantillon réel | `CAST_FAILED ligne 42, $.usage.input_tokens = "n/a"` |
 
 Une erreur retourne **toujours** : un `code` stable, le `field_path` fautif, et un message explicatif. C'est le test d'acceptation « un mapping invalide est refusé avec une explication ».

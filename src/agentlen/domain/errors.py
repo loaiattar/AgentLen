@@ -46,6 +46,31 @@ class MissingNaturalKeyError(ValidationError):
         )
 
 
+class InvalidNaturalKeyFieldError(ValidationError):
+    """A natural key must name a value the transformation engine produces."""
+
+    def __init__(self, target: str, key: str, field_path: str) -> None:
+        super().__init__(
+            code="MAPPING_INVALID_NATURAL_KEY",
+            field_path=field_path,
+            message=f"Natural key field '{key}' is not produced for entity '{target}'.",
+        )
+
+
+class MissingSequenceIndexError(ValidationError):
+    """A non-iterated call needs an explicit stable index across source records."""
+
+    def __init__(self, target: str, field_path: str) -> None:
+        super().__init__(
+            code="MAPPING_MISSING_SEQUENCE_INDEX",
+            field_path=field_path,
+            message=(
+                f"Non-iterated entity '{target}' must map 'sequence_index' explicitly; "
+                "the per-record fallback would always be zero."
+            ),
+        )
+
+
 class InvalidOperatorParamError(ValidationError):
     """Raised when an operator's parameters are malformed (e.g. an uncompilable regex)."""
 

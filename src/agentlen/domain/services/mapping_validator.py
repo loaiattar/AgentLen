@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from agentlen.domain.errors import (
+    InvalidNaturalKeyFieldError,
     MissingNaturalKeyError,
+    MissingSequenceIndexError,
     UnknownTargetFieldError,
     UnsupportedOperatorError,
     ValidationError,
@@ -112,6 +114,37 @@ def _validate_entity(entity: EntityMapping) -> list[ValidationError]:
             MissingNaturalKeyError(
                 target=entity.target,
                 field_path=f"entities[target={entity.target}]",
+            )
+        )
+
+    declared_fields = {rule.target for rule in entity.fields}
+    # For an iterated call the engine produces sequence_index from the stable
+    # source position even when no rule maps it. A non-iterated entity has one
+    # row per record, whose local position is always zero, so it must provide
+    # an explicit index from the source document.
+    produced_fields = set(declared_fields)
+    if entity.target in {"model_call", "tool_call"} and entity.iterate is not None:
+        produced_fields.add("sequence_index")
+
+    for index, key in enumerate(entity.natural_key):
+        if key not in produced_fields:
+            errors.append(
+                InvalidNaturalKeyFieldError(
+                    target=entity.target,
+                    key=key,
+                    field_path=f"entities[target={entity.target}].natural_key[{index}]",
+                )
+            )
+
+    if (
+        entity.target in {"model_call", "tool_call"}
+        and entity.iterate is None
+        and "sequence_index" not in declared_fields
+    ):
+        errors.append(
+            MissingSequenceIndexError(
+                target=entity.target,
+                field_path=f"entities[target={entity.target}].fields",
             )
         )
 
