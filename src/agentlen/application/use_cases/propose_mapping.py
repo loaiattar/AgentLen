@@ -53,7 +53,10 @@ class MappingValidationTools:
                 {"values": list(field.examples[:limit])} if field else {"error": "Field not found"}
             )
         if tool_name == "get_target_schema":
-            return {"entities": ["session", "model_call", "tool_call"]}
+            # Read from the validator, not retyped here. A hardcoded list would
+            # keep telling the model about the entities of the day it was
+            # written, and the model would never learn about a new one.
+            return {"entities": sorted(mapping_validator.VALID_TARGETS)}
         if tool_name == "validate_mapping":
             try:
                 mapping = document_to_mapping(tool_input["mapping"])

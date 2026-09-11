@@ -50,6 +50,13 @@ _SCHEMA: dict[str, frozenset[str]] = {
     ),
 }
 
+#: The entity names a mapping may target. Derived from `_SCHEMA` so the two can
+#: never drift: an entity is valid exactly when this module knows which fields
+#: it accepts. `EntityMapping` used to carry its own `VALID_TARGETS` frozenset
+#: and a `validate_target` method that nothing called — a second source of truth
+#: for the same list, with nothing holding the two together.
+VALID_TARGETS: frozenset[str] = frozenset(_SCHEMA)
+
 # Only these operator names are allowed in a field rule.
 OPERATOR_WHITELIST: frozenset[str] = frozenset(
     {

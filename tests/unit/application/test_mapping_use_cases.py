@@ -7,11 +7,12 @@ import pytest
 
 from agentlen.application.dto.mapping_document import mapping_to_document
 from agentlen.application.errors import ConflictError, MappingInvalidError, NotFoundError
-from agentlen.application.use_cases.propose_mapping import ProposeMapping
+from agentlen.application.use_cases.propose_mapping import MappingValidationTools, ProposeMapping
 from agentlen.application.use_cases.refine_mapping import RefineMapping
 from agentlen.application.use_cases.save_mapping import SaveMapping
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
 from agentlen.domain.model.profile import FieldProfile, FileProfile
+from agentlen.domain.services import mapping_validator
 from agentlen.infrastructure.ai.fake_adapter import FakeAnalyzer
 from agentlen.infrastructure.ai.sanitizer import ProfileExampleSanitizer
 from tests.fakes.repositories import InMemoryUnitOfWork
@@ -353,6 +354,42 @@ async def test_versioning_rejects_a_data_source_change() -> None:
             data_source_id=other_source_id,
             previous_mapping_id=first_id,
         )
+
+
+async def test_the_target_schema_tool_reads_the_validator_not_a_copy() -> None:
+    """One source of truth for the entity names the model is allowed to target.
+
+    The tool used to return a hardcoded `["session", "model_call", "tool_call"]`,
+    and `EntityMapping` carried a third copy in a `VALID_TARGETS` frozenset with
+    a `validate_target` method nothing called. Adding an entity to `_SCHEMA`
+    would have left the model being told about the entities of the day the list
+    was typed.
+    """
+    tools = MappingValidationTools(
+        FileProfile(file_id=1, format="jsonl", record_count=0, sampled_records=0)
+    )
+
+    answer = await tools.execute("get_target_schema", {})
+
+    assert answer == {"entities": sorted(mapping_validator.VALID_TARGETS)}
+    assert set(answer["entities"]) == set(mapping_validator._SCHEMA)
+
+
+def test_an_unknown_entity_target_is_reported_not_raised() -> None:
+    """The whitelist is enforced by the validator, which reports rather than raises.
+
+    Everything downstream depends on that: `SaveMapping` turns the report into a
+    422, and the `validate_mapping` tool hands it back to the model so it can
+    correct itself. Raising here would end the conversation instead.
+    """
+    mapping = replace(
+        valid_mapping(),
+        entities=(replace(valid_mapping().entities[0], target="not_an_entity"),),
+    )
+
+    errors = mapping_validator.validate(mapping)
+
+    assert [e.code for e in errors] == ["MAPPING_UNKNOWN_TARGET"]
 
 
 def test_profile_sanitizer_redacts_values_and_keeps_the_path_addressable() -> None:
