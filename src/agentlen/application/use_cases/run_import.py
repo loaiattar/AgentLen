@@ -3,7 +3,9 @@
 The governing rule is that **a bad batch does not stop the import**. The point
 is a complete, explained report, not a halt on the first awkward line. A file
 where three rows in a hundred are malformed should import ninety-seven and say
-precisely what happened to the other three (MAPPING_CONTRACT.md §7.4).
+precisely what happened to the other three (MAPPING_CONTRACT.md §7.4). A line
+that cannot be read or stored is one of those three, not a failed run. What
+does fail the run, an unexpected error, names the lines it stopped on.
 
 Records are processed in batches, and each batch is one transaction. That is a
 deliberate middle ground:
@@ -20,15 +22,20 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from agentlen.application.dto.persistence import ModelCallRow, SessionRow, ToolCallRow
-from agentlen.application.errors import MappingInvalidError, NotFoundError
-from agentlen.application.ports.file_reader import FileReader
+from agentlen.application.errors import (
+    ImportInterruptedError,
+    MappingInvalidError,
+    NotFoundError,
+)
+from agentlen.application.ports.file_reader import FileReader, SourceItem
 from agentlen.application.ports.unit_of_work import UnitOfWork
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
 from agentlen.domain.services import mapping_validator
+from agentlen.domain.services.deduplicator import Deduplicator
 from agentlen.domain.services.record_normalizer import RecordNormalizer
 
 DEFAULT_BATCH_SIZE = 500
@@ -135,24 +142,36 @@ class RunImport:
         # round trip per row.
         reference_cache: dict[tuple[str, str, str], int] = {}
         line_number = 0
+        # Where a failure would be: in the batch being imported, or past the
+        # last imported one when reading the file is what fails.
+        first_line: int = 1
+        last_line: int | None = None
 
-        for batch in self._reader.iter_batches(
-            stored.storage_path, batch_size=batch_size(), format=stored.format
-        ):
-            start_line = line_number + 1
-            line_number += len(batch)
-            batch_issues = await self._import_batch(
-                batch,
-                start_line=start_line,
-                context=_RunContext(
-                    mapping=mapping,
-                    data_source_id=run["data_source_id"],
-                    import_run_id=import_run_id,
-                ),
-                counters=counters,
-                reference_cache=reference_cache,
-            )
-            all_issues.extend(batch_issues)
+        try:
+            for batch in self._reader.iter_batches(
+                stored.storage_path, batch_size=batch_size(), format=stored.format
+            ):
+                start_line = line_number + 1
+                line_number += len(batch)
+                first_line, last_line = start_line, line_number
+                batch_issues = await self._import_batch(
+                    batch,
+                    start_line=start_line,
+                    context=_RunContext(
+                        mapping=mapping,
+                        data_source_id=run["data_source_id"],
+                        import_run_id=import_run_id,
+                    ),
+                    counters=counters,
+                    reference_cache=reference_cache,
+                )
+                all_issues.extend(batch_issues)
+                first_line, last_line = line_number + 1, None
+        except ImportInterruptedError:
+            raise
+        except Exception as exc:
+            # Earlier batches stay committed; the failing one rolled back whole.
+            raise ImportInterruptedError(first_line=first_line, last_line=last_line) from exc
 
         report = counters.to_report(all_issues)
         async with self._uow as uow:
@@ -162,7 +181,7 @@ class RunImport:
 
     async def _import_batch(
         self,
-        batch: list[dict[str, Any]],
+        batch: list[SourceItem],
         *,
         start_line: int,
         context: _RunContext,
@@ -170,12 +189,18 @@ class RunImport:
         reference_cache: dict[tuple[str, str, str], int],
     ) -> list[ImportIssue]:
         counters.read += len(batch)
-        issues: list[ImportIssue] = []
+        readable, issues = split_source_items(batch, start_line=start_line)
+        payloads = dict(readable)
 
         async with self._uow as uow:
+            # A rejected line is stored too, with a null payload: its issue
+            # keeps a line number and a raw_record to point at.
             raw_ids = await uow.raw_records.add_many(
                 import_run_id=context.import_run_id,
-                records=[(start_line + i, record) for i, record in enumerate(batch)],
+                records=[
+                    (line, payloads.get(line))
+                    for line in range(start_line, start_line + len(batch))
+                ],
             )
 
             sessions: list[SessionRow] = []
@@ -184,14 +209,16 @@ class RunImport:
             pending_references: set[tuple[str, str, str]] = set()
             normalised: list[Any] = []
 
-            for offset, record in enumerate(batch):
-                line = start_line + offset
-                result = self._normalizer.normalize(
-                    context.mapping,
-                    record,
-                    data_source_id=context.data_source_id,
-                    line_number=line,
-                )
+            for line, record in readable:
+                try:
+                    result = self._normalizer.normalize(
+                        context.mapping,
+                        record,
+                        data_source_id=context.data_source_id,
+                        line_number=line,
+                    )
+                except Exception as exc:
+                    raise ImportInterruptedError(first_line=line, last_line=line) from exc
                 normalised.append((line, result))
                 issues.extend(result.issues)
                 for request in result.reference_requests:
@@ -318,6 +345,29 @@ class RunImport:
             context = dict(part.split("=", 1) for part in marker.split(";") if "=" in part)
             cache[key] = await uow.referentials.resolve(kind, name, context=context or None)
         return cache
+
+
+def split_source_items(
+    items: list[SourceItem], *, start_line: int
+) -> tuple[list[tuple[int, dict[str, Any]]], list[ImportIssue]]:
+    """The records to transform, each with its line number, and the rejections.
+
+    A line is rejected when the reader could not read it, or when its record
+    cannot be stored (`Deduplicator.storage_issue`): one `rejected` issue with
+    its line number, and the other lines go on. The preview shares this, so it
+    rejects what the import would.
+    """
+    readable: list[tuple[int, dict[str, Any]]] = []
+    rejected: list[ImportIssue] = []
+    for line, item in enumerate(items, start=start_line):
+        if isinstance(item, ImportIssue):
+            # The count kept here is the line number, for the issue as for raw_record.
+            rejected.append(replace(item, line_number=line))
+        elif (issue := Deduplicator.storage_issue(item, line_number=line)) is not None:
+            rejected.append(issue)
+        else:
+            readable.append((line, item))
+    return readable, rejected
 
 
 def _context_key(request: Any) -> str:

@@ -241,4 +241,18 @@ Pour chaque enregistrement source, le moteur :
 5. calcule la clé naturelle, insère avec `ON CONFLICT DO NOTHING` ;
 6. incrémente les compteurs du bilan.
 
+**Lecture.** Avant l'étape 1, le lecteur rend chaque enregistrement en valeurs JSON : dates et heures en texte ISO 8601 (`2024-01-02T03:04:05+01:00`), durées en `PT…S` (`PT90.5S`), décimaux en texte exact (`"12.340"` : un flottant l'arrondirait), `NaN` et infinis en `null`. Une ligne qui ne peut être ni lue ni stockée produit **une** issue `rejected` et n'est pas transformée ; les autres lignes continuent et l'import finit `partial`. Rien n'est échappé ni corrigé : le payload est gardé tel qu'écrit, ou pas du tout (un `raw_record` au payload `null` garde alors le numéro de ligne de l'issue).
+
+| Code | Cause | `field_path` |
+|---|---|---|
+| `INVALID_JSON` | ligne JSONL qui n'est pas du JSON : syntaxe, `NaN`/`Infinity`, nombre hors limites d'un flottant, encodage non UTF-8 | — |
+| `NOT_A_JSON_OBJECT` | ligne JSONL valide mais qui n'est pas un objet (tableau, chaîne…) | — |
+| `UNSTORABLE_VALUE` | valeur que `jsonb` refuse : caractère nul U+0000, Unicode invalide, type non JSON (binaire Parquet) | chemin de la valeur |
+
+Le message nomme la cause et, pour une ligne illisible, la ligne physique du fichier ; il ne cite jamais le contenu.
+
+**`line_number`** est le rang de l'enregistrement dans le fichier, à partir de 1 : une ligne vide d'un JSONL n'est pas un enregistrement, l'en-tête d'un CSV non plus, une ligne Parquet en est un. Une ligne rejetée garde son rang. C'est le même numéro sur le `raw_record`, sur ses issues et dans la prévisualisation.
+
+**Échec global.** Une erreur inattendue (base, lecture du fichier, anomalie du moteur) arrête l'import en `failed` ; les lots déjà validés restent. `import_run.error_summary` garde les classes d'exception et l'endroit de l'arrêt (`ligne 42` pour un enregistrement, `lignes 501 à 1000` pour un lot, `à partir de la ligne 1001` pour la lecture), jamais le texte de l'erreur.
+
 Le moteur est **pur** : il prend un mapping et un dictionnaire, il rend des entités ou des issues. Aucune I/O, aucune base, aucun réseau — donc entièrement testable unitairement, comme l'exige le sujet.

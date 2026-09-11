@@ -189,6 +189,32 @@ async def test_importing_the_same_file_twice_creates_no_duplicate(
     assert second.records_duplicate == 5
 
 
+async def test_a_line_postgres_cannot_store_is_rejected_alone(
+    seeded: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    """#189. jsonb refuses U+0000, and that line used to fail the whole run. It is
+    now one rejection, kept with a null payload so that the issue has its line."""
+    run_import, uow = importer([GOOD[0], {"sid": "s9", "prompt": "a\x00b"}, GOOD[1]])
+    run_id = await _new_run(uow, seeded)
+
+    report = await run_import.execute(run_id)
+
+    [issue] = report.issues
+    assert (issue.code, issue.line_number, issue.field_path) == ("UNSTORABLE_VALUE", 2, "$.prompt")
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 2
+        stored = conn.execute(
+            select(t.raw_record.c.line_number, t.raw_record.c.payload)
+            .where(t.raw_record.c.import_run_id == run_id)
+            .order_by(t.raw_record.c.line_number)
+        ).all()
+        status = conn.execute(
+            select(t.import_run.c.status).where(t.import_run.c.id == run_id)
+        ).scalar_one()
+    assert [tuple(row) for row in stored] == [(1, GOOD[0]), (2, None), (3, GOOD[1])]
+    assert (status, report.records_rejected) == ("partial", 1)
+
+
 async def test_two_imports_of_the_same_agent_share_one_agent_row(
     seeded: dict[str, Any], importer: Any, engine: Any
 ) -> None:

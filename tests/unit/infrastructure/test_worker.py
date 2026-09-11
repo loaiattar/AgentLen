@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from agentlen.application.errors import ImportInterruptedError
 from agentlen.domain.model.import_run import ImportReport
 from agentlen.infrastructure.jobs.worker import ImportWorker, failure_summary
 
@@ -145,6 +146,30 @@ def test_the_failure_summary_prefers_the_explicit_cause_and_collapses_repeats() 
     assert "en échec : IntegrityError (" in summary
     assert "ValueError" not in summary
     assert "secret" not in summary
+
+
+@pytest.mark.parametrize(
+    ("first", "last", "where"),
+    [
+        (501, 1000, "lignes 501 à 1000"),
+        (42, 42, "ligne 42"),
+        (1001, None, "à partir de la ligne 1001"),
+    ],
+)
+def test_the_failure_summary_keeps_where_an_import_stopped(
+    first: int, last: int | None, where: str
+) -> None:
+    """#189. Line numbers are not trace content: they stay, the text still goes."""
+    try:
+        try:
+            raise ValueError("TRACE-CONTENT-77aa")
+        except ValueError as inner:
+            raise ImportInterruptedError(first_line=first, last_line=last) from inner
+    except ImportInterruptedError as exc:
+        summary = failure_summary(4, exc)
+
+    assert f"Import 4 en échec ({where}) : ImportInterruptedError <- ValueError (" in summary
+    assert "TRACE" not in summary
 
 
 async def test_one_bad_job_does_not_stop_the_loop() -> None:

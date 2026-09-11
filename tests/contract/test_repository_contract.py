@@ -533,6 +533,26 @@ async def test_issues_read_their_line_number_from_the_linked_raw_record(uow: Any
     ]
 
 
+async def test_a_line_kept_without_payload_still_gives_its_issue_a_line_number(uow: Any) -> None:
+    """#189. A line that cannot be stored is kept with a JSON null payload (the
+    column refuses SQL NULL), so its rejection still has a line to show."""
+    from agentlen.domain.model.import_run import ImportIssue
+
+    async with uow:
+        p = await _provenance(uow)
+        raw = await uow.raw_records.add_many(
+            import_run_id=p["run"], records=[(2, None), (3, {"sid": "c"})]
+        )
+        issue = ImportIssue(severity="rejected", code="INVALID_JSON", message="illisible")
+        await uow.import_issues.add_many(import_run_id=p["run"], issues=[(issue, raw[2])])
+        await uow.commit()
+
+    async with uow:
+        listed = await uow.import_issues.list(import_run_id=p["run"])
+
+    assert [(r.issue.line_number, r.raw_record_id) for r in listed] == [(2, raw[2])]
+
+
 async def test_import_run_list_returns_most_recent_first_and_count_matches(uow: Any) -> None:
     async with uow:
         p = await _provenance(uow)

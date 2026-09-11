@@ -327,7 +327,7 @@ def _call_outcome(
 
 class SqlAlchemyRawRecordRepository(_Base):
     async def add_many(
-        self, *, import_run_id: int, records: list[tuple[int, dict[str, Any]]]
+        self, *, import_run_id: int, records: list[tuple[int, dict[str, Any] | None]]
     ) -> dict[int, int]:
         if not records:
             return {}

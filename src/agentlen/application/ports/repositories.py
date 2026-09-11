@@ -78,9 +78,13 @@ class ToolCallRepository(Protocol):
 
 class RawRecordRepository(Protocol):
     async def add_many(
-        self, *, import_run_id: int, records: list[tuple[int, dict[str, Any]]]
+        self, *, import_run_id: int, records: list[tuple[int, dict[str, Any] | None]]
     ) -> dict[int, int]:
-        """Store payloads verbatim. Returns line number → raw_record id."""
+        """Store payloads verbatim. Returns line number → raw_record id.
+
+        A `None` payload is a line that could not be read or stored: it is kept
+        as JSON `null`, so the issue explaining it still has its line number.
+        """
         ...
 
 

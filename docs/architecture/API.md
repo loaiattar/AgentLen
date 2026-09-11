@@ -251,7 +251,7 @@ Le front interroge ensuite `GET /imports/{id}` (intervalle suggéré : 1 s).
 }
 ```
 
-`line_number` est lu sur le `raw_record` auquel l'issue est reliée ; `raw_record_id` ouvre l'enregistrement source brut sur `GET /records/{raw_record_id}` (§6). Les deux valent `null` pour une issue qui ne concerne aucune ligne précise (ex. `ALREADY_IMPORTED`, émise par lot).
+`line_number` est lu sur le `raw_record` auquel l'issue est reliée : c'est le rang de l'enregistrement dans le fichier ([MAPPING_CONTRACT.md](MAPPING_CONTRACT.md) §7), et le `payload` de ce `raw_record` vaut `null` pour une ligne illisible ; `raw_record_id` ouvre l'enregistrement source brut sur `GET /records/{raw_record_id}` (§6). Les deux valent `null` pour une issue qui ne concerne aucune ligne précise (ex. `ALREADY_IMPORTED`, émise par lot).
 
 ---
 
