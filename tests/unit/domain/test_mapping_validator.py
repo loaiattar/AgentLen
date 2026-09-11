@@ -370,3 +370,28 @@ def test_iterated_call_has_an_implicit_stable_sequence_index():
     )
 
     assert validate(mapping) == []
+
+
+def test_empty_iterate_is_not_treated_as_iterated():
+    """`iterate: ""` must fail the same guards as `iterate: null`.
+
+    The wire schema accepts it (`str | None`, no min_length) and
+    `TransformationEngine.apply` tests `iterate` for truthiness, so an empty
+    string is a flat entity for the engine. An `is not None` test here granted
+    it the implicit sequence_index and skipped the missing-index check at once.
+    """
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="model_call",
+                natural_key=["sequence_index"],
+                iterate="",
+                fields=[FieldRule(target="model_name", source="$.model")],
+            )
+        ]
+    )
+
+    assert {error.code for error in validate(mapping)} == {
+        "MAPPING_INVALID_NATURAL_KEY",
+        "MAPPING_MISSING_SEQUENCE_INDEX",
+    }

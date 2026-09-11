@@ -34,6 +34,17 @@ _SCHEMA: dict[str, frozenset[str]] = {
 #: for the same list, with nothing holding the two together.
 VALID_TARGETS: frozenset[str] = frozenset(_SCHEMA)
 
+
+def _is_call(target: str) -> bool:
+    """Whether `target` is an entity the engine numbers with a sequence index.
+
+    Derived from `_SCHEMA` rather than a literal `{"model_call", "tool_call"}`,
+    for the same reason `VALID_TARGETS` is: a hardcoded pair is a second source
+    of truth that drifts the day a third numbered entity appears.
+    """
+    return "sequence_index" in _SCHEMA.get(target, frozenset())
+
+
 OperatorCheck = Callable[[dict[str, Any]], list[tuple[str, str]]]
 
 
@@ -246,7 +257,12 @@ def _validate_entity(entity: EntityMapping) -> list[ValidationError]:
     # row per record, whose local position is always zero, so it must provide
     # an explicit index from the source document.
     produced_fields = set(declared_fields)
-    if entity.target in {"model_call", "tool_call"} and entity.iterate is not None:
+    # `entity.iterate` is tested for truthiness, not for `is not None`, because
+    # that is what TransformationEngine.apply does. The wire schema accepts
+    # `iterate: ""` (`str | None`, no min_length), and an `is not None` test
+    # would call such an entity iterated while the engine treats it as flat —
+    # granting the implicit index to an entity that never gets one.
+    if _is_call(entity.target) and entity.iterate:
         produced_fields.add("sequence_index")
 
     for index, key in enumerate(entity.natural_key):
@@ -259,11 +275,7 @@ def _validate_entity(entity: EntityMapping) -> list[ValidationError]:
                 )
             )
 
-    if (
-        entity.target in {"model_call", "tool_call"}
-        and entity.iterate is None
-        and "sequence_index" not in declared_fields
-    ):
+    if _is_call(entity.target) and not entity.iterate and "sequence_index" not in declared_fields:
         errors.append(
             MissingSequenceIndexError(
                 target=entity.target,

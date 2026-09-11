@@ -158,8 +158,8 @@ Quatre règles non négociables :
 | Niveau | Vérifie | Exemple d'erreur |
 |---|---|---|
 | **Syntaxique** | Conformité au JSON Schema du mapping, notation des chemins (§2.1) | `entities[1].fields[0].target` manquant ; `MAPPING_UNSUPPORTED_PATH: Path '$.events[0]' is not supported` |
-| **Sémantique** | Champs cibles existants, types compatibles, opérateurs whitelistés | `MAPPING_UNKNOWN_TARGET: 'session.user_email' n'existe pas dans le schéma` |
-| **Structurel** | `natural_key` complète et produite par les champs déclarés (ou `sequence_index` implicite d'une itération), `parent` résoluble, pas de cycle ; un appel non itéré déclare son `sequence_index` | `MAPPING_INVALID_NATURAL_KEY: 'session_external_id' n'est pas produit` |
+| **Sémantique** | Champs cibles existants, types compatibles, opérateurs whitelistés et paramètres valides | `MAPPING_UNKNOWN_TARGET: 'session.user_email' n'existe pas dans le schéma` ; `MAPPING_UNKNOWN_OPERATOR`, `INVALID_OPERATOR_PARAM` |
+| **Structurel** | `natural_key` présente, complète et produite par les champs déclarés (ou `sequence_index` implicite d'une itération), `parent` résoluble, pas de cycle ; un appel non itéré déclare son `sequence_index` | `MAPPING_MISSING_NATURAL_KEY`, `MAPPING_INVALID_NATURAL_KEY: 'session_external_id' n'est pas produit`, `MAPPING_MISSING_SEQUENCE_INDEX` |
 | **Exécution à blanc** | Application sur un échantillon réel | `CAST_FAILED ligne 42, $.usage.input_tokens = "n/a"` |
 
 Une erreur retourne **toujours** : un `code` stable, le `field_path` fautif, et un message explicatif. C'est le test d'acceptation « un mapping invalide est refusé avec une explication ».
