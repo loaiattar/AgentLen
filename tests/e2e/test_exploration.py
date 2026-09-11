@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, text, update
+from sqlalchemy import select, update
 
 from agentlen.infrastructure.persistence import tables as t
 from agentlen.interfaces.http.app import create_app
@@ -30,18 +30,15 @@ async def test_invalid_requests(client, path):
 
 
 @pytest.fixture
-async def exploration_dataset(dataset, live_engine):  # noqa: F811
-    try:
-        yield dataset
-    finally:
-        # Other HTTP tests expect an empty database; the imported fixture commits.
-        async with live_engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "TRUNCATE data_source, file_upload, provider, agent, tool, repository "
-                    "RESTART IDENTITY CASCADE"
-                )
-            )
+async def exploration_dataset(live_engine, dataset):  # noqa: F811
+    # `live_engine` is requested **first** on purpose: it empties the database,
+    # and `dataset` then seeds it. The other order let the seeding run first
+    # and be wiped a moment later.
+    #
+    # No cleanup afterwards any more. Tidying up after oneself only worked as
+    # long as every module remembered to, and the list of tables had to be kept
+    # in step by hand.
+    yield dataset
 
 
 @requires_postgres
