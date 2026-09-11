@@ -42,7 +42,7 @@ export function ImportDetailPage() {
   if (runId === null) {
     return (
       <div>
-        <PageHeader kicker="Import" title={importId} action={back} />
+        <PageHeader title={importId} action={back} />
         <EmptyState title="Unknown import" description={`"${importId}" is not a run id.`} />
       </div>
     )
@@ -51,7 +51,7 @@ export function ImportDetailPage() {
   if (run.isPending) {
     return (
       <div>
-        <PageHeader kicker="Import" title={`#${importId}`} action={back} />
+        <PageHeader title={`#${importId}`} action={back} />
         <GlassSkeleton className="h-64" />
       </div>
     )
@@ -60,7 +60,7 @@ export function ImportDetailPage() {
   if (run.isError) {
     return (
       <div>
-        <PageHeader kicker="Import" title={`#${importId}`} action={back} />
+        <PageHeader title={`#${importId}`} action={back} />
         <EmptyState
           title="This import could not be loaded"
           description={run.error.message}
@@ -78,11 +78,7 @@ export function ImportDetailPage() {
 
   return (
     <div>
-      <PageHeader
-        kicker="Import"
-        title={`#${run.data.id} · ${run.data.file.original_name}`}
-        action={back}
-      />
+      <PageHeader title={`#${run.data.id} · ${run.data.file.original_name}`} action={back} />
 
       <ImportReportCard run={run.data} />
 

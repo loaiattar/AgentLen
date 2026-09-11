@@ -5,5 +5,5 @@ export interface WordmarkProps {
 }
 
 export function Wordmark({ className }: WordmarkProps) {
-  return <span className={cn('font-display text-section text-foreground', className)}>AgentScope</span>
+  return <span className={cn('font-display text-section text-foreground', className)}>AgentLen</span>
 }
