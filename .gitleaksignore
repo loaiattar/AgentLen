@@ -1,0 +1,22 @@
+# Findings gitleaks a déjà jugées, une par ligne, par empreinte
+# `commit:fichier:règle:ligne`.
+#
+# On écarte une trouvaille nommée, jamais une règle : désactiver
+# `generic-api-key` rendrait le scan aveugle à un vrai secret dans le même
+# format, ce qui est exactement ce qu'il existe pour attraper.
+#
+# ---------------------------------------------------------------------------
+# Fausse clé AWS dans le test du sanitizer.
+#
+# `tests/unit/infrastructure/test_sanitizer.py` vérifie que le sanitizer expurge
+# `aws_secret_access_key=…` avant qu'un échantillon ne parte chez un fournisseur.
+# Pour l'éprouver il lui faut la forme d'un secret. La valeur est
+# `EXAMPLEEXAMPLEEXAMPLEEXAMPLE` — déjà choisie à faible entropie pour éviter ce
+# scan, comme le dit le commentaire à côté — mais la règle porte sur le nom et
+# le séparateur, pas sur le contenu. Elle se déclenche donc quoi qu'on écrive.
+#
+# Ce n'est visible que sur une PR `develop -> main` : le scan ne couvre que les
+# commits qu'un run ajoute, et cette plage-là englobe tout l'historique depuis
+# la dernière synchronisation. Le commentaire du job dans `ci.yml` annonçait
+# déjà cette trouvaille sans que rien ne l'écarte.
+c2524b64220b65446f0280e30ba61cfaabf9e0d8:tests/unit/infrastructure/test_sanitizer.py:generic-api-key:110

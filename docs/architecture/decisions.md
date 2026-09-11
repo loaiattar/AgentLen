@@ -128,3 +128,80 @@
 **Décision.** Un seul déployable applicatif, exécuté sous deux rôles (`api` et `worker`) partageant le même code. La modularité est interne : couches + ports.
 
 **Conséquences.** Un `docker compose up` suffit à tout démarrer. Les frontières internes étant des interfaces explicites, une extraction ultérieure resterait possible — mais elle n'est ni faite, ni prévue, ni nécessaire.
+
+---
+
+## ADR-011 — Le mapping impératif est impossible sur nos entités : traduction explicite
+
+**Statut :** proposé — à trancher en revue (complète [ADR-003](#adr-003--sqlalchemy-20-en-mapping-impératif--alembic))
+
+**Contexte.** ADR-003 prévoit d'associer les entités du domaine aux tables par `registry.map_imperatively()`. À l'implémentation du Lot B, cette approche s'avère **techniquement impossible en l'état** : les entités du Lot A sont des `@dataclass(frozen=True)`, et SQLAlchemy doit poser un attribut `_sa_instance_state` sur chaque instance qu'il persiste ou charge.
+
+Vérifié, pas supposé :
+
+```
+map_imperatively : OK
+insert           : ECHEC -> FrozenInstanceError: cannot assign to field '_sa_instance_state'
+```
+
+`map_imperatively()` accepte la classe sans broncher ; l'échec ne survient qu'au premier `INSERT`. Un mapping impératif « qui compile » ne prouve donc rien.
+
+Deux écarts structurels s'ajoutent au gel des dataclasses :
+
+1. **Forme.** Les entités portent des *noms* (`agent_name`, `model_name`, `tool_name`) là où les tables portent des *références* (`agent_id`, `model_id`, `tool_id`) — c'est précisément la normalisation 3NF de [DATA_MODEL.md](DATA_MODEL.md) §4. `ModelCall` imbrique par ailleurs un `TokenUsage`, alors que la table a des colonnes plates.
+2. **Identité.** Le domaine et les ports utilisent des `UUID` ; `DATA_MODEL.md` et le contrat d'API publié utilisent des `BIGINT GENERATED ALWAYS AS IDENTITY` (`{"id": 12}`, `{"tool_id": 4}`). Onze issues frontend dépendent déjà de la forme entière.
+
+**Décision.** Les tables sont écrites en SQLAlchemy Core et **restent conformes à DATA_MODEL.md** (donc au contrat d'API déjà publié). Le module `orm_registry.py` prévu par ADR-003 n'est pas créé. La traduction entité ↔ ligne sera écrite à la main dans les repositories (Data Mapper explicite), au moment où elle sert réellement — issue #45.
+
+**Alternatives écartées.**
+
+- *Dégeler les dataclasses du domaine.* Coût réel : `Deduplicator` s'appuie sur leur hachabilité, et l'immuabilité est un choix délibéré du Lot A. On paierait une régression du domaine pour un confort d'infrastructure — exactement l'inversion que la Clean Architecture cherche à éviter.
+- *Passer les tables en UUID.* Aligne le domaine, mais casse le contrat d'API déjà publié et les onze issues frontend en cours.
+
+**Conséquences.** Le domaine reste totalement ignorant de SQLAlchemy — l'objectif d'ADR-003 est donc atteint, plus complètement même qu'avec l'instrumentation, qui aurait modifié les classes du domaine au moment de l'import. Coût : la traduction est écrite à la main plutôt que déduite, soit quelques dizaines de lignes par agrégat, entièrement testables sans base.
+
+**Reste à trancher (issue #45).** Comment réconcilier l'identité `UUID` du domaine avec le `BIGINT` de la base. Recommandation : ajouter une colonne `uuid UNIQUE` aux trois tables de faits — les ports (`get(session_id: UUID)`) restent applicables, le contrat d'API garde ses entiers, et le coût est une migration. Cela suppose une PR sur `DATA_MODEL.md`, qui reste la source de vérité du schéma.
+
+---
+
+## ADR-012 — L'identité persistante appartient à la base, l'UUID est une corrélation de lot
+
+**Statut :** accepté (tranche la question laissée ouverte par [ADR-011](#adr-011--le-mapping-impératif-est-impossible-sur-nos-entités--traduction-explicite))
+
+**Contexte.** ADR-011 laissait ouverte la réconciliation entre l'`UUID` porté par les entités du domaine et le `BIGINT GENERATED ALWAYS AS IDENTITY` des tables, et recommandait d'ajouter une colonne `uuid UNIQUE` aux tables de faits pour que les ports `get(session_id: UUID)` restent applicables.
+
+**Cette recommandation était fausse.** `RecordNormalizer` génère ces identifiants avec `uuid4()`, à chaque normalisation :
+
+```python
+id=uuid4(),   # record_normalizer.py, lignes 179, 224, 284
+```
+
+Ils sont donc **aléatoires et non reproductibles** : relire le même fichier produit d'autres UUID. Les persister reviendrait à stocker une valeur qui ne désigne rien de stable, et sur laquelle aucune recherche ultérieure ne pourrait s'appuyer. La colonne aurait coûté une migration pour ranger du bruit.
+
+**Décision.** Deux identités distinctes, chacune avec son rôle :
+
+- **L'`UUID` est une corrélation *intra-lot*.** Il sert à un `ModelCall` pour désigner sa `Session` avant que l'une ou l'autre n'ait été écrite. Sa portée est une normalisation ; il ne quitte jamais le processus.
+- **Le `BIGINT` est l'identité persistante.** La base l'attribue, l'API l'expose (`{"id": 12}`), les clés étrangères le référencent.
+
+Les ports d'écriture prennent donc des entités et renvoient un `InsertOutcome` portant `assigned: dict[UUID, int]` — la correspondance qui permet de rattacher les enfants au parent qui vient d'être inséré. Les ports de lecture prennent l'identifiant de base : `get(session_id: int)`.
+
+**Conséquences.** Aucune migration, aucune colonne de bruit. Les signatures des ports du Lot A qui annonçaient `UUID` en lecture sont corrigées — elles n'avaient aucune implémentation ni aucun appelant, le coût est nul. En contrepartie, `_to_session()` frappe un nouvel UUID à la lecture : il n'a pas de sens hors d'un lot d'import, et le code qui en dépendrait serait déjà en faute.
+
+**Ce qui reste vrai d'ADR-011.** Le domaine reste ignorant de SQLAlchemy, et la traduction entité ↔ ligne est écrite à la main. C'est cette traduction explicite qui rend la distinction ci-dessus visible plutôt qu'implicite.
+
+---
+
+## ADR-013 — Authentification par API Key et CORS
+
+**Statut :** accepté
+
+**Contexte.** L'API était ouverte sur le réseau local : n'importe quel client pouvait importer des fichiers et lire les traces. Le frontend tourne sur un autre port (Vite, 5173) ; sans CORS le navigateur bloque les appels.
+
+**Décision.** Un middleware FastAPI exige le header `X-API-Key` sur toutes les routes sauf `/health` et `/version`. La clé vient de `API_KEY`. Les origines autorisées viennent de `ALLOWED_ORIGINS` (liste CSV). Comparaison en temps constant (`hmac.compare_digest`) ; la valeur n'est jamais journalisée.
+
+**Alternatives.** JWT / sessions : trop lourd pour un monolithe de sprint, et le front n'a pas d'utilisateurs nommés. Basic Auth : moins pratique à envoyer depuis `fetch` et à documenter dans OpenAPI.
+
+**Conséquences.** Le navigateur ne détient jamais la clé (#149) : toute variable `VITE_*` est inscrite par Vite dans le bundle JavaScript, que n'importe quel visiteur peut lire. C'est le proxy placé devant l'API qui ajoute `X-API-Key` à chaque appel `/api` : nginx dans la stack Docker, depuis la variable `API_KEY` du conteneur `frontend` lue au démarrage (ni l'image ni le bundle ne la contiennent), et le proxy Vite avec `npm run dev`, depuis `API_KEY` sans préfixe `VITE_`. La clé ferme donc l'accès direct à l'API ; derrière le proxy, identifier la personne relève de la session utilisateur. Un oubli de `API_KEY` en production ferme toute l'API (401) et empêche le conteneur `frontend` de démarrer, ce qui est le comportement voulu.
+
+**Amendement (#162).** `/docs`, `/redoc` et `/openapi.json` rejoignent les chemins publics : un navigateur qui ouvre `/docs` ne peut pas joindre de header, et le document ne décrit que des routes qui exigent toujours la clé. Le middleware restant hors du graphe de dépendances de FastAPI, `interfaces/http/openapi.py` déclare la clé et l'enveloppe d'erreur dans le schéma généré, sans rien appliquer. `/version` ne renvoie plus que la version applicative ; les révisions de schéma passent sur `/health/ready`, derrière la clé.
+

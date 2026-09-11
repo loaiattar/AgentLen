@@ -1,0 +1,293 @@
+"""Local file storage: streaming, hashing, and the refusals that matter.
+
+These are the security properties from ARCHITECTURE §10, so each is asserted on
+observed behaviour rather than on the code being written a certain way.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import threading
+import tracemalloc
+from collections.abc import AsyncIterator, Callable
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from agentlen.application.ports.file_storage import (
+    FileStorage,
+    FileTooLargeError,
+    UnsupportedFileFormatError,
+)
+from agentlen.infrastructure.files import local_storage
+from agentlen.infrastructure.files.local_storage import (
+    HEAD_BYTES,
+    MAX_FIRST_LINE_BYTES,
+    LocalFileStorage,
+    detect_file_format,
+    detect_format,
+)
+from tests.fakes.file_storage import InMemoryFileStorage
+
+JSONL = b'{"session_id": "a3f2"}\n{"session_id": "b91c"}\n'
+CSV = b"id,name\n1,alpha\n"
+PARQUET = b"PAR1" + b"\x00" * 64 + b"PAR1"
+
+
+async def stream(payload: bytes, *, chunk: int = 8) -> AsyncIterator[bytes]:
+    for start in range(0, len(payload), chunk):
+        yield payload[start : start + chunk]
+
+
+async def test_content_hash_matches_a_plain_sha256(tmp_path: Path) -> None:
+    storage = LocalFileStorage(tmp_path)
+
+    stored = await storage.store(stream(JSONL), original_name="t.jsonl")
+
+    assert stored.content_hash == hashlib.sha256(JSONL).hexdigest()
+    assert stored.size_bytes == len(JSONL)
+    assert Path(stored.storage_path).read_bytes() == JSONL
+
+
+async def test_the_path_never_contains_the_uploaded_name(tmp_path: Path) -> None:
+    """Path traversal cannot work, because the name is not used to build the
+    path at all — stronger than sanitising it, since there is nothing left to
+    sanitise wrongly."""
+    storage = LocalFileStorage(tmp_path)
+
+    stored = await storage.store(stream(JSONL), original_name="../../../../etc/passwd.jsonl")
+
+    path = Path(stored.storage_path).resolve()
+    assert tmp_path.resolve() in path.parents
+    assert "passwd" not in stored.storage_path
+    assert "etc" not in Path(stored.storage_path).parts
+
+
+async def test_identical_content_is_stored_once_on_disk(tmp_path: Path) -> None:
+    storage = LocalFileStorage(tmp_path)
+
+    first = await storage.store(stream(JSONL), original_name="a.jsonl")
+    second = await storage.store(stream(JSONL), original_name="b.jsonl")
+
+    assert first.storage_path == second.storage_path
+    written = [p for p in tmp_path.rglob("*") if p.is_file()]
+    assert len(written) == 1
+
+
+async def test_a_large_file_is_not_held_in_memory(tmp_path: Path) -> None:
+    """The whole point of streaming. 64 MB written, peak allocation must stay
+    far below it — otherwise a few concurrent uploads exhaust the process."""
+    storage = LocalFileStorage(tmp_path)
+    payload_size = 64 * 1024 * 1024
+
+    async def big() -> AsyncIterator[bytes]:
+        block = b'{"a":1}\n' * 1024  # 8 KiB
+        yield b'{"session_id":"x"}\n'
+        for _ in range(payload_size // len(block)):
+            yield block
+
+    tracemalloc.start()
+    stored = await storage.store(big(), original_name="big.jsonl")
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    assert stored.size_bytes > payload_size
+    # Generous ceiling: the assertion is "not proportional to the file", not a
+    # precise budget. Buffering the file whole would be ~64 MB.
+    assert peak < 8 * 1024 * 1024, f"pic mémoire {peak / 1024 / 1024:.1f} Mo"
+
+
+async def test_over_the_limit_is_refused_without_reading_it_all(tmp_path: Path) -> None:
+    storage = LocalFileStorage(tmp_path, max_bytes=1024)
+    consumed = 0
+
+    async def counted() -> AsyncIterator[bytes]:
+        nonlocal consumed
+        for _ in range(1000):
+            consumed += 1
+            yield b'{"a":1}\n' * 128  # 1 KiB per chunk
+
+    with pytest.raises(FileTooLargeError):
+        await storage.store(counted(), original_name="big.jsonl")
+
+    # Refusing a huge upload must not require reading the whole thing first.
+    assert consumed < 10
+
+
+async def test_a_refused_upload_leaves_nothing_behind(tmp_path: Path) -> None:
+    """A partially written file must not be mistaken for a stored one."""
+    storage = LocalFileStorage(tmp_path, max_bytes=64)
+
+    with pytest.raises(FileTooLargeError):
+        await storage.store(stream(b'{"a":1}\n' * 100), original_name="big.jsonl")
+
+    assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+
+
+async def test_disk_work_runs_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Writing, hashing, format detection and the final rename are blocking:
+    on the event loop, one large upload would stall every other request."""
+    loop_thread = threading.get_ident()
+    calls: list[tuple[str, bool]] = []
+
+    def spy(name: str, target: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            calls.append((name, threading.get_ident() != loop_thread))
+            return target(*args, **kwargs)
+
+        return wrapped
+
+    monkeypatch.setattr(local_storage, "_append", spy("write", local_storage._append))
+    monkeypatch.setattr(
+        local_storage, "detect_file_format", spy("detect", local_storage.detect_file_format)
+    )
+    monkeypatch.setattr(Path, "replace", spy("rename", Path.replace))
+
+    await LocalFileStorage(tmp_path).store(stream(JSONL), original_name="t.jsonl")
+
+    assert {name for name, _ in calls} == {"write", "detect", "rename"}
+    assert all(off_loop for _, off_loop in calls), calls
+
+
+@pytest.mark.parametrize("name", ["x.exe", "x.txt", "x.zip", "x"])
+async def test_disallowed_extensions_are_refused(tmp_path: Path, name: str) -> None:
+    storage = LocalFileStorage(tmp_path)
+
+    with pytest.raises(UnsupportedFileFormatError):
+        await storage.store(stream(JSONL), original_name=name)
+
+
+# ---------------------------------------------------------------------------
+# Format detection: the bytes decide, not the extension
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("payload", "name", "expected"),
+    [
+        (JSONL, "t.jsonl", "jsonl"),
+        (JSONL, "t.csv", "jsonl"),  # misnamed, content wins
+        (CSV, "t.csv", "csv"),
+        (PARQUET, "t.parquet", "parquet"),
+        (PARQUET, "t.csv", "parquet"),  # magic bytes win over extension
+    ],
+)
+def test_format_is_detected_from_content(payload: bytes, name: str, expected: str) -> None:
+    assert detect_format(payload, name) == expected
+
+
+def test_a_file_claiming_jsonl_but_holding_csv_is_refused() -> None:
+    with pytest.raises(UnsupportedFileFormatError):
+        detect_format(CSV, "pretend.jsonl")
+
+
+def test_broken_json_is_refused_rather_than_read_as_csv() -> None:
+    with pytest.raises(UnsupportedFileFormatError):
+        detect_format(b'{"unterminated": \n', "t.jsonl")
+
+
+def test_binary_that_is_not_parquet_is_refused() -> None:
+    with pytest.raises(UnsupportedFileFormatError):
+        detect_format(b"\x89PNG\r\n\x1a\n\x00\x00", "t.csv")
+
+
+# ---------------------------------------------------------------------------
+# Detection past the head: long first lines, cut characters
+#
+# Run through both storages, so the in-memory double cannot drift back to a
+# head of its own that hides what production refuses.
+# ---------------------------------------------------------------------------
+
+#: A first record of 80 KB, longer than the head — a trace embedding tool output.
+LONG_FIRST_LINE = b'{"output": "' + b"x" * (80 * 1024) + b'"}\n{"session_id": "b91c"}\n'
+
+
+def _emoji_cut_by_the_head() -> bytes:
+    """A valid JSONL whose byte HEAD_BYTES falls inside a 4-byte emoji."""
+    prefix = b'{"session_id": "a3f2"}\n{"text": "'
+    prefix += b"x" * (HEAD_BYTES - 2 - len(prefix))
+    payload = prefix + "😀".encode() + b'"}\n'
+    assert payload[HEAD_BYTES - 2 : HEAD_BYTES + 2] == "😀".encode()
+    return payload
+
+
+@pytest.fixture(params=["local", "in_memory"])
+def storage(request: pytest.FixtureRequest, tmp_path: Path) -> FileStorage:
+    if request.param == "local":
+        return LocalFileStorage(tmp_path)
+    return InMemoryFileStorage()
+
+
+@pytest.mark.parametrize(
+    ("payload", "name", "expected"),
+    [
+        (LONG_FIRST_LINE, "t.jsonl", "jsonl"),
+        (_emoji_cut_by_the_head(), "t.jsonl", "jsonl"),
+        (b"id,name\n" + "1,é\n".encode() * (HEAD_BYTES // 4), "t.csv", "csv"),
+        (PARQUET, "t.parquet", "parquet"),
+        (b"PAR1" + b"\x00" * (2 * HEAD_BYTES) + b"PAR1", "t.parquet", "parquet"),
+    ],
+    ids=["80kb-first-line", "emoji-cut-at-head", "csv-longer-than-head", "parquet", "big-parquet"],
+)
+async def test_valid_files_longer_than_the_head_are_accepted(
+    storage: FileStorage, payload: bytes, name: str, expected: str
+) -> None:
+    stored = await storage.store(stream(payload, chunk=4096), original_name=name)
+
+    assert stored.detected_format == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "name"),
+    [
+        # 80 KB first line whose string is never closed.
+        (b'{"output": "' + b"x" * (80 * 1024) + b"\n{}\n", "t.jsonl"),
+        # Invalid UTF-8 well inside a head that is itself cut mid-file.
+        (b"\xff\xfe" * HEAD_BYTES, "t.csv"),
+    ],
+    ids=["broken-80kb-first-line", "binary-garbage"],
+)
+async def test_invalid_files_longer_than_the_head_are_still_refused(
+    storage: FileStorage, payload: bytes, name: str
+) -> None:
+    with pytest.raises(UnsupportedFileFormatError) as refused:
+        await storage.store(stream(payload, chunk=4096), original_name=name)
+
+    assert refused.value.code == "UNSUPPORTED_FILE_FORMAT"
+
+
+def test_a_cut_character_is_refused_when_the_file_really_ends_there() -> None:
+    """Tolerance is for a head cut mid-file, not for a truncated upload."""
+    with pytest.raises(UnsupportedFileFormatError):
+        detect_file_format(io.BytesIO('{"a": "é'.encode()[:-1]).read, "t.jsonl")
+
+
+def test_a_line_separator_inside_a_json_string_does_not_split_the_line() -> None:
+    """JSON allows U+2028 raw in a string; only "\\n" ends a JSONL record."""
+    assert detect_format('{"text": "a\u2028b"}\n'.encode(), "t.jsonl") == "jsonl"
+
+
+def test_detection_stops_reading_at_the_first_line_bound() -> None:
+    read_sizes: list[int] = []
+    source = io.BytesIO(b'{"output": "' + b"x" * (MAX_FIRST_LINE_BYTES * 2))
+
+    def read(size: int) -> bytes:
+        read_sizes.append(size)
+        return source.read(size)
+
+    assert detect_file_format(read, "t.jsonl") == "jsonl"
+    assert sum(read_sizes) == MAX_FIRST_LINE_BYTES + 1  # the bound, then "is there more?"
+
+
+def test_a_first_line_beyond_the_bound_needs_the_jsonl_name() -> None:
+    """Past the bound the record cannot be parsed; the extension must agree
+    with the opening brace, or nothing vouches for the content."""
+    cut_line = b'{"output": "' + b"x" * 1024
+
+    assert detect_format(cut_line, "t.ndjson", truncated=True) == "jsonl"
+    with pytest.raises(UnsupportedFileFormatError):
+        detect_format(cut_line, "t.csv", truncated=True)

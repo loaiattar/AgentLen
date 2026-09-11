@@ -58,3 +58,8 @@ docker/volumes/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# --- Notes privées (non versionnées) ----------------------------------------
+ISSUES.md
+BRANCH_REPORT.md
+ISSUES-BACKEND.md

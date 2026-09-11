@@ -1,0 +1,60 @@
+# Served by the `frontend` service (docker/frontend.Dockerfile).
+#
+# ${MAX_UPLOAD_SIZE_MB} and API_KEY are substituted when the container starts.
+# nginx's own variables ($host, $uri, …) are left untouched: they are not in
+# the container environment, and the entrypoint only substitutes variables
+# that are.
+
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Uploads cross this proxy. nginx's 1 MB default would reject any real
+    # trace file; the limit follows MAX_UPLOAD_SIZE_MB from .env instead.
+    client_max_body_size ${MAX_UPLOAD_SIZE_MB}m;
+
+    # Docker's embedded DNS, re-resolved every 10 s. A literal `proxy_pass
+    # http://api:8000` would pin the address found at startup, and every call
+    # would fail with a 502 once `api` is recreated with a new one.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    location /api/ {
+        set $api_upstream http://api:8000;
+        proxy_pass $api_upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The browser never holds the API key (#149): nginx adds it here from
+        # the container's API_KEY, substituted at start-up, and it replaces any
+        # X-API-Key a client sends. No log line records it: the access log
+        # format and error messages carry no request headers.
+        proxy_set_header X-API-Key "${API_KEY}";
+
+        # Stream multipart uploads to the API instead of spooling them first.
+        proxy_request_buffering off;
+
+        # One analysis chains several model calls; against a local model a
+        # single proposal took 275 s (#113). The 60 s default would cut it off
+        # and the interface would show a 504 for work that was still running.
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+
+    # File names are content-hashed by Vite: safe to cache for good.
+    location /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # Client-side routes: an unknown path is the application itself, so
+    # reloading /imports/new serves the app instead of a 404.
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+    }
+}

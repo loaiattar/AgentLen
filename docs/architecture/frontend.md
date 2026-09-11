@@ -96,7 +96,8 @@ src/
 │   └── layouts/           # Layouts racine (AppLayout, AuthLayout...)
 │
 ├── components/
-│   ├── atoms/              # Composants UI élémentaires (souvent basés sur shadcn/ui)
+│   ├── ui/                 # Design system + primitives shadcn (Button, Bento, Kpi…)
+│   ├── atoms/              # Couche Atomic Design optionnelle au-dessus de ui/
 │   ├── molecules/          # Combinaisons simples d'atoms
 │   ├── organisms/          # Compositions complexes, génériques (non liées à une feature)
 │   └── templates/          # Structures de page réutilisables (layout de contenu)
@@ -110,7 +111,10 @@ src/
 │   │   ├── types.ts          # Types métier de la feature
 │   │   └── pages/           # Pages associées aux routes de la feature
 │   ├── imports/
+│   ├── import-assistant/
 │   ├── mappings/
+│   ├── sources/
+│   ├── quality/
 │   └── dashboard/
 │
 ├── lib/
@@ -190,9 +194,9 @@ Les quatre premiers niveaux (Atoms à Templates) vivent dans `components/`. Le n
 
 ### Atoms
 
-Composants UI élémentaires, non composés d'autres composants métier, hautement réutilisables. Souvent des wrappers autour de primitives shadcn/ui.
+Composants UI élémentaires, non composés d'autres composants métier, hautement réutilisables. Les primitives du design system et shadcn/ui vivent dans `components/ui/` (voir [design-system.md](design-system.md)).
 
-Exemples : `Button`, `Input`, `Badge`, `Icon`, `Label`, `Checkbox`.
+Exemples : `Button`, `Input`, `Badge`, `Kpi`, `BentoModule`.
 
 Règles :
 - Pas d'appel API, pas de dépendance à une feature.
@@ -249,9 +253,48 @@ features/
 
 Un élément reste dans sa feature tant qu'il n'est utilisé que par elle. Il n'est promu vers `components/` que lorsqu'il devient réellement réutilisable ailleurs — jamais de manière anticipée ("on en aura peut-être besoin ailleurs").
 
+### Features du projet
+
+| Feature | Périmètre |
+|---|---|
+| `imports/` | Import des fichiers source (upload, liste des imports, statut). |
+| `import-assistant/` | Agent IA d'aide au mapping : analyse du fichier, conversation avec l'IA, correction, preview du mapping en brouillon. |
+| `mappings/` | Mappings persistés et réutilisables, indépendants du flux d'analyse IA. |
+| `sessions/` | Détail d'une session (appels modèles, appels outils). |
+| `dashboard/` | Indicateurs, visualisations, filtres. |
+| `sources/` | Origines des datasets (TraceLab, SWE-chat, etc.). |
+| `quality/` | Intégrité des données importées, issues expliquées. |
+| `landing/` | Page d'accueil publique. |
+| `auth/` | Connexion et inscription (session Bearer, distincte de `X-API-Key`). |
+| `system/` | État du serveur affiché par le shell : fournisseur et modèle IA actifs (`GET /ai/providers`), disponibilité de l'API (`GET /health/ready`). Chargé dans `AppLayout`, passé en props à `AppSidebar`. |
+
+#### Cas particulier : `import-assistant/` vs `mappings/`
+
+Ce sont deux features distinctes plutôt qu'une seule, chacune avec sa propre responsabilité :
+
+- `import-assistant/` porte la conversation avec l'IA et le mapping **en brouillon** — un état client, généralement géré par un [store Zustand de feature](#10-state-management--zustand) (`features/import-assistant/store/`).
+- `mappings/` porte les mappings **validés/persistés**, consultables et réutilisables indépendamment du flux IA — géré via TanStack Query comme toute donnée serveur.
+- La validation d'un mapping dans `import-assistant/` délègue la sauvegarde à l'API de `mappings/` (appel à une mutation exposée par `features/mappings/api/`). Cela matérialise côté frontend la règle métier « l'IA propose, elle ne modifie jamais la base directement ».
+
+> Si cette séparation s'avère artificielle à l'usage (couplage constant entre les deux features), il est acceptable de fusionner en une seule feature avec un sous-dossier `assistant/`, plutôt que de forcer la séparation. Documenter ce choix dans la PR concernée le cas échéant.
+
+#### Pas de feature « analytics » séparée
+
+Le calcul des indicateurs (définition, unité, gestion des valeurs manquantes) est une responsabilité du **domaine backend**, testable indépendamment de l'UI — donc hors périmètre de ce document. `dashboard/` ne fait qu'**afficher** des indicateurs déjà calculés via l'API ; il ne doit jamais recalculer un indicateur côté client.
+
+#### `dashboard/` vs `sessions/`
+
+La vue détaillée d'une session est isolée dans sa propre feature `sessions/`, car elle est consommée à la fois par le drill-down du dashboard et potentiellement par une liste de sessions indépendante — cela évite de dupliquer la logique de récupération (queries) et d'affichage entre les deux features.
+
+Le lien entre `dashboard/` et `sessions/` doit rester un **drill-down en lecture seule** géré par la navigation (le dashboard redirige vers une route de `sessions/` via `useNavigate`/un `Link`), et non un import direct de composants entre les deux features — ce qui respecterait la règle « pas d'import croisé entre features » de la [section 13](#13-règles-de-dépendances).
+
+#### Filtres du dashboard : search params, pas Zustand
+
+Les filtres du dashboard (source, agent, modèle, période) et le drill-down d'un graphique vers `sessions/` doivent passer par les **search params de TanStack Router** ([section 11](#11-routing--tanstack-router)), pas par un store Zustand, afin de rester partageables par lien et navigables (bouton précédent/suivant). Voir la règle de décision de la [section 10](#10-state-management--zustand).
+
 ### Comment classer un composant : arbre de décision
 
-1. **Est-ce un composant shadcn/ui non modifié ou une primitive UI pure (pas de vocabulaire métier) ?** → `components/atoms/` ou `components/molecules/`.
+1. **Est-ce un composant shadcn/ui ou une primitive du design system (pas de vocabulaire métier) ?** → `components/ui/`.
 2. **Est-ce une composition d'UI générique réutilisable par plusieurs features, sans connaissance du métier ?** → `components/organisms/` ou `components/templates/`.
 3. **Est-ce utilisé uniquement par une feature, ou porte-t-il une connaissance du métier de cette feature (noms de champs, statuts, règles) ?** → `features/<feature>/components/`.
 4. **Est-ce un point d'entrée de route ?** → `features/<feature>/pages/`.
@@ -269,7 +312,7 @@ Un élément reste dans sa feature tant qu'il n'est utilisé que par elle. Il n'
 
 shadcn/ui n'est pas une dépendance npm classique : les composants sont générés/copiés directement dans le code du projet, ce qui les rend éditables.
 
-- **Emplacement** : les composants générés par la CLI shadcn vivent dans `components/atoms/` (composants simples : `Button`, `Input`, `Badge`) ou `components/molecules/` (compositions déjà pré-assemblées par shadcn, ex. `Dialog`, `Combobox`) selon leur niveau de complexité au sens Atomic Design.
+- **Emplacement** : les composants générés par la CLI shadcn et les modules du design system vivent dans `components/ui/` (`Button`, `Input`, `Bento`, `Kpi`, `Modal`…). Config : `frontend/components.json`. Voir [design-system.md](design-system.md).
 - **Personnalisation** : la personnalisation visuelle passe par les tokens Tailwind/CSS variables (thème) et par les `class-variance-authority` (`cva`) variants déjà générés par shadcn — on édite le composant généré directement plutôt que de le surcharger depuis l'extérieur.
 - **Utilisation par les features** : une feature importe les composants shadcn depuis `components/`, elle ne doit jamais copier/dupliquer un composant shadcn dans son propre dossier.
 - **Créer un nouveau composant plutôt qu'utiliser shadcn tel quel** : quand le besoin ne correspond à aucun composant du catalogue shadcn, ou quand la composition nécessaire dépasse une simple variante (nouvel Atom/Molecule composé "from scratch", éventuellement à partir de primitives Radix si besoin).
@@ -291,7 +334,7 @@ Backend
 
 ### Emplacements
 
-- **Fonctions d'appel API brutes** (`fetch`/wrapper HTTP, pas de React) : `features/<feature>/api/*.ts` pour les endpoints spécifiques à une feature ; `lib/api/` pour le client HTTP partagé (instance de base, gestion des headers, des erreurs, de l'auth).
+- **Fonctions d'appel API brutes** (`fetch`/wrapper HTTP, pas de React) : `features/<feature>/api/*.ts` pour les endpoints spécifiques à une feature ; `lib/api/` pour le client HTTP partagé (instance de base, gestion des headers, des erreurs, de l'auth). Le client n'envoie pas `X-API-Key` : le proxy (nginx en Docker, Vite en développement) l'ajoute depuis `API_KEY`, pour que la clé ne soit jamais livrée au navigateur ; le client n'ajoute que le jeton de session (`Authorization: Bearer`). Aucune clé ne doit être lue via `import.meta.env` : Vite inscrit toute variable `VITE_*` dans le bundle (voir [API.md](API.md) §1).
 - **Queries** : définies avec `queryOptions` (ou hooks `useQuery`) dans `features/<feature>/api/`, ex. `features/imports/api/imports.queries.ts`. Elles encapsulent la clé de cache (`queryKey`) et la fonction d'appel.
 - **Mutations** : définies dans `features/<feature>/api/`, ex. `features/imports/api/imports.mutations.ts`, avec gestion de l'invalidation associée dans `onSuccess`.
 - Les composants (pages, components de feature) **consomment** ces queries/mutations via des hooks exportés (`useImportsQuery`, `useCreateImportMutation`) — ils n'appellent jamais `fetch` directement.
@@ -320,16 +363,16 @@ Règle stricte : `fetch`/`axios` n'apparaît **jamais** dans `components/` ni di
 |---|---|---|
 | Donnée serveur (vient du backend) | **TanStack Query** | Liste des imports, détail d'une session, statut d'un job |
 | État client global, partagé entre plusieurs features/routes | **Zustand** (`store/`) | Sidebar ouverte/fermée, thème choisi, filtres persistants inter-pages, panier/sélection multi-pages |
-| État client local à une feature, partagé entre plusieurs composants de cette feature | **Zustand** (`features/<feature>/store/`) | Étape courante d'un wizard d'import, sélection multiple dans un tableau, brouillon de formulaire multi-étapes |
+| État client local à une feature, partagé entre plusieurs composants de cette feature | **Zustand** (`features/<feature>/store/`) | Conversation et mapping en brouillon de `import-assistant/`, sélection multiple dans un tableau, brouillon de formulaire multi-étapes |
 | État purement local à un composant | `useState` / `useReducer` | Ouverture d'un menu, valeur d'un champ contrôlé, hover |
-| État dérivé de l'URL, partageable par lien | Search params **TanStack Router** | Filtres de liste, pagination, onglet actif — voir [section 11](#11-routing--tanstack-router) |
+| État dérivé de l'URL, partageable par lien | Search params **TanStack Router** | Filtres de liste, pagination, onglet actif, filtres du dashboard (source, agent, modèle, période) — voir [section 11](#11-routing--tanstack-router) |
 
 Règle de décision : avant de créer un store Zustand, se demander si l'état peut rester local (`useState`) ou s'il devrait plutôt vivre dans l'URL (search params, partageable et navigable). Zustand est réservé aux cas où l'état est réellement partagé entre composants distants dans l'arbre et n'a pas vocation à être dans l'URL ni à venir du serveur. **Une donnée qui existe côté backend ne doit jamais être recopiée dans un store Zustand** — elle reste la responsabilité de TanStack Query, y compris pour un cache "optimiste" (géré via `queryClient.setQueryData`, pas via un store parallèle).
 
 ### Emplacement et granularité des stores
 
 - **Stores globaux** (utilisés par plusieurs features, ou par `app/`) : `store/<nom>.store.ts` à la racine de `src/`, ex. `store/ui.store.ts`, `store/preferences.store.ts`.
-- **Stores de feature** (utilisés uniquement à l'intérieur d'une feature) : `features/<feature>/store/<nom>.store.ts`, ex. `features/imports/store/import-wizard.store.ts`.
+- **Stores de feature** (utilisés uniquement à l'intérieur d'une feature) : `features/<feature>/store/<nom>.store.ts`, ex. `features/import-assistant/store/import-assistant.store.ts` (conversation IA + mapping en brouillon).
 - Un store par domaine d'état cohérent (pas un store géant unique type "state global de l'app"). Plusieurs petits stores ciblés sont préférés à un store monolithique, pour limiter les re-renders et garder chaque store lisible.
 - Un store de feature ne doit jamais être importé par une autre feature ; s'il devient nécessaire ailleurs, il est promu vers `store/` à la racine (même logique de promotion que pour les composants, [section 7](#7-organisation-par-feature)).
 
@@ -377,7 +420,7 @@ Pour un store découpé en plusieurs responsabilités, préférer le pattern de 
 
 - Les composants génériques (`components/`) **ne doivent pas** dépendre directement d'un store métier de feature (`features/<feature>/store/`). Ils reçoivent l'état et les actions nécessaires via props, comme pour toute autre logique métier.
 - Un composant générique peut en revanche consommer un store **global** (`store/`) s'il s'agit d'un état d'UI transverse assumé comme tel (ex. un composant `Sidebar` générique qui lit `useUiStore`).
-- Une Page ou un composant de feature consomme le store de sa propre feature directement via le hook généré par `create()` (`useImportWizardStore`), sans passer par une couche d'abstraction supplémentaire.
+- Une Page ou un composant de feature consomme le store de sa propre feature directement via le hook généré par `create()` (`useImportAssistantStore`), sans passer par une couche d'abstraction supplémentaire.
 - Comme pour les queries/mutations, aucun composant ne doit accéder à `localStorage`/`sessionStorage` directement pour de l'état partagé : cela passe par un store Zustand avec middleware `persist`.
 
 ## 11. Routing & TanStack Router
@@ -408,7 +451,7 @@ Components (Atomic Design)
 - **Utilisation directe des classes utilitaires** : privilégiée pour tout style local, propre à un composant, non dupliqué ailleurs. C'est le mode par défaut.
 - **Créer un composant réutilisable** dès qu'une combinaison de classes se répète à l'identique dans plusieurs endroits, ou dès qu'un pattern visuel a une signification métier/UI stable (ex. "badge de statut"). La règle : dupliquer une combinaison de classes deux fois est acceptable, la dupliquer une troisième fois doit déclencher l'extraction en composant (Atom/Molecule).
 - **Responsive** : mobile-first, via les préfixes standards Tailwind (`sm:`, `md:`, `lg:`, `xl:`). Pas de media query CSS custom en dehors de Tailwind sauf cas exceptionnel documenté en commentaire.
-- **Thème** : géré via les tokens définis dans la configuration Tailwind (`tailwind.config.ts`) et les variables CSS de shadcn/ui (`--background`, `--foreground`, etc.), pour permettre le light/dark mode. Ne jamais coder une couleur en dur (`#fff`, `bg-[#123456]`) : toujours passer par un token de thème.
+- **Thème** : light et dark, bascule globale (`ThemeProvider` + classe `dark` sur `html`). Tokens dans `app/styles/globals.css` (`:root` / `.dark` + `@theme inline` Tailwind v4) : surfaces glass, typographie Inter, Bento, accents. Ne jamais coder une couleur en dur (`#fff`, `bg-[#123456]`) : toujours passer par un token. Détail : [design-system.md](design-system.md).
 - **Styles personnalisés** (CSS pur) : limités au strict nécessaire (ex. keyframes d'animation complexes non couvertes par Tailwind), centralisés dans un fichier global (`app/styles/globals.css` ou équivalent), jamais dans des fichiers `.css` dispersés par composant.
 - **Quand utiliser Tailwind directement vs créer un composant** :
   - Style ponctuel, non répété → classes Tailwind inline.
@@ -457,7 +500,7 @@ Ces règles peuvent être renforcées via une règle ESLint de type `import/no-r
 - Fonctions/utilitaires : `camelCase.ts` (`formatDate.ts`).
 - Types : `types.ts` par feature, ou `<domaine>.types.ts` si plusieurs fichiers de types dans une même feature.
 - Queries/Mutations : `<feature>.queries.ts` / `<feature>.mutations.ts`.
-- Stores Zustand : `<domaine>.store.ts` (`ui.store.ts`, `import-wizard.store.ts`).
+- Stores Zustand : `<domaine>.store.ts` (`ui.store.ts`, `import-assistant.store.ts`).
 - Routes (file-based) : suivent la convention TanStack Router (`imports.index.tsx`, `imports.$importId.tsx`).
 
 ### Composants React
@@ -495,7 +538,7 @@ Ces règles peuvent être renforcées via une règle ESLint de type `import/no-r
 
 ### Stores Zustand
 
-- Hook exporté par le store nommé `use<Domaine>Store` — `useUiStore`, `useImportWizardStore`.
+- Hook exporté par le store nommé `use<Domaine>Store` — `useUiStore`, `useImportAssistantStore`.
 - Un store expose son état et ses actions dans une seule interface (`<Domaine>State`), pas de logique métier complexe dans les actions : une action modifie l'état, elle n'appelle pas l'API (cela reste le rôle de TanStack Query, éventuellement orchestré depuis un hook de feature qui combine store + mutation).
 - Toute consommation d'un store en dehors du fichier qui le définit passe par un sélecteur (`useStore((s) => s.field)`), jamais par une déstructuration de l'état complet.
 

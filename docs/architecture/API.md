@@ -1,7 +1,7 @@
 # AgentLen — Contrat d'API v1
 
 > **Ce document est le contrat avec l'équipe frontend.** Toute évolution passe par une PR sur ce fichier, relue par les deux équipes, **avant** implémentation.
-> L'OpenAPI généré par FastAPI est disponible sur `/docs` et `/openapi.json` et doit rester conforme à ce document.
+> L'OpenAPI généré par FastAPI est disponible **sans clé** sur `/docs`, `/redoc` et `/openapi.json` et doit rester conforme à ce document (voir [Authentification](#authentification)).
 
 Préfixe : `/api/v1` · Format : JSON · Horodatages : ISO 8601 UTC · Durées : millisecondes
 
@@ -27,14 +27,51 @@ Toutes les erreurs partagent la même enveloppe :
 | HTTP | Signification |
 |---|---|
 | `400` | Requête malformée |
+| `401` | Clé API manquante ou invalide (`X-API-Key`) |
 | `404` | Ressource inexistante |
 | `409` | Conflit (fichier déjà importé avec ce mapping) |
 | `422` | Validation métier échouée (mapping invalide, format non supporté) |
 | `502` | Le fournisseur IA a échoué ou renvoyé une réponse non conforme |
+| `504` | L'analyse IA a dépassé son délai total (`ANALYZER_TIMEOUT`, `AI_TOTAL_TIMEOUT_SECONDS`) |
+
+### Authentification
+
+Toutes les routes exigent le header `X-API-Key`, dont la valeur est celle de la variable d'environnement `API_KEY`. Cette clé authentifie **l'application front**, pas une personne : elle est unique et partagée, au niveau de tout le service.
+
+L'authentification **par personne** (compte e-mail/mot de passe, jeton de session) est une couche distincte, ajoutée par-dessus — voir [§10 Authentification utilisateur](#10-authentification-utilisateur-comptes). `X-API-Key` reste exigé sur `/auth/*` comme sur toute autre route.
+
+Exceptions (sans clé) :
+
+- `GET /health` et `GET /api/v1/health` — sonde de vivacité
+- `GET /version` et `GET /api/v1/version` — version applicative seule, sans accès à la base
+- `GET /docs`, `GET /redoc` et `GET /openapi.json` — documentation interactive et schéma
+
+La documentation est publique par choix : un navigateur qui ouvre `/docs` ne peut pas joindre de header, donc une documentation protégée serait inutilisable ; elle ne décrit que des routes qui exigent toujours la clé, et la clé du front est de toute façon livrée au navigateur. Le schéma déclare les deux mécanismes, sans rien changer à leur application : `ApiKeyAuth` (header `X-API-Key`, exigé partout sauf ci-dessus) et `BearerAuth` (en plus de la clé, sur les routes qui exigent un jeton de session, §10). Chaque opération y documente l'enveloppe d'erreur pour `401`, `500` et, selon la route, `400`, `404`, `409`, `422`, `502` et `504`.
+
+Une clé absente ou invalide renvoie `401` :
+
+```json
+{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "Clé API manquante ou invalide.",
+    "field_path": null,
+    "details": {}
+  }
+}
+```
+
+Le navigateur n'envoie pas ce header et ne connaît pas la clé : le proxy placé devant l'API l'ajoute à chaque appel `/api` — nginx dans la stack Docker, le proxy Vite avec `npm run dev`, tous deux depuis `API_KEY` (ADR-013). Un client qui appelle l'API directement, sans ce proxy, fournit la clé lui-même. Les origines autorisées pour le CORS sont `ALLOWED_ORIGINS` (liste séparée par des virgules, `http://localhost:5173` en développement).
 
 ### Pagination
 
-`?limit=50&offset=0` — réponses enveloppées : `{ "items": [...], "total": 1240, "limit": 50, "offset": 0 }`
+`?limit=50&offset=0` — réponses enveloppées : `{ "items": [...], "total": 1240, "limit": 50, "offset": 0 }`. `limit` va de 1 à 200.
+
+**Exceptions : tableaux nus bornés.** `GET /data-sources` et `GET /sessions/{id}/timeline` renvoient un tableau JSON, pas l'enveloppe, pour ne pas casser les écrans qui les consomment déjà. Ils restent bornés : mêmes paramètres `limit` (1 à 200, **200 par défaut**) et `offset`, et l'en-tête `X-Total-Count` donne le total avant fenêtrage. Le front sait ainsi qu'une réponse a été tronquée lorsque `X-Total-Count` dépasse la longueur du tableau.
+
+### Identifiants
+
+Les identifiants de chemin (`/files/{id}`, `/sessions/{id}`, `/records/{raw_record_id}`…) et de filtre (`data_source_id`, `agent_id`, `model_id`, `tool_id`, `import_run_id`) sont des entiers de `1` à `2^63 - 1` (BIGINT). Hors de cette plage, la réponse est `400` `MALFORMED_REQUEST`, jamais `500`.
 
 ### Valeurs absentes
 
@@ -45,7 +82,10 @@ Une valeur inconnue est **`null`**, jamais `0`. Les agrégats sont accompagnés 
   "coverage": { "present": 812, "total": 1000, "ratio": 0.812 } }
 ```
 
-Le front doit afficher un indicateur de couverture partielle lorsque `ratio < 1`.
+`ratio` vaut `null` lorsque le périmètre est vide (`total = 0`) : la couverture
+est alors inconnue, et non nulle. Le front doit tester ce cas avant de comparer,
+puis afficher un indicateur de couverture partielle lorsque `ratio` est non
+`null` et `< 1`.
 
 ---
 
@@ -68,6 +108,12 @@ Le front doit afficher un indicateur de couverture partielle lorsque `ratio < 1`
 ```
 
 `already_seen: true` signale que le même contenu a déjà été déposé — le front doit avertir l'utilisateur avant de relancer un import.
+
+Refus :
+
+- `422 FILE_TOO_LARGE` au-delà de `MAX_UPLOAD_SIZE_MB` (512 Mo par défaut). Le corps est lu au fil de l'envoi : il est refusé avant toute lecture si `Content-Length` annonce plus que la limite, sinon dès que le flux la dépasse. Aucun fichier partiel ne reste sur le disque.
+- `422 UNSUPPORTED_FILE_FORMAT` : extension non autorisée ou contenu qui ne correspond à aucun format reconnu.
+- `400 MALFORMED_REQUEST` : corps qui n'est pas du `multipart/form-data` ou sans champ `file`.
 
 **`POST /files/{id}/profile` → `200`**
 
@@ -107,6 +153,11 @@ Le front doit afficher un indicateur de couverture partielle lorsque `ratio < 1`
 ```
 
 **`POST /mappings/proposals`** — corps : `{ "file_id": 12, "data_source_id": 3, "provider": null, "model": null, "hint": null }`. `provider`/`model` à `null` = configuration active du serveur.
+
+- `provider` doit appartenir au registre (`anthropic`, `fake`, `openai`, `openai_compatible`, les valeurs de `GET /ai/providers`). Sinon : `400` `MALFORMED_REQUEST`, `field_path` `body.provider`, et le message liste les valeurs acceptées. Le refus a lieu avant toute construction d'adaptateur ; ce n'est plus un `502`.
+- `model` est un texte libre : chaque hôte publie ses propres identifiants, et le serveur ne peut pas en tenir la liste (ADR-006). Il est borné à 200 caractères, sans espace ni caractère de contrôle. Un identifiant inconnu du fournisseur reste un `502`. `model` est **obligatoire dès que `provider` est renseigné** (`400`, `field_path` `body.model`) : le modèle configuré appartient au fournisseur configuré.
+- `AI_BASE_URL` ne s'applique qu'au fournisseur configuré. Un autre fournisseur choisi par requête utilise le point d'accès par défaut de son adaptateur ; la clé d'un fournisseur ne part jamais vers l'hôte d'un autre. Choisir `openai_compatible` quand il n'est pas le fournisseur configuré donne donc un `502` (pas d'hôte).
+- Une proposition, comme un raffinement (`POST /mappings/proposals/{id}/messages`), doit se terminer en `AI_TOTAL_TIMEOUT_SECONDS` (défaut `540`, sous les 600 s du proxy nginx), toutes itérations et tentatives comprises. Au-delà, l'analyse est interrompue, rien n'est enregistré, et l'API répond `504` `ANALYZER_TIMEOUT` avec `details.total_timeout_seconds`. Comme pour un `502`, le front peut proposer de relancer.
 
 Réponse `200` :
 
@@ -180,6 +231,30 @@ Réponse `200` :
 **`POST /imports` → `202`** : `{ "import_run_id": 88, "status": "pending" }`.
 Le front interroge ensuite `GET /imports/{id}` (intervalle suggéré : 1 s).
 
+**Ce que la route refuse.** Les trois identifiants existent n'est pas la même
+chose qu'ils vont ensemble. `session` est unique sur
+`(data_source_id, external_id)` : la source fait partie de l'identité d'une
+session, donc importer sous la mauvaise déduplique dans le mauvais espace de
+noms et attribue aux lignes une provenance fausse.
+
+| Cas | Statut | `code` |
+|---|---|---|
+| Source, fichier ou mapping inexistant | `404` | `NOT_FOUND` |
+| Le mapping appartient à une autre source | `422` | `MAPPING_SOURCE_MISMATCH` |
+| Le mapping est `superseded` ou `draft` | `422` | `MAPPING_NOT_ACTIVE` |
+| Le mapping lit un autre format que le fichier | `422` | `MAPPING_FORMAT_MISMATCH` |
+| Ce fichier a déjà un run `pending`, `running` ou `succeeded` avec ce mapping | `409` | `CONFLICT` |
+
+**La règle de réimport.** Le `409` est borné à ces trois statuts, pas à
+« un run existe ». Relancer après `failed`, `partial` ou `cancelled` est
+**autorisé** : c'est le chemin de reprise après un worker interrompu, et le
+moteur d'import est idempotent — rejouer relit le fichier et n'écrit rien qui
+soit déjà là.
+
+Cela n'entre pas en conflit avec le « Import it anyway » de l'assistant : celui-ci
+porte sur un fichier dont le *contenu* est déjà connu (même empreinte), pas sur
+une paire fichier + mapping déjà importée.
+
 **`GET /imports/{id}` → `200`**
 
 ```json
@@ -198,6 +273,21 @@ Le front interroge ensuite `GET /imports/{id}` (intervalle suggéré : 1 s).
 ```
 
 `fields_missing` alimente directement la vue « qualité des données » du dashboard.
+
+**`GET /imports/{id}/issues?severity=rejected` → `200`**
+
+```json
+{
+  "items": [
+    { "line_number": 42, "raw_record_id": 51234, "severity": "rejected",
+      "code": "CAST_FAILED", "field_path": "$.usage.input_tokens",
+      "message": "Impossible de convertir \"n/a\" en entier." }
+  ],
+  "total": 23, "limit": 50, "offset": 0
+}
+```
+
+`line_number` est lu sur le `raw_record` auquel l'issue est reliée ; `raw_record_id` ouvre l'enregistrement source brut sur `GET /records/{raw_record_id}` (§6). Les deux valent `null` pour une issue qui ne concerne aucune ligne précise (ex. `ALREADY_IMPORTED`, émise par lot).
 
 ---
 
@@ -268,7 +358,10 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
       "coverage": { "present": 1090, "total": 1240, "ratio": 0.879 } },
     { "key": "cache_read_ratio", "value": null, "unit": "ratio",
       "coverage": { "present": 0, "total": 1240, "ratio": 0.0 },
-      "warning": "Indicateur non disponible pour cette source." }
+      "warning": "Indicateur non disponible pour cette source." },
+    { "key": "tool_error_rate", "value": null, "unit": "ratio",
+      "coverage": { "present": 0, "total": 0, "ratio": null },
+      "warning": "Aucun appel d'outil sur ce périmètre." }
   ]
 }
 ```
@@ -292,16 +385,55 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
 | Méthode | Chemin | Description |
 |---|---|---|
 | `GET` | `/health` | Vivacité |
-| `GET` | `/health/ready` | Base accessible, migrations à jour, worker actif |
-| `GET` | `/version` | Version applicative et révision Alembic |
+| `GET` | `/health/ready` | Base accessible, migrations à jour, worker actif ; révisions `alembic_revision` (appliquée) et `alembic_head` (livrée). Protégée par la clé |
+| `GET` | `/version` | Version applicative seule (`{"version": "0.1.0"}`) : publique, sans accès à la base ni révision de schéma |
 
 ---
 
 ## 9. Points d'attention pour l'équipe frontend
 
 1. **Les imports sont asynchrones.** `POST /imports` renvoie `202` ; l'état s'obtient par polling sur `GET /imports/{id}`.
-2. **`null` n'est pas `0`.** Un indicateur `null` avec `coverage.ratio = 0` signifie *non disponible* et doit s'afficher comme tel, pas comme une valeur nulle.
+2. **`null` n'est pas `0`.** Un indicateur `null` signifie *non disponible* et doit s'afficher comme tel, pas comme une valeur nulle. Distinguer les deux couvertures possibles : `coverage.ratio = 0` signifie *mesuré, et aucune donnée ne porte cet indicateur* ; `coverage.ratio = null` (avec `total = 0`) signifie *rien à mesurer dans ce périmètre*, la couverture elle-même est inconnue.
 3. **`comparability: per_source_only`** interdit l'agrégation multi-sources. L'API renvoie un `warning` que le front doit rendre visible.
 4. **Le drill-down est fourni clé en main** via l'objet `filters` de chaque point.
-5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé API ne quitte le serveur, aucune n'est livrée au navigateur.
+5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé de fournisseur IA ne quitte le serveur, aucune n'est livrée au navigateur. La clé `X-API-Key` d'AgentLen est distincte, et n'est pas livrée au navigateur non plus : le proxy du front l'ajoute à chaque appel (§1).
 6. **Toujours proposer la prévisualisation avant l'import.** `POST /imports/preview` n'écrit rien et sert de garde-fou avant validation.
+7. **Chaque requête authentifiée porte `X-API-Key`.** Seuls `/health`, `/version` et la documentation (`/docs`, `/redoc`, `/openapi.json`) en sont exemptés. Le code du front ne l'ajoute jamais : c'est le proxy (nginx ou Vite) qui s'en charge.
+
+---
+
+## 10. Authentification utilisateur (comptes)
+
+Couche distincte de `X-API-Key` (§1) : ces routes identifient **une personne**, pas l'application. Toutes exigent quand même `X-API-Key`, comme le reste de l'API.
+
+| Méthode | Chemin | Description |
+|---|---|---|
+| `POST` | `/auth/register` | Crée un compte (e-mail + mot de passe) |
+| `POST` | `/auth/login` | Échange e-mail + mot de passe contre un jeton de session |
+| `POST` | `/auth/logout` | Invalide le jeton de session courant |
+| `GET` | `/auth/me` | Le compte associé au jeton de session courant |
+
+**`POST /auth/register` → `201`**
+
+```json
+{ "id": 1, "email": "alice@example.com", "created_at": "2026-09-10T12:00:00Z" }
+```
+
+Ni `password` ni son hash n'apparaissent jamais dans une réponse. `409` (`CONFLICT`) si l'e-mail est déjà utilisé : le message ne répète pas l'adresse et `details` est vide. Le statut, lui, indique encore qu'un compte existe — le masquer demanderait une vérification par e-mail, que l'application n'a pas. `422` (`INVALID_EMAIL` / `WEAK_PASSWORD`) si l'e-mail ou le mot de passe échoue à la validation.
+
+**Longueurs maximales (`/auth/register` et `/auth/login`).** `email` : 254 caractères. `password` : 72 octets en UTF-8, la limite de bcrypt (un caractère accentué en compte deux). Au-delà, la requête est refusée avant tout traitement par `400` `MALFORMED_REQUEST`, avec `field_path` à `body.email` ou `body.password`, et non par `422` : ces routes répondent sans session, et une valeur non bornée permettrait à n'importe qui d'occuper le serveur.
+
+**`POST /auth/login` → `200`**
+
+```json
+{ "token": "opaque-random-string",
+  "user": { "id": 1, "email": "alice@example.com", "created_at": "2026-09-10T12:00:00Z" } }
+```
+
+`401` (`INVALID_CREDENTIALS`) pour un mot de passe incorrect **ou** un compte inexistant — volontairement la même erreur, et le même temps de réponse, dans les deux cas, pour ne pas laisser deviner quels e-mails ont un compte.
+
+Le jeton est un **jeton de session opaque**, pas un JWT : la base n'en garde que le SHA-256 (`user_session.token_hash`), et la révocation au logout est un simple `DELETE`, sans clé de signature à gérer. Les sessions expirées sont purgées à chaque connexion. Il se présente en `Authorization: Bearer <token>` sur toute route protégée.
+
+**`POST /auth/logout` → `204`.** Idempotent : appeler la route sans jeton, ou avec un jeton déjà invalidé, renvoie aussi `204`.
+
+**`GET /auth/me` → `200`** avec le même corps que la partie `user` de `/auth/login`, ou `401` (`UNAUTHENTICATED`) si le jeton est absent, inconnu ou expiré (30 jours).

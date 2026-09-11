@@ -66,6 +66,8 @@ erDiagram
 | `mapping` | Une version d'une configuration d'import, applicable et réutilisable |
 | `mapping_proposal` | Une proposition produite par un modèle IA pour un fichier donné, avec le descripteur du modèle utilisé |
 | `mapping_proposal_message` | Un tour de conversation entre l'utilisateur et l'agent d'import |
+| `user` | Une personne capable de s'authentifier contre l'API (e-mail + mot de passe) |
+| `user_session` | Une connexion active, identifiée par son jeton de session opaque |
 
 ---
 
@@ -107,7 +109,7 @@ CREATE TABLE import_run (
     records_duplicate INTEGER    NOT NULL DEFAULT 0,
     records_rejected INTEGER     NOT NULL DEFAULT 0,
     fields_missing   JSONB,                        -- {champ_cible: nb_absents}
-    error_summary    TEXT,
+    error_summary    TEXT,                         -- classes d'exception, jamais leur message
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at       TIMESTAMPTZ,
     finished_at      TIMESTAMPTZ,
@@ -173,8 +175,8 @@ CREATE TABLE model (
 CREATE TABLE agent (
     id      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name    TEXT NOT NULL,                         -- 'claude-code', 'codex'
-    version TEXT,
-    UNIQUE (name, version)
+    version TEXT,                                  -- NULL : la source ne la donne pas
+    UNIQUE NULLS NOT DISTINCT (name, version)      -- une version inconnue compte pour une seule valeur
 );
 
 CREATE TABLE tool (
@@ -193,6 +195,8 @@ CREATE TABLE repository (
 ```
 
 Ces tables sont alimentées en **upsert** pendant l'import (`INSERT … ON CONFLICT DO NOTHING RETURNING id`). L'agent d'import n'a pas à les connaître : il fournit un *nom*, le normaliseur résout ou crée la référence.
+
+`agent` est la seule clé composite à colonne nullable : aucun mapping ne fournit de version aujourd'hui. Avec le `UNIQUE` par défaut, PostgreSQL tient deux `NULL` pour distincts, `ON CONFLICT` ne se déclenche jamais et chaque import recréait le même agent. D'où `NULLS NOT DISTINCT` (PostgreSQL 15+, migration 0004, qui fusionne aussi les doublons déjà stockés). Les clés de `provider`, `model`, `tool` et `repository` ne portent que des colonnes `NOT NULL` et ne sont pas concernées.
 
 ---
 
@@ -278,7 +282,7 @@ CREATE INDEX ON tool_call (model_call_id);
 Trois barrières successives :
 
 1. **Niveau fichier** — `file_upload.content_hash` unique. Le même fichier redéposé est reconnu ; l'API le signale (`already_seen: true`).
-2. **Niveau enregistrement métier** — clés naturelles `UNIQUE (data_source_id, external_id)` sur `session` et `UNIQUE (session_id, sequence_index)` sur les appels. L'insertion utilise `ON CONFLICT DO NOTHING RETURNING id` : un conflit incrémente `records_duplicate` et produit un `import_issue` de sévérité `duplicate`.
+2. **Niveau enregistrement métier** — clés naturelles `UNIQUE (data_source_id, external_id)` sur `session` et `UNIQUE (session_id, sequence_index)` sur les appels. L'insertion utilise `ON CONFLICT DO NOTHING RETURNING id`, puis relit l'identifiant des clés déjà présentes : les appels d'une session existante — lot suivant, second fichier — lui sont rattachés au lieu d'être perdus. Une clé stockée par un import précédent incrémente `records_duplicate` (une fois par session pour tout l'import, une fois par appel) et produit un `import_issue` de sévérité `duplicate`. Une session que plusieurs lignes du même import décrivent — TraceLab la répète à chaque round — reste **une** session : une insertion, aucun doublon. Un appel dont la session n'a pas pu être rattachée n'est compté ni comme importé ni comme doublon ; il produit un avertissement `PARENT_SESSION_MISSING`.
 3. **Niveau contenu** — quand une source ne fournit aucun identifiant stable, l'`external_id` est un **hash déterministe** des champs identifiants déclarés dans le mapping (`natural_key`). Deux exécutions du même contenu produisent la même clé.
 
 > Un réimport reste tracé : un nouvel `import_run` est créé avec `records_imported = 0` et `records_duplicate = n`. **L'historique des imports n'est jamais perdu**, seules les données de faits ne sont pas dupliquées.
@@ -319,6 +323,36 @@ Autres objets de lecture : `v_daily_activity` (sessions/tokens par jour et par s
 
 ---
 
-## 8. Migrations
+## 8. Authentification utilisateur
+
+Orthogonale au reste du modèle : aucune autre table ne référence `user` ou `user_session`, et ces deux-là ne référencent rien d'autre qu'elles-mêmes. C'est une couche distincte de `X-API-Key` (l'application) — voir [ARCHITECTURE.md §10](ARCHITECTURE.md#10-sécurité) et [API.md §10](API.md#10-authentification-utilisateur-comptes).
+
+```sql
+CREATE TABLE "user" (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email         TEXT        NOT NULL UNIQUE,   -- normalisé en minuscules avant écriture
+    password_hash TEXT        NOT NULL,          -- bcrypt ; jamais le mot de passe en clair
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE user_session (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    token_hash TEXT        NOT NULL UNIQUE       -- SHA-256 du jeton, jamais le jeton
+               CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+    user_id    BIGINT      NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ                       -- fixé à la connexion (30 jours)
+);
+CREATE INDEX ON user_session (user_id);
+CREATE INDEX ON user_session (expires_at);       -- purge des sessions expirées
+```
+
+**Le mot de passe n'est jamais stocké en clair.** `password_hash` est un hash bcrypt (salé automatiquement, une chaîne auto-suffisante) produit par l'adaptateur `BcryptPasswordHasher`, derrière le port `PasswordHasher` — remplaçable sans toucher aux use cases, comme `Clock` ou `StructureAnalyzer`.
+
+**Le jeton de session est opaque, pas un JWT.** Il est généré côté serveur (`secrets.token_urlsafe`) et présenté par le client en `Authorization: Bearer <token>`. `user_session` n'en garde que le SHA-256 : une lecture de la table ne donne aucune session valable. Un SHA-256 simple suffit, contrairement aux mots de passe, car le jeton est aléatoire (32 octets) : il n'y a rien à deviner. La recherche ignore les sessions expirées, purgées à chaque connexion. La révocation (`/auth/logout`) est un `DELETE` sur cette table plutôt qu'une liste de blocage à gérer en plus d'un mécanisme de signature.
+
+---
+
+## 9. Migrations
 
 Alembic, une révision par PR structurante. Les migrations sont **testées à l'aller et au retour** (`upgrade head` puis `downgrade base`) dans la CI sur un Postgres jetable. Les scripts SQL générés sont versionnés dans le dépôt, comme l'exige le sujet.
