@@ -13,7 +13,7 @@ enforced wherever a database exists.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +24,7 @@ from agentlen.application.dto.persistence import ModelCallRow, SessionRow
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
 from agentlen.domain.model.model_call import ModelCall, TokenUsage
 from agentlen.domain.model.session import Session
+from agentlen.domain.services.session_tokens import session_token_digest
 from agentlen.infrastructure.persistence.engine import to_async_url
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tests.fakes.repositories import InMemoryUnitOfWork
@@ -308,6 +309,73 @@ async def test_a_call_whose_session_is_unknown_is_unlinked_not_a_duplicate(uow: 
         assert outcome.duplicate_count == 0
         assert outcome.unlinked == (orphan.entity.id,)
         await uow.commit()
+
+
+@pytest.mark.parametrize("bind_limit", [32_767, 40], ids=["one-statement", "split"])
+async def test_outcomes_do_not_depend_on_how_many_statements_a_batch_takes(
+    uow: Any, bind_limit: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#136. asyncpg binds at most 32 767 parameters per statement, so the SQL
+    side splits large batches. Forty parameters is a few rows per INSERT and
+    twenty keys per lookup: RETURNING, stored keys, in-batch repeats and orphans
+    all cross a slice boundary, and must still be counted as in one statement."""
+    from agentlen.domain.model.import_run import ImportIssue
+    from agentlen.infrastructure.persistence.repositories import sql as sql_repositories
+
+    monkeypatch.setattr(sql_repositories, "MAX_BIND_PARAMETERS", bind_limit)
+    async with uow:
+        p = await _provenance(uow)
+        earlier = [_session(p["source"], f"s{i}") for i in range(25)]
+        stored = await uow.sessions.add_many(
+            [SessionRow(entity=s, import_run_id=p["run"], raw_record_id=p["raw"]) for s in earlier]
+        )
+        first_calls = [_model_call(earlier[0], i, p["raw"]) for i in range(25)]
+        earlier_calls = await uow.model_calls.add_many(first_calls, session_ids=stored.ids)
+
+        rerun = await _second_run(uow, p)
+        batch = [_session(p["source"], f"s{i}") for i in range(30)]
+        repeat = _session(p["source"], "s27")
+        sessions = await uow.sessions.add_many(
+            [
+                SessionRow(entity=s, import_run_id=rerun, raw_record_id=p["raw"])
+                for s in [*batch, repeat]
+            ]
+        )
+        calls = [_model_call(batch[0], i, p["raw"]) for i in range(30)]
+        repeated_call = _model_call(batch[0], 27, p["raw"])
+        orphan = _model_call(_session(p["source"], "never-stored"), 0, p["raw"])
+        outcome = await uow.model_calls.add_many(
+            [*calls, repeated_call, orphan], session_ids=sessions.ids
+        )
+
+        raw = await uow.raw_records.add_many(
+            import_run_id=rerun, records=[(line, {"line": line}) for line in range(1, 31)]
+        )
+        await uow.import_issues.add_many(
+            import_run_id=rerun,
+            issues=[
+                (
+                    ImportIssue(severity="rejected", code="CAST_FAILED", message=f"m{line}"),
+                    raw[line],
+                )
+                for line in range(1, 31)
+            ],
+        )
+        await uow.commit()
+
+    assert (sessions.inserted_count, sessions.duplicate_count, len(sessions.ids)) == (5, 25, 31)
+    assert sessions.ids[repeat.id] == sessions.assigned[batch[27].id]
+    assert sessions.ids[batch[3].id] == stored.assigned[earlier[3].id]
+    assert (outcome.inserted_count, outcome.duplicate_count) == (5, 26)
+    assert outcome.unlinked == (orphan.entity.id,)
+    assert outcome.ids[repeated_call.entity.id] == outcome.assigned[calls[27].entity.id]
+    assert outcome.ids[calls[3].entity.id] == earlier_calls.assigned[first_calls[3].entity.id]
+    assert sorted(raw) == list(range(1, 31))
+    async with uow:
+        listed = await uow.import_issues.list(import_run_id=rerun, limit=50)
+    assert [(r.issue.message, r.issue.line_number) for r in listed] == [
+        (f"m{line}", line) for line in range(1, 31)
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -855,3 +923,68 @@ async def test_messages_of_one_proposal_do_not_leak_into_another(uow: Any) -> No
     assert [m["content"] for m in for_first] == ["pour la première"]
     assert [m["content"] for m in for_second] == ["pour la seconde"]
     assert [m["turn_index"] for m in for_second] == [0], "turn_index is per proposal"
+
+
+# ---------------------------------------------------------------------------
+# User sessions (#151): looked up by digest, expired ones invisible and purged
+# ---------------------------------------------------------------------------
+
+NOW = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+
+
+async def test_a_session_is_found_by_its_digest_until_it_expires(uow: Any) -> None:
+    digest = session_token_digest("the-token")
+    async with uow:
+        user = await uow.users.create(email="alice@example.com", password_hash="h")
+        await uow.user_sessions.create(
+            user_id=user.id, token_hash=digest, expires_at=NOW + timedelta(hours=1)
+        )
+        await uow.commit()
+
+    async with uow:
+        active = await uow.user_sessions.get_active_by_token_hash(digest, now=NOW)
+        at_expiry = await uow.user_sessions.get_active_by_token_hash(
+            digest, now=NOW + timedelta(hours=1)
+        )
+        unknown = await uow.user_sessions.get_active_by_token_hash(
+            session_token_digest("never-issued"), now=NOW
+        )
+        await uow.user_sessions.delete_by_token_hash(session_token_digest("never-issued"))
+
+    assert active is not None
+    assert (active.user_id, active.token_hash) == (user.id, digest)
+    assert at_expiry is None
+    assert unknown is None
+
+
+async def test_purging_removes_only_expired_sessions(uow: Any) -> None:
+    expiries = {
+        "expired": NOW - timedelta(seconds=1),
+        "expires-now": NOW,
+        "active": NOW + timedelta(days=1),
+        "never-expires": None,
+    }
+    async with uow:
+        user = await uow.users.create(email="alice@example.com", password_hash="h")
+        for name, expires_at in expiries.items():
+            await uow.user_sessions.create(
+                user_id=user.id, token_hash=session_token_digest(name), expires_at=expires_at
+            )
+        await uow.commit()
+
+    async with uow:
+        removed = await uow.user_sessions.delete_expired(now=NOW)
+        await uow.commit()
+
+    long_ago = NOW - timedelta(days=365)
+    async with uow:
+        remaining = {
+            name
+            for name in expiries
+            if await uow.user_sessions.get_active_by_token_hash(
+                session_token_digest(name), now=long_ago
+            )
+        }
+
+    assert removed == 2
+    assert remaining == {"active", "never-expires"}

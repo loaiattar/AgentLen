@@ -9,6 +9,7 @@ from agentlen.infrastructure.ai.factory import (
     UnsupportedProviderError,
     build_structure_analyzer,
     provider_status,
+    settings_for_request,
     supported_providers,
 )
 from agentlen.infrastructure.config.settings import AISettings, ProviderKeys
@@ -99,6 +100,30 @@ def test_openai_compatible_requires_a_base_url() -> None:
     with pytest.raises(AnalyzerError) as exc:
         analyzer._endpoint()  # type: ignore[attr-defined]
     assert "AI_BASE_URL" in str(exc.value)
+
+
+def test_a_provider_picked_per_request_never_reaches_the_configured_host() -> None:
+    """#191, P1. With `openai_compatible` pointed at a third-party host, a
+    request asking for `anthropic` carried AI_BASE_URL over and sent
+    ANTHROPIC_API_KEY to that host."""
+    configured = AISettings(
+        provider="openai_compatible", model="m", base_url="https://third-party.example/v1"
+    )
+
+    selected = settings_for_request(configured, "anthropic", "other-model")
+    analyzer = build_structure_analyzer(selected, KEYS)
+
+    assert analyzer._endpoint() == "https://api.anthropic.com/v1/messages"  # type: ignore[attr-defined]
+    assert analyzer.descriptor["model"] == "other-model"
+
+
+def test_the_configured_provider_keeps_its_host_per_request() -> None:
+    """Only a change of provider drops the host."""
+    configured = AISettings(provider="openai_compatible", model="m", base_url="https://h/v1")
+
+    for provider, model in (("openai_compatible", "other"), (None, "other"), (None, None)):
+        selected = settings_for_request(configured, provider, model)
+        assert (selected.base_url, selected.model) == ("https://h/v1", model or "m")
 
 
 def test_openai_keeps_its_default_endpoint() -> None:

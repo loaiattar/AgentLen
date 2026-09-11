@@ -47,14 +47,6 @@ export function formatOutcome(outcome: string | null | undefined): string {
   return outcome
 }
 
-export function formatFilterValue(key: string, value: string | number): string {
-  if (key === 'date_from' || key === 'date_to') {
-    const formatted = formatInstant(String(value))
-    return formatted === MISSING_VALUE ? String(value) : formatted
-  }
-  return String(value)
-}
-
 export const STATUS_FILTERS: Array<{ id: SessionStatus | undefined; label: string }> = [
   { id: undefined, label: 'All statuses' },
   { id: 'completed', label: 'Completed' },

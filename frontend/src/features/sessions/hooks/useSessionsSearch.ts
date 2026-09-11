@@ -2,15 +2,18 @@ import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 
 import {
+  DRILL_DOWN_KEYS,
+  EXPLORATION_KEYS,
+  readDateRange,
   searchToDashboardFilters,
   SESSION_PAGE_SIZE,
+  withoutIgnoredDates,
+  withoutSearchKeys,
   type MetricsSearch,
   type SessionStatus,
 } from '@/features/dashboard/lib/filters'
 
 const appRoute = getRouteApi('/_app')
-
-const DRILL_DOWN_KEYS = ['agent_id', 'model_id', 'tool_id', 'import_run_id', 'date_from', 'date_to'] as const
 
 export function useSessionsSearch() {
   const search = appRoute.useSearch()
@@ -23,47 +26,25 @@ export function useSessionsSearch() {
     void navigate({ to: '/sessions', search: patch })
   }
 
-  const resetOffset = (next: MetricsSearch): MetricsSearch => {
-    const copy = { ...next }
-    delete copy.offset
-    return copy
-  }
-
   return {
     search,
     filters,
     limit,
     offset,
+    // Every filter narrows the list, the header's dataset and period included.
+    hasActiveFilters: Object.keys(filters).length > 0,
+    // Dates stay raw in `search` (see `parseMetricsSearch`), so the page can say what it ignores.
+    ignoredDates: readDateRange(search).ignored,
     setStatus: (status: SessionStatus | undefined) => {
       patchSearch((prev) => {
-        const next: MetricsSearch = { ...prev }
-        if (status == null) delete next.status
-        else next.status = status
-        return resetOffset(next)
+        const next = withoutSearchKeys(prev, ['status'])
+        return status == null ? next : { ...next, status }
       })
     },
-    clearKey: (key: (typeof DRILL_DOWN_KEYS)[number]) => {
-      patchSearch((prev) => {
-        const next: MetricsSearch = { ...prev }
-        delete next[key]
-        if (key === 'date_from' || key === 'date_to') delete next.period
-        return resetOffset(next)
-      })
-    },
-    clearExploration: () => {
-      patchSearch((prev) => {
-        const next: MetricsSearch = { ...prev }
-        delete next.agent_id
-        delete next.model_id
-        delete next.tool_id
-        delete next.import_run_id
-        delete next.date_from
-        delete next.date_to
-        delete next.status
-        delete next.period
-        return resetOffset(next)
-      })
-    },
+    clearKey: (key: (typeof DRILL_DOWN_KEYS)[number]) => patchSearch((prev) => withoutSearchKeys(prev, [key])),
+    clearFilters: () =>
+      patchSearch((prev) => withoutSearchKeys(prev, [...EXPLORATION_KEYS, 'period', 'data_source_id'])),
+    dropIgnoredDates: () => patchSearch(withoutIgnoredDates),
     setOffset: (nextOffset: number) => {
       patchSearch((prev) => {
         const next: MetricsSearch = { ...prev }

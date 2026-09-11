@@ -11,13 +11,13 @@ COMPOSE = docker compose -f docker/docker-compose.yml --project-directory .
 .PHONY: setup push ci ci-watch ci-logs lint format test test-all help \
 	up down migrate seed logs
 
-## setup: one-time install — makes `git push` auto-stream CI (run after cloning)
+## setup: one-time check of the gh CLI used by push, ci and ci-watch (run after cloning)
 setup:
 	@bash .github/scripts/install-hooks.sh
 
-## push: push current branch and live-stream CI (fallback if setup wasn't run)
+## push: push current branch and live-stream the CI run of that commit  →  make push ARGS="-u origin HEAD"
 push:
-	@bash .github/scripts/git-push.sh
+	@bash .github/scripts/git-push.sh $(ARGS)
 
 ## ci: show CI status for your current branch
 ci:
@@ -50,6 +50,10 @@ test:
 ## test-all: every test, including integration and e2e (needs Docker or TEST_DATABASE_URL)
 test-all:
 	pytest -q
+
+## test-acceptance: only the six tests the brief requires, named after the requirements
+test-acceptance:
+	pytest -m acceptance -v
 
 ## up: start db + api + worker + frontend (http://localhost:8080), building images if needed
 up:

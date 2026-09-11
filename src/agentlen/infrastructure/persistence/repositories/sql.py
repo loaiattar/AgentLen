@@ -3,8 +3,9 @@
 Three rules run through the whole module:
 
 **Insert in batches.** An import is tens of thousands of rows; one statement per
-row spends the whole run on round trips. Every write here is a single
-`INSERT ... VALUES (...), (...), ...`.
+row spends the whole run on round trips. Every write here is a multi-row
+`INSERT ... VALUES (...), (...), ...`, split into several statements only when
+the batch would bind more parameters than asyncpg accepts (`_insert_many`).
 
 **Conflicts are answers, not errors.** Natural-key collisions use
 `ON CONFLICT DO NOTHING RETURNING id`. Re-importing a file is expected, so a
@@ -17,11 +18,12 @@ identifier comes from a request — the target schema is closed and known.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, tuple_
+from sqlalchemy import delete, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -42,6 +44,48 @@ from agentlen.domain.model.import_run import ImportIssue, ImportReport
 from agentlen.domain.model.mapping import Mapping, MappingProposal
 from agentlen.domain.model.session import Session
 from agentlen.infrastructure.persistence import tables as t
+
+# asyncpg numbers bind parameters with a signed 16-bit integer: one statement
+# accepts at most 32 767 of them. A module constant so tests can lower it.
+MAX_BIND_PARAMETERS = 32_767
+
+
+def _slices[T](items: list[T], width: int) -> Iterator[list[T]]:
+    """Consecutive slices of `items`, each small enough for one statement.
+
+    `width` is what one item binds: a table's column count for an INSERT row
+    (an upper bound, a column left out binds nothing) or a key's arity for a
+    tuple `IN` lookup.
+    """
+    size = max(1, MAX_BIND_PARAMETERS // width)
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
+async def _insert_many(
+    conn: AsyncConnection,
+    table: Any,
+    values: list[dict[str, Any]],
+    *,
+    constraint: str | None = None,
+    returning: tuple[Any, ...] = (),
+) -> list[Any]:
+    """`INSERT ... VALUES` in as many statements as the bind limit requires.
+
+    Slices keep the rows' order and share the caller's transaction, and the
+    RETURNING rows of every statement are concatenated: callers reconcile, count
+    and roll back a split batch exactly as they would a single statement.
+    """
+    returned: list[Any] = []
+    for chunk in _slices(values, len(table.c)):
+        statement = insert(table).values(chunk)
+        if constraint is not None:
+            statement = statement.on_conflict_do_nothing(constraint=constraint)
+        if returning:
+            returned.extend((await conn.execute(statement.returning(*returning))).all())
+        else:
+            await conn.execute(statement)
+    return returned
 
 
 class _Base:
@@ -76,16 +120,14 @@ class SqlAlchemySessionRepository(_Base):
             }
             for r in candidates.values()
         ]
-        statement = (
-            insert(t.session)
-            .values(values)
-            .on_conflict_do_nothing(constraint="uq_session_source_external")
-            .returning(t.session.c.id, t.session.c.data_source_id, t.session.c.external_id)
+        inserted = await _insert_many(
+            self._conn,
+            t.session,
+            values,
+            constraint="uq_session_source_external",
+            returning=(t.session.c.id, t.session.c.data_source_id, t.session.c.external_id),
         )
-        written = {
-            (r.data_source_id, r.external_id): r.id
-            for r in (await self._conn.execute(statement)).all()
-        }
+        written = {(r.data_source_id, r.external_id): r.id for r in inserted}
         # RETURNING only yields the rows actually inserted: every other key is
         # already stored, and its children still need that row's id.
         stored = await self._stored([key for key in candidates if key not in written])
@@ -111,18 +153,18 @@ class SqlAlchemySessionRepository(_Base):
 
     async def _stored(self, keys: list[tuple[int, str]]) -> dict[tuple[int, str], tuple[int, int]]:
         """Id and import run of the sessions already holding these natural keys."""
-        if not keys:
-            return {}
-        query = select(
-            t.session.c.id,
-            t.session.c.data_source_id,
-            t.session.c.external_id,
-            t.session.c.import_run_id,
-        ).where(tuple_(t.session.c.data_source_id, t.session.c.external_id).in_(keys))
-        return {
-            (r.data_source_id, r.external_id): (r.id, r.import_run_id)
-            for r in (await self._conn.execute(query)).all()
-        }
+        found: dict[tuple[int, str], tuple[int, int]] = {}
+        # Each key binds two parameters: a large re-import hits the limit here too.
+        for chunk in _slices(keys, 2):
+            query = select(
+                t.session.c.id,
+                t.session.c.data_source_id,
+                t.session.c.external_id,
+                t.session.c.import_run_id,
+            ).where(tuple_(t.session.c.data_source_id, t.session.c.external_id).in_(chunk))
+            for r in (await self._conn.execute(query)).all():
+                found[(r.data_source_id, r.external_id)] = (r.id, r.import_run_id)
+        return found
 
     async def get(self, session_id: int) -> Session | None:
         row = (
@@ -205,16 +247,14 @@ class SqlAlchemyModelCallRepository(_Base):
             }
             for r, sid in candidates.values()
         ]
-        statement = (
-            insert(t.model_call)
-            .values(values)
-            .on_conflict_do_nothing(constraint="uq_model_call_session_sequence")
-            .returning(t.model_call.c.id, t.model_call.c.session_id, t.model_call.c.sequence_index)
+        inserted = await _insert_many(
+            self._conn,
+            t.model_call,
+            values,
+            constraint="uq_model_call_session_sequence",
+            returning=(t.model_call.c.id, t.model_call.c.session_id, t.model_call.c.sequence_index),
         )
-        written = {
-            (r.session_id, r.sequence_index): r.id
-            for r in (await self._conn.execute(statement)).all()
-        }
+        written = {(r.session_id, r.sequence_index): r.id for r in inserted}
         stored = await _stored_calls(
             self._conn, t.model_call, [key for key in candidates if key not in written]
         )
@@ -252,16 +292,14 @@ class SqlAlchemyToolCallRepository(_Base):
             }
             for r, sid in candidates.values()
         ]
-        statement = (
-            insert(t.tool_call)
-            .values(values)
-            .on_conflict_do_nothing(constraint="uq_tool_call_session_sequence")
-            .returning(t.tool_call.c.id, t.tool_call.c.session_id, t.tool_call.c.sequence_index)
+        inserted = await _insert_many(
+            self._conn,
+            t.tool_call,
+            values,
+            constraint="uq_tool_call_session_sequence",
+            returning=(t.tool_call.c.id, t.tool_call.c.session_id, t.tool_call.c.sequence_index),
         )
-        written = {
-            (r.session_id, r.sequence_index): r.id
-            for r in (await self._conn.execute(statement)).all()
-        }
+        written = {(r.session_id, r.sequence_index): r.id for r in inserted}
         stored = await _stored_calls(
             self._conn, t.tool_call, [key for key in candidates if key not in written]
         )
@@ -291,12 +329,14 @@ async def _stored_calls(
     conn: AsyncConnection, table: Any, keys: list[tuple[int, int]]
 ) -> dict[tuple[int, int], int]:
     """Id of the calls already holding these (session, sequence) keys."""
-    if not keys:
-        return {}
-    query = select(table.c.id, table.c.session_id, table.c.sequence_index).where(
-        tuple_(table.c.session_id, table.c.sequence_index).in_(keys)
-    )
-    return {(r.session_id, r.sequence_index): r.id for r in (await conn.execute(query)).all()}
+    found: dict[tuple[int, int], int] = {}
+    for chunk in _slices(keys, 2):
+        query = select(table.c.id, table.c.session_id, table.c.sequence_index).where(
+            tuple_(table.c.session_id, table.c.sequence_index).in_(chunk)
+        )
+        for r in (await conn.execute(query)).all():
+            found[(r.session_id, r.sequence_index)] = r.id
+    return found
 
 
 def _call_outcome(
@@ -343,13 +383,13 @@ class SqlAlchemyRawRecordRepository(_Base):
             }
             for line_number, payload in records
         ]
-        statement = (
-            insert(t.raw_record)
-            .values(values)
-            .on_conflict_do_nothing(constraint="uq_raw_record_run_line")
-            .returning(t.raw_record.c.id, t.raw_record.c.line_number)
+        returned = await _insert_many(
+            self._conn,
+            t.raw_record,
+            values,
+            constraint="uq_raw_record_run_line",
+            returning=(t.raw_record.c.id, t.raw_record.c.line_number),
         )
-        returned = (await self._conn.execute(statement)).all()
         return {r.line_number: r.id for r in returned}
 
 
@@ -437,20 +477,20 @@ class SqlAlchemyImportIssueRepository(_Base):
     ) -> None:
         if not issues:
             return
-        await self._conn.execute(
-            insert(t.import_issue).values(
-                [
-                    {
-                        "import_run_id": import_run_id,
-                        "raw_record_id": raw_record_id,
-                        "severity": issue.severity,
-                        "code": issue.code,
-                        "field_path": issue.field_path,
-                        "message": issue.message,
-                    }
-                    for issue, raw_record_id in issues
-                ]
-            )
+        await _insert_many(
+            self._conn,
+            t.import_issue,
+            [
+                {
+                    "import_run_id": import_run_id,
+                    "raw_record_id": raw_record_id,
+                    "severity": issue.severity,
+                    "code": issue.code,
+                    "field_path": issue.field_path,
+                    "message": issue.message,
+                }
+                for issue, raw_record_id in issues
+            ],
         )
 
     async def list(
@@ -975,10 +1015,11 @@ class SqlAlchemyUserRepository(_Base):
         except IntegrityError as exc:
             # Defense in depth: the use case already checks get_by_email
             # first, this only fires on a genuine race between two concurrent
-            # registrations for the same address.
+            # registrations for the same address. The message does not echo
+            # the address (same wording as RegisterUser).
             raise ConflictError(
-                f"Un compte existe déjà pour l'adresse '{email}'.",
-                details={"email": email},
+                "Impossible de créer un compte avec cette adresse e-mail. "
+                "Si elle vous appartient, connectez-vous."
             ) from exc
         return _to_user(row)
 
@@ -994,28 +1035,41 @@ def _to_user(row: Any) -> UserRecord:
 
 class SqlAlchemyUserSessionRepository(_Base):
     async def create(
-        self, *, user_id: int, token: str, expires_at: datetime | None
+        self, *, user_id: int, token_hash: str, expires_at: datetime | None
     ) -> UserSessionRecord:
         statement = (
             insert(t.user_session)
-            .values(user_id=user_id, token=token, expires_at=expires_at)
+            .values(user_id=user_id, token_hash=token_hash, expires_at=expires_at)
             .returning(t.user_session)
         )
         row = (await self._conn.execute(statement)).mappings().one()
         return _to_user_session(row)
 
-    async def get_by_token(self, token: str) -> UserSessionRecord | None:
-        query = select(t.user_session).where(t.user_session.c.token == token)
+    async def get_active_by_token_hash(
+        self, token_hash: str, *, now: datetime
+    ) -> UserSessionRecord | None:
+        c = t.user_session.c
+        query = select(t.user_session).where(
+            c.token_hash == token_hash, or_(c.expires_at.is_(None), c.expires_at > now)
+        )
         row = (await self._conn.execute(query)).mappings().one_or_none()
         return _to_user_session(row) if row else None
 
-    async def delete_by_token(self, token: str) -> None:
-        await self._conn.execute(delete(t.user_session).where(t.user_session.c.token == token))
+    async def delete_by_token_hash(self, token_hash: str) -> None:
+        await self._conn.execute(
+            delete(t.user_session).where(t.user_session.c.token_hash == token_hash)
+        )
+
+    async def delete_expired(self, *, now: datetime) -> int:
+        result = await self._conn.execute(
+            delete(t.user_session).where(t.user_session.c.expires_at <= now)
+        )
+        return result.rowcount
 
 
 def _to_user_session(row: Any) -> UserSessionRecord:
     return UserSessionRecord(
-        token=row["token"],
+        token_hash=row["token_hash"],
         user_id=row["user_id"],
         created_at=row["created_at"],
         expires_at=row["expires_at"],

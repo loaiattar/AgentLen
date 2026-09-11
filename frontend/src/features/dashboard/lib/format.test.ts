@@ -143,7 +143,8 @@ describe('aggregateModels', () => {
     const points = [model({ call_count: 3 }), model({ data_source_id: 2, filters: { model_id: 5, data_source_id: 2 } })]
 
     expect(aggregateModels(points).map((item) => item.label)).toEqual(['model-a', 'model-a'])
-    expect(aggregateModels(points, { showSource: true }).map((item) => item.label)).toEqual([
+    const sources = [{ id: 1, name: 'TraceLab' }]
+    expect(aggregateModels(points, { showSource: true, sources }).map((item) => item.label)).toEqual([
       'model-a · TraceLab',
       'model-a · Source 2',
     ])
@@ -163,8 +164,9 @@ describe('aggregateTools', () => {
       filters: { tool_id: index },
     })
 
-    const items = aggregateTools([tool(1), tool(2), tool(3)], { showSource: true, limit: 2 })
+    const items = aggregateTools([tool(1), tool(2), tool(3)], { showSource: true, sources: [], limit: 2 })
 
-    expect(items.map((item) => item.label)).toEqual(['tool-3 · TraceLab', 'tool-2 · TraceLab'])
+    // A source the API did not list is named by its id, never guessed.
+    expect(items.map((item) => item.label)).toEqual(['tool-3 · Source 1', 'tool-2 · Source 1'])
   })
 })
