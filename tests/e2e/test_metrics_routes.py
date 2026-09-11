@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.dependencies import get_dashboard_queries
+from agentlen.interfaces.http.routers.metrics import CACHE_CROSS_SOURCE_WARNING
 from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 from tests.fakes.dashboard_queries import InMemoryDashboardQueries
 from tests.integration.conftest import requires_postgres
@@ -131,6 +132,75 @@ async def test_empty_scope_has_null_coverage_ratios() -> None:
     assert response.status_code == 200
     metrics = by_key(response.json())
     assert all(metric["coverage"]["ratio"] is None for metric in metrics.values())
+
+
+def _models_app(*, cache_by_source: dict[int, bool]):  # type: ignore[no-untyped-def]
+    """One session and one model call per source, cache reported or not."""
+    sessions = [
+        {"id": source, "data_source_id": source, "started_at": DAY, "duration_ms": 1000}
+        for source in cache_by_source
+    ]
+    calls = [
+        {
+            "session_id": source,
+            "model_id": source,
+            "model_name": f"m{source}",
+            "provider_name": f"p{source}",
+            "input_tokens": 10,
+            "output_tokens": 1,
+            "cache_read_tokens": 5 if has_cache else None,
+        }
+        for source, has_cache in cache_by_source.items()
+    ]
+    app = create_app(engine=create_async_engine(UNREACHABLE_URL))
+    app.dependency_overrides[get_dashboard_queries] = lambda: InMemoryDashboardQueries(
+        sessions=sessions, model_calls=calls, tool_calls=[]
+    )
+    return app
+
+
+async def test_cache_warning_fires_when_the_sources_disagree() -> None:
+    """The case the warning exists for: one source reports cache, another does not.
+
+    A total spanning both then means "the sources that bothered", not "all of
+    them", and the front has to say so rather than let the number stand alone.
+    """
+    async with asgi_client(_models_app(cache_by_source={1: True, 2: False})) as client:
+        body = (await client.get("/api/v1/metrics/models")).json()
+
+    assert body["warnings"] == [CACHE_CROSS_SOURCE_WARNING]
+
+
+async def test_cache_warning_stays_silent_when_every_source_reports_cache() -> None:
+    """The bug this pins.
+
+    The condition tested "at least one source has cache", so a scope where every
+    source reported cache at full coverage was still told the figures were
+    incomparable — which is false, and sends the reader filtering by source for
+    nothing. What makes them incomparable is the sources *disagreeing*.
+    """
+    async with asgi_client(_models_app(cache_by_source={1: True, 2: True})) as client:
+        body = (await client.get("/api/v1/metrics/models")).json()
+
+    assert body["points"], "les deux sources doivent produire un point"
+    assert all(p["coverage"]["present"] > 0 for p in body["points"])
+    assert body["warnings"] == []
+
+
+async def test_cache_warning_stays_silent_when_no_source_reports_cache() -> None:
+    """Nothing to compare is not the same thing as something incomparable."""
+    async with asgi_client(_models_app(cache_by_source={1: False, 2: False})) as client:
+        body = (await client.get("/api/v1/metrics/models")).json()
+
+    assert body["warnings"] == []
+
+
+async def test_cache_warning_stays_silent_on_a_single_source() -> None:
+    """One source is always comparable with itself."""
+    async with asgi_client(_models_app(cache_by_source={1: True})) as client:
+        body = (await client.get("/api/v1/metrics/models")).json()
+
+    assert body["warnings"] == []
 
 
 async def test_filters_are_echoed_for_drill_down(stub_client: AsyncClient) -> None:

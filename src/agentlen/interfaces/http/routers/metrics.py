@@ -163,11 +163,20 @@ async def tools(queries: DashboardQueriesDep, filters: FiltersDep) -> PointsOut[
 async def models(queries: DashboardQueriesDep, filters: FiltersDep) -> PointsOut[ModelPointOut]:
     points = await queries.model_usage(filters)
 
+    # The warning says "some sources do not provide them", so it may only be
+    # emitted when that is true: some source has cache figures and another does
+    # not. Testing "at least one source has cache" made it fire on a scope where
+    # every source reported cache at full coverage — telling the reader the
+    # numbers were incomparable when they were perfectly comparable, and sending
+    # them to filter by source for nothing.
+    #
+    # Two non-empty sets already imply two sources, so no separate count is
+    # needed.
     warnings: list[str] = []
     sources_with_cache = {p.data_source_id for p in points if p.cache_coverage.present > 0}
-    if filters.data_source_id is None and len({p.data_source_id for p in points}) > 1:
-        if sources_with_cache:
-            warnings.append(CACHE_CROSS_SOURCE_WARNING)
+    sources_without_cache = {p.data_source_id for p in points} - sources_with_cache
+    if filters.data_source_id is None and sources_with_cache and sources_without_cache:
+        warnings.append(CACHE_CROSS_SOURCE_WARNING)
 
     return PointsOut[ModelPointOut](
         filters_applied=filters.as_drill_down(),
