@@ -1,3 +1,5 @@
+import { Link } from '@tanstack/react-router'
+
 import { BentoGrid, BentoModule, BentoTitle } from '@/components/ui/Bento'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -12,8 +14,10 @@ import {
   formatFieldsMissing,
   formatRatio,
   getDefinition,
+  MISSING_VALUE,
   summarizeQuality,
 } from '@/features/dashboard/lib/format'
+import { toSessionSearch } from '@/features/dashboard/lib/filters'
 import { useMetricsFilters } from '@/features/dashboard/hooks/useMetricsFilters'
 
 export function DataQualityPage() {
@@ -138,6 +142,7 @@ export function DataQualityPage() {
               <TableHead>Rejection</TableHead>
               <TableHead>Issues</TableHead>
               <TableHead>Missing fields</TableHead>
+              <TableHead>Sessions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -153,6 +158,20 @@ export function DataQualityPage() {
                 <TableCell>{formatRatio(point.rejection_ratio)}</TableCell>
                 <TableCell>{formatCount(point.issue_count)}</TableCell>
                 <TableCell className="text-foreground-muted">{formatFieldsMissing(point.fields_missing)}</TableCell>
+                <TableCell>
+                  {point.records_imported > 0 ? (
+                    <Link
+                      to="/sessions"
+                      search={() => toSessionSearch(point.filters)}
+                      aria-label={`Sessions of import ${point.import_run_id}`}
+                      className="rounded-md text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-primary-emphasis/70"
+                    >
+                      View
+                    </Link>
+                  ) : (
+                    <span title="This import brought no record in.">{MISSING_VALUE}</span>
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
