@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import type { ReactNode } from 'react'
 
 import { AreaChart, BarList, MixLegend, Sparkline } from '@/components/ui/Chart'
 import { BentoGrid, BentoModule, BentoTitle } from '@/components/ui/Bento'
@@ -20,6 +21,8 @@ import {
   aggregateTools,
   collectDashboardWarnings,
   coverageHint,
+  dailySeries,
+  type DayBucket,
   formatCount,
   formatDay,
   formatDurationMs,
@@ -27,8 +30,7 @@ import {
   formatTokens,
   getDefinition,
   getMetric,
-  knownTokensByDay,
-  sessionsByDay,
+  hasKnownTokens,
   summarizeQuality,
 } from '@/features/dashboard/lib/format'
 import { toSessionSearch } from '@/features/dashboard/lib/filters'
@@ -40,6 +42,11 @@ function ChartEmpty({ message }: { message: string }) {
 
 const drillDownClassName =
   'grid gap-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis/70'
+
+const dayColumnClassName =
+  'block size-full rounded-sm outline-none transition-colors hover:bg-primary-soft/40 focus-visible:ring-2 focus-visible:ring-primary-emphasis/70'
+
+const UNKNOWN_MODEL_HINT = '“unknown” counts calls with no model name. Sessions cannot be filtered on it, so it opens nothing.'
 
 export function DashboardPage() {
   const { filters } = useMetricsFilters()
@@ -108,10 +115,24 @@ export function DashboardPage() {
   const avgTokens = getMetric(metrics, 'avg_tokens_per_session')
 
   const activityPoints = activity.data?.points ?? []
-  const sessionSeries = sessionsByDay(activityPoints)
-  const tokenSeries = knownTokensByDay(activityPoints)
-  const toolItems = aggregateTools(tools.data?.points ?? [])
-  const modelItems = aggregateModels(models.data?.points ?? [])
+  const days = dailySeries(activityPoints, filters)
+  const dayLabels = days.map((bucket) => formatDay(bucket.day))
+  // Without a source filter, the same tool or model name can come from several sources.
+  const showSource = filters.data_source_id == null
+  const toolItems = aggregateTools(tools.data?.points ?? [], { showSource })
+  const modelItems = aggregateModels(models.data?.points ?? [], { showSource })
+
+  const dayDrillDown = (describe: (bucket: DayBucket) => string) => (index: number, content: ReactNode) => {
+    const bucket = days[index]
+    const dayFilters = bucket?.filters
+    if (!bucket || !dayFilters) return content
+    const name = `${formatDay(bucket.day)}: ${describe(bucket)}`
+    return (
+      <Link to="/sessions" search={() => toSessionSearch(dayFilters)} aria-label={name} title={name} className={dayColumnClassName}>
+        {content}
+      </Link>
+    )
+  }
   const dashboardWarnings = collectDashboardWarnings(metrics, [activity.data, tools.data, models.data])
 
   return (
@@ -130,8 +151,14 @@ export function DashboardPage() {
       <BentoGrid>
         <BentoModule cols={2} rows={2} className="flex min-h-72 flex-col justify-between xl:min-h-80">
           <BentoTitle>Agent activity</BentoTitle>
-          {sessionSeries.length > 0 ? (
-            <AreaChart values={sessionSeries} label="Sessions per day" className="mt-6 h-44" />
+          {days.length > 0 ? (
+            <AreaChart
+              values={days.map((bucket) => bucket.sessions)}
+              xLabels={dayLabels}
+              wrapColumn={dayDrillDown((bucket) => `${formatCount(bucket.sessions)} sessions`)}
+              label="Sessions per day"
+              className="mt-6 h-44"
+            />
           ) : (
             <ChartEmpty message="No session activity for this period." />
           )}
@@ -170,8 +197,16 @@ export function DashboardPage() {
 
         <BentoModule cols={3} rows={2} className="flex min-h-64 flex-col">
           <BentoTitle>Token consumption</BentoTitle>
-          {tokenSeries.length > 0 ? (
-            <Sparkline values={tokenSeries} label="Known token volume per day" className="mt-8 h-32 flex-1" />
+          {hasKnownTokens(activityPoints) ? (
+            <Sparkline
+              values={days.map((bucket) => bucket.tokens)}
+              xLabels={dayLabels}
+              wrapColumn={dayDrillDown((bucket) =>
+                bucket.tokens == null ? 'tokens not reported' : `${formatTokens(bucket.tokens)} known tokens`,
+              )}
+              label="Known token volume per day"
+              className="mt-8 h-32 flex-1"
+            />
           ) : (
             <ChartEmpty message="No token data for this period." />
           )}
@@ -189,19 +224,34 @@ export function DashboardPage() {
         <BentoModule cols={1} rows={2}>
           <BentoTitle>Model mix</BentoTitle>
           {modelItems.length > 0 ? (
-            <MixLegend
-              items={modelItems}
-              className="mt-8"
-              wrapItem={(item, content) => (
-                <Link
-                  to="/sessions"
-                  search={() => toSessionSearch(item.filters)}
-                  className="flex w-full items-center justify-between gap-3 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis/70"
-                >
-                  {content}
-                </Link>
-              )}
-            />
+            <>
+              <MixLegend
+                items={modelItems}
+                className="mt-8"
+                wrapItem={(item, content) => {
+                  const itemFilters = item.filters
+                  if (!itemFilters) {
+                    return (
+                      <span className="flex w-full items-center justify-between gap-3" title={UNKNOWN_MODEL_HINT}>
+                        {content}
+                      </span>
+                    )
+                  }
+                  return (
+                    <Link
+                      to="/sessions"
+                      search={() => toSessionSearch(itemFilters)}
+                      className="flex w-full items-center justify-between gap-3 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis/70"
+                    >
+                      {content}
+                    </Link>
+                  )
+                }}
+              />
+              {modelItems.some((item) => item.filters == null) ? (
+                <p className="mt-4 text-meta text-foreground-subtle">{UNKNOWN_MODEL_HINT}</p>
+              ) : null}
+            </>
           ) : (
             <ChartEmpty message="No model calls for this period." />
           )}
