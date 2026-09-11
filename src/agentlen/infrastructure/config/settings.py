@@ -9,6 +9,8 @@ to set the variable. Not choosing for the operator is the point.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -39,6 +41,17 @@ class AISettings(BaseSettings):
     )
     timeout_seconds: float = 60.0
     max_output_tokens: int = 8000
+    max_tokens_parameter: Literal["max_tokens", "max_completion_tokens"] = Field(
+        default="max_tokens",
+        description=(
+            "Nom du paramètre qui borne la sortie, dans le dialecte OpenAI. "
+            "Les modèles de raisonnement récents et plusieurs hôtes "
+            "compatibles refusent `max_tokens` en 400 et exigent "
+            "`max_completion_tokens`. Le modèle vient de la configuration "
+            "(ADR-006), donc le paramètre qu'il accepte aussi — plutôt qu'une "
+            "liste de préfixes dans le code, qui se périme à chaque sortie."
+        ),
+    )
     max_iterations: int = 10
     max_conversation_turns: int = 10
 
