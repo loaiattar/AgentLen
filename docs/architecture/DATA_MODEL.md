@@ -109,7 +109,7 @@ CREATE TABLE import_run (
     records_duplicate INTEGER    NOT NULL DEFAULT 0,
     records_rejected INTEGER     NOT NULL DEFAULT 0,
     fields_missing   JSONB,                        -- {champ_cible: nb_absents}
-    error_summary    TEXT,
+    error_summary    TEXT,                         -- classes d'exception, jamais leur message
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at       TIMESTAMPTZ,
     finished_at      TIMESTAMPTZ,

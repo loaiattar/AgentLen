@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -11,8 +12,9 @@ from sqlalchemy import Connection, insert, select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.infrastructure.jobs.postgres_queue import PostgresJobQueue
+from agentlen.infrastructure.jobs.worker import ImportWorker
 from agentlen.infrastructure.persistence import tables as t
-from agentlen.infrastructure.persistence.engine import to_async_url
+from agentlen.infrastructure.persistence.engine import create_engine, to_async_url
 from tests.integration.conftest import requires_postgres
 
 pytestmark = requires_postgres
@@ -149,6 +151,76 @@ async def test_a_failed_job_releases_its_lock_too(
     assert row.status == "failed"
     assert row.locked_by is None
     assert "boom" in row.error_summary
+
+
+async def test_a_database_failure_leaves_no_trace_content_in_logs_or_history(
+    runs: list[int],
+    database_url: str,
+    engine: Any,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#153. A raw_record insert carries the trace payload twice over in its
+    error: as bound parameters, and in Postgres's own `DETAIL: Failing row
+    contains (...)`. Neither may reach the worker log or error_summary, which
+    the import history shows to people."""
+    marker = "TRACE-CONTENT-9e27c1"
+    # The application's own factory, so hide_parameters is what is under test.
+    app_engine = create_engine(to_async_url(database_url))
+    raised: list[BaseException] = []
+
+    class WritesRawRecord:
+        async def execute(self, import_run_id: int) -> object:
+            try:
+                async with app_engine.begin() as conn:
+                    # line_number is NOT NULL: a real constraint violation.
+                    await conn.execute(
+                        insert(t.raw_record).values(
+                            import_run_id=import_run_id,
+                            line_number=None,
+                            payload={"prompt": marker},
+                            content_hash="b" * 64,
+                        )
+                    )
+            except Exception as exc:
+                raised.append(exc)
+                raise
+            return None
+
+    # The clean_db fixture runs Alembic in-process, and its fileConfig disables
+    # every logger that already exists — agentlen.worker and sqlalchemy
+    # included. Left as is, caplog captures nothing and "the marker is not in
+    # the logs" passes without checking anything.
+    for existing in list(logging.root.manager.loggerDict.values()):
+        if isinstance(existing, logging.Logger):
+            monkeypatch.setattr(existing, "disabled", False)
+    caplog.set_level(logging.DEBUG)
+    try:
+        worker = ImportWorker(PostgresJobQueue(app_engine), WritesRawRecord(), worker_id="w1")
+        assert await worker.run_once() is True
+    finally:
+        await app_engine.dispose()
+
+    # The test has teeth: the error really carried the payload, and only the
+    # parameters were hidden by the engine.
+    [error] = raised
+    assert marker in str(error)
+    assert "parameters hidden" in str(error)
+
+    assert caplog.records, "aucun log capturé : l'absence du marqueur ne prouverait rien"
+    assert marker not in caplog.text
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(t.import_run.c.status, t.import_run.c.error_summary).where(
+                t.import_run.c.id == runs[0]
+            )
+        ).one()
+    assert row.status == "failed"
+    assert marker not in row.error_summary
+    # Still readable for an operator: which run, and what kind of failure.
+    assert f"Import {runs[0]} en échec" in row.error_summary
+    assert "IntegrityError <- NotNullViolationError" in row.error_summary
+    assert "IntegrityError <- NotNullViolationError" in caplog.text
 
 
 async def test_a_running_job_is_not_claimed_again(runs: list[int], queue: PostgresJobQueue) -> None:
