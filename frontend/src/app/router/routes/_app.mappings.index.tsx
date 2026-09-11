@@ -1,7 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router'
-
-import { MappingsListPage } from '@/features/mappings/pages/MappingsListPage'
+import { createFileRoute, lazyRouteComponent } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_app/mappings/')({
-  component: MappingsListPage,
+  component: lazyRouteComponent(() => import('@/features/mappings/pages/MappingsListPage'), 'MappingsListPage'),
 })

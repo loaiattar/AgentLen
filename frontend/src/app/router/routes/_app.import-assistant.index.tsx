@@ -1,7 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router'
-
-import { ImportAssistantPage } from '@/features/import-assistant/pages/ImportAssistantPage'
+import { createFileRoute, lazyRouteComponent } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_app/import-assistant/')({
-  component: ImportAssistantPage,
+  component: lazyRouteComponent(() => import('@/features/import-assistant/pages/ImportAssistantPage'), 'ImportAssistantPage'),
 })
