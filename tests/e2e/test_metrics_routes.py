@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.dependencies import get_dashboard_queries
+from agentlen.interfaces.http.routers.metrics import ACTIVITY_UNDATED_WARNING
 from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 from tests.fakes.dashboard_queries import InMemoryDashboardQueries
 from tests.integration.conftest import requires_postgres
@@ -152,6 +153,59 @@ async def test_unknown_filter_value_is_rejected_with_the_envelope(
 # ---------------------------------------------------------------------------
 # Against a real database
 # ---------------------------------------------------------------------------
+
+
+async def test_activity_says_why_it_is_empty_when_no_session_is_dated() -> None:
+    """An empty chart must not be mistaken for an empty database.
+
+    `activity` groups by day, so an undated session produces no point. Without
+    a word of explanation, `points: []` reads as "nothing was imported" — and
+    the operator goes looking for a failed import that never happened. It is
+    the real state of the `make seed` dataset today (#200): the mapping does
+    not reach the timestamps, which live inside a list.
+    """
+    undated = [
+        {"id": 1, "data_source_id": 1, "started_at": None, "duration_ms": None},
+        {"id": 2, "data_source_id": 1, "started_at": None, "duration_ms": None},
+    ]
+    app = create_app(engine=create_async_engine(UNREACHABLE_URL))
+    app.dependency_overrides[get_dashboard_queries] = lambda: InMemoryDashboardQueries(
+        sessions=undated, model_calls=list(MODEL_CALLS), tool_calls=list(TOOL_CALLS)
+    )
+
+    async with asgi_client(app) as client:
+        body = (await client.get("/api/v1/metrics/activity")).json()
+
+    assert body["points"] == []
+    assert body["warnings"] == [ACTIVITY_UNDATED_WARNING]
+    assert "started_at" in body["warnings"][0], "l'avertissement doit dire quoi corriger"
+
+
+async def test_activity_stays_silent_when_the_scope_is_genuinely_empty() -> None:
+    """The distinction the warning exists to make.
+
+    No session at all is not the same statement as sessions without dates, and
+    claiming the second when the first is true would send the reader after a
+    mapping that is fine.
+    """
+    app = create_app(engine=create_async_engine(UNREACHABLE_URL))
+    app.dependency_overrides[get_dashboard_queries] = lambda: InMemoryDashboardQueries(
+        sessions=[], model_calls=[], tool_calls=[]
+    )
+
+    async with asgi_client(app) as client:
+        body = (await client.get("/api/v1/metrics/activity")).json()
+
+    assert body["points"] == []
+    assert body["warnings"] == []
+
+
+async def test_activity_says_nothing_when_the_sessions_are_dated(stub_client: AsyncClient) -> None:
+    """And no warning on the ordinary path, or it becomes noise to scroll past."""
+    body = (await stub_client.get("/api/v1/metrics/activity")).json()
+
+    assert body["points"], "le jeu de référence est daté"
+    assert body["warnings"] == []
 
 
 @requires_postgres
