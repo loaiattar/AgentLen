@@ -4,17 +4,26 @@ import { IssuesTable } from '@/features/imports/components/IssuesTable'
 import { formatCount, formatExample, totalCount } from '@/features/imports/lib/format'
 import type { ImportPreview, PreviewEntities } from '@/features/imports/types'
 
-/** Columns are taken from the rows themselves — a preview row is untyped by design. */
-function columnsOf(entity: PreviewEntities): string[] {
+const PREVIEW_ROW_LIMIT = 10
+
+/**
+ * Columns are taken from the rows themselves — a preview row is untyped by
+ * design — but only from the rows actually rendered. Unioning every row's keys
+ * gave a header to a column that first appears on row 40, followed by eleven
+ * empty cells: that reads as "the mapping produced nothing for this target"
+ * rather than "this column is below the cut".
+ */
+function columnsOf(rows: PreviewEntities['rows']): string[] {
   const seen = new Set<string>()
-  for (const row of entity.rows) {
+  for (const row of rows) {
     for (const key of Object.keys(row)) seen.add(key)
   }
   return [...seen]
 }
 
 function EntityPreview({ entity }: { entity: PreviewEntities }) {
-  const columns = columnsOf(entity)
+  const rows = entity.rows.slice(0, PREVIEW_ROW_LIMIT)
+  const columns = columnsOf(rows)
 
   return (
     <div>
@@ -36,7 +45,7 @@ function EntityPreview({ entity }: { entity: PreviewEntities }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {entity.rows.slice(0, 10).map((row, index) => (
+            {rows.map((row, index) => (
               <TableRow key={index}>
                 {columns.map((column) => (
                   <TableCell

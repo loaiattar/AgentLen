@@ -21,6 +21,19 @@ export const STEP_LABELS: Record<WizardStep, string> = {
 
 const DEFAULT_SAMPLE_SIZE = 20
 
+/**
+ * The preview reads this many records server-side, and `ImportPreviewIn` bounds
+ * it at `ge=1` with no upper limit — so the clamp has to happen here. `max` on a
+ * number input is advisory: a typed value above it is accepted and submitted.
+ */
+export const MIN_SAMPLE_SIZE = 1
+export const MAX_SAMPLE_SIZE = 500
+
+export function clampSampleSize(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_SAMPLE_SIZE
+  return Math.min(Math.max(Math.trunc(value), MIN_SAMPLE_SIZE), MAX_SAMPLE_SIZE)
+}
+
 interface WizardState {
   file: FileUpload | null
   profile: FileProfile | null
@@ -56,7 +69,10 @@ const EMPTY_STATE: WizardState = {
  */
 export function useImportWizard() {
   const [state, setState] = useState<WizardState>(EMPTY_STATE)
-  const [sampleSize, setSampleSize] = useState(DEFAULT_SAMPLE_SIZE)
+  const [sampleSize, setRawSampleSize] = useState(DEFAULT_SAMPLE_SIZE)
+  const setSampleSize = useCallback((value: number) => {
+    setRawSampleSize(clampSampleSize(value))
+  }, [])
 
   const uploadMutation = useUploadFileMutation()
   const profileMutation = useProfileFileMutation()
@@ -78,7 +94,15 @@ export function useImportWizard() {
       previewMutation.reset()
       createMutation.reset()
 
-      const upload = await uploadMutation.mutateAsync(file)
+      // Every caller invokes this as `void wizard.uploadFile(file)`, so a
+      // rejection here would surface as an unhandled promise rejection. The
+      // error is already on screen through `uploadMutation.error`.
+      let upload
+      try {
+        upload = await uploadMutation.mutateAsync(file)
+      } catch {
+        return undefined
+      }
       setState((current) => ({ ...current, file: upload }))
 
       // Profiling is what makes the mapping step meaningful, so it runs
@@ -98,8 +122,12 @@ export function useImportWizard() {
 
   const retryProfile = useCallback(async () => {
     if (state.file === null) return
-    const profile = await profileMutation.mutateAsync(state.file.id)
-    setState((current) => ({ ...current, profile }))
+    try {
+      const profile = await profileMutation.mutateAsync(state.file.id)
+      setState((current) => ({ ...current, profile }))
+    } catch {
+      /* surfaced via profileMutation.error */
+    }
   }, [state.file, profileMutation])
 
   const selectDataSource = useCallback((dataSourceId: number | null) => {
@@ -126,15 +154,26 @@ export function useImportWizard() {
 
   const runPreview = useCallback(async () => {
     if (state.file === null || state.mappingId === null) return
-    const preview = await previewMutation.mutateAsync({
-      file_id: state.file.id,
-      mapping_id: state.mappingId,
-      sample_size: sampleSize,
-    })
-    setState((current) => ({ ...current, preview }))
+    try {
+      const preview = await previewMutation.mutateAsync({
+        file_id: state.file.id,
+        mapping_id: state.mappingId,
+        sample_size: sampleSize,
+      })
+      setState((current) => ({ ...current, preview }))
+    } catch {
+      /* surfaced via previewMutation.error */
+    }
   }, [state.file, state.mappingId, sampleSize, previewMutation])
 
-  const duplicateBlocked = state.file?.already_seen === true && !state.duplicateAcknowledged
+  // `already_seen` comes back true whenever the *content hash* is known, even
+  // when the file was uploaded and never imported (`upload_file.py` returns the
+  // existing row with `previous_import_run_ids: []`). Only a past run makes a
+  // re-import a duplicate, so that is what gates the launch — otherwise
+  // "Replace" followed by re-picking the same file blocked the wizard behind a
+  // warning about an import that never happened.
+  const alreadyImported = (state.file?.previous_import_run_ids?.length ?? 0) > 0
+  const duplicateBlocked = alreadyImported && !state.duplicateAcknowledged
 
   const canLaunch =
     state.file !== null &&
@@ -157,11 +196,16 @@ export function useImportWizard() {
     // Belt and braces: the button is disabled, but the guard lives here too.
     if (state.preview === null) return
 
-    const created = await createMutation.mutateAsync({
-      data_source_id: state.dataSourceId,
-      file_upload_id: state.file.id,
-      mapping_id: state.mappingId,
-    })
+    let created
+    try {
+      created = await createMutation.mutateAsync({
+        data_source_id: state.dataSourceId,
+        file_upload_id: state.file.id,
+        mapping_id: state.mappingId,
+      })
+    } catch {
+      return undefined
+    }
     setState((current) => ({ ...current, importRunId: created.import_run_id }))
     return created
   }, [state.file, state.mappingId, state.dataSourceId, state.preview, createMutation])

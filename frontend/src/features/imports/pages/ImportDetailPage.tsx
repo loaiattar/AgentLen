@@ -22,12 +22,16 @@ export function ImportDetailPage() {
   const parsedId = Number(importId)
   const runId = Number.isFinite(parsedId) ? parsedId : null
 
-  // Keeps polling while the run is still moving, then stops by itself.
+  // Keeps polling while the run is still moving, then stops by itself. The
+  // issues query follows the same status, so a page opened while the run is
+  // still `pending` does not keep showing the empty result it cached on mount.
   const run = useImportQuery(runId)
-  const issues = useImportIssuesQuery(runId, severity === 'all' ? undefined : severity, {
-    limit: PAGE_SIZE,
-    offset,
-  })
+  const issues = useImportIssuesQuery(
+    runId,
+    severity === 'all' ? undefined : severity,
+    { limit: PAGE_SIZE, offset },
+    run.data?.status,
+  )
 
   const back = (
     <Button variant="secondary" asChild>

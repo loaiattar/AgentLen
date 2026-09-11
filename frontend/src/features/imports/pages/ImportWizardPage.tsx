@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { Link, useNavigate } from '@tanstack/react-router'
 
 import { Button } from '@/components/ui/Button'
@@ -14,7 +16,11 @@ import { PreviewPanel } from '@/features/imports/components/PreviewPanel'
 import { ProfileTable } from '@/features/imports/components/ProfileTable'
 import { WizardSteps } from '@/features/imports/components/WizardSteps'
 import { useImportQuery, useImportIssuesQuery } from '@/features/imports/api/imports.queries'
-import { useImportWizard } from '@/features/imports/hooks/useImportWizard'
+import {
+  MAX_SAMPLE_SIZE,
+  MIN_SAMPLE_SIZE,
+  useImportWizard,
+} from '@/features/imports/hooks/useImportWizard'
 import { isTerminal } from '@/features/imports/types'
 
 function Section({
@@ -56,14 +62,15 @@ function ErrorNote({ error }: { error: Error | null }) {
 export function ImportWizardPage() {
   const navigate = useNavigate()
   const wizard = useImportWizard()
+  const [sampleSizeDraft, setSampleSizeDraft] = useState(String(wizard.sampleSize))
 
   // Starts as soon as the run exists and stops on its own at a terminal status.
   const run = useImportQuery(wizard.importRunId)
-  const issues = useImportIssuesQuery(
-    wizard.importRunId,
-    undefined,
-    { limit: 20 },
-  )
+  // The run's status is handed to the issues query so it polls on the same
+  // terms. Without it the first and only request went out while the run was
+  // still `pending` and had no issue yet, and the cached empty page was what
+  // the report below rendered once the run ended `partial`.
+  const issues = useImportIssuesQuery(wizard.importRunId, undefined, { limit: 20 }, run.data?.status)
 
   const runFinished = run.data !== undefined && isTerminal(run.data.status)
 
@@ -88,6 +95,10 @@ export function ImportWizardPage() {
             void wizard.uploadFile(file)
           }}
           busy={wizard.uploadMutation.isPending}
+          // `busy` only puts the button in a loading state; the drop handler and
+          // the hidden input stay live. Dropping a second file mid-upload ran
+          // two uploads whose results raced, and the slower one won.
+          disabled={wizard.uploadMutation.isPending}
         />
       ) : (
         <FileSummary
@@ -147,10 +158,19 @@ export function ImportWizardPage() {
               <Input
                 id="preview-sample-size"
                 type="number"
-                min={1}
-                max={500}
-                value={wizard.sampleSize}
-                onChange={(event) => wizard.setSampleSize(Number(event.target.value) || 1)}
+                min={MIN_SAMPLE_SIZE}
+                max={MAX_SAMPLE_SIZE}
+                value={sampleSizeDraft}
+                onChange={(event) => {
+                  // The draft is what the field shows, so it can be cleared
+                  // while typing. `Number('') || 1` used to snap an emptied
+                  // field to 1, which turned a retyped "5" into 15.
+                  const raw = event.target.value
+                  setSampleSizeDraft(raw)
+                  if (raw === '') return
+                  wizard.setSampleSize(Number(raw))
+                }}
+                onBlur={() => setSampleSizeDraft(String(wizard.sampleSize))}
               />
             </Field>
             <Button
@@ -223,7 +243,9 @@ export function ImportWizardPage() {
                     total={issues.data?.total}
                     severity="all"
                     filterable={false}
-                    emptyMessage="No issue recorded for this run."
+                    emptyMessage={
+                      issues.isPending ? 'Loading issues…' : 'No issue recorded for this run.'
+                    }
                   />
                 </div>
               ) : null}

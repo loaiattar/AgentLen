@@ -13,6 +13,7 @@ import {
   type ImportPreview,
   type ImportPreviewRequest,
   type ImportSeverity,
+  type ImportRunStatus,
   type ImportStatus,
   type Page,
   type PageParams,
@@ -164,12 +165,18 @@ export function useImportsQuery(params: PageParams = {}) {
 /**
  * Polls until the run reaches a terminal status, then stops on its own — a
  * finished report never changes, so there is nothing left to ask for.
+ *
+ * An errored query stops too. `status` is `undefined` both before the first
+ * response and after a failure, so returning the interval on `undefined` alone
+ * kept `/imports/{unknown id}` requesting once a second, behind an error
+ * screen, for as long as the tab stayed open.
  */
 export function useImportQuery(importRunId: number | null) {
   return useQuery({
     ...importQueries.detail(importRunId ?? 0),
     enabled: importRunId !== null,
     refetchInterval: (query) => {
+      if (query.state.status === 'error') return false
       const status = query.state.data?.status
       if (status === undefined) return IMPORT_POLL_INTERVAL_MS
       return isTerminal(status) ? false : IMPORT_POLL_INTERVAL_MS
@@ -177,13 +184,30 @@ export function useImportQuery(importRunId: number | null) {
   })
 }
 
+/**
+ * Issues arrive as the run progresses, so this polls on the same terms.
+ *
+ * Without it the query ran once, when the run had just been accepted and had
+ * no issue yet, and the shared `queryClient` defaults (`staleTime: 30s`,
+ * `refetchOnWindowFocus: false`) meant it never asked again. A run that ended
+ * `partial` then rendered its cached empty page — "No issue recorded for this
+ * run" on a run that rejected records, which is the one thing this screen
+ * exists to explain. `runStatus` comes from the caller because a page of
+ * issues carries no status of its own.
+ */
 export function useImportIssuesQuery(
   importRunId: number | null,
   severity?: ImportSeverity,
   params: PageParams = {},
+  runStatus?: ImportRunStatus,
 ) {
   return useQuery({
     ...importQueries.issues(importRunId ?? 0, severity, params),
     enabled: importRunId !== null,
+    refetchInterval: (query) => {
+      if (query.state.status === 'error') return false
+      if (runStatus === undefined) return IMPORT_POLL_INTERVAL_MS
+      return isTerminal(runStatus) ? false : IMPORT_POLL_INTERVAL_MS
+    },
   })
 }

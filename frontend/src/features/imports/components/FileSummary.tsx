@@ -26,6 +26,8 @@ export function FileSummary({
   onAcknowledge,
   onReplace,
 }: FileSummaryProps) {
+  const alreadyImported = file.previous_import_run_ids.length > 0
+
   return (
     <div className="glass-surface rounded-xl p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -64,12 +66,21 @@ export function FileSummary({
         </div>
       </dl>
 
+      {/*
+        `already_seen` is true as soon as the content hash is known — the file
+        may have been uploaded and never imported. Only `previous_import_run_ids`
+        proves a past import, and only that case needs an acknowledgement.
+      */}
       {file.already_seen ? (
         <div className="mt-6 rounded-lg bg-warning-soft p-4">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" aria-hidden />
             <div className="min-w-0">
-              <p className="text-body text-foreground">This file has already been imported.</p>
+              <p className="text-body text-foreground">
+                {alreadyImported
+                  ? 'This file has already been imported.'
+                  : 'This file was already uploaded, but never imported.'}
+              </p>
               <p className="mt-1 text-secondary text-foreground-muted">
                 Identical content was stored before
                 {file.previous_import_run_ids.length > 0 ? (
@@ -91,16 +102,20 @@ export function FileSummary({
                     ))}
                   </>
                 ) : null}
-                . Re-importing is safe — records already present are counted as duplicates, not
-                inserted twice — but confirm this is what you want.
+                .{' '}
+                {alreadyImported
+                  ? 'Re-importing is safe — records already present are counted as duplicates, not inserted twice — but confirm this is what you want.'
+                  : 'Nothing was imported from it, so this import will behave like a first one.'}
               </p>
-              {acknowledged ? (
-                <p className="mt-3 text-secondary text-foreground-muted">Acknowledged.</p>
-              ) : (
-                <Button variant="secondary" size="sm" className="mt-3" onClick={onAcknowledge}>
-                  Import it anyway
-                </Button>
-              )}
+              {alreadyImported ? (
+                acknowledged ? (
+                  <p className="mt-3 text-secondary text-foreground-muted">Acknowledged.</p>
+                ) : (
+                  <Button variant="secondary" size="sm" className="mt-3" onClick={onAcknowledge}>
+                    Import it anyway
+                  </Button>
+                )
+              ) : null}
             </div>
           </div>
         </div>

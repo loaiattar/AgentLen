@@ -43,7 +43,14 @@ export function formatCount(value: number | null | undefined): string {
 
 export function formatRatio(ratio: number | null | undefined): string {
   if (ratio === null || ratio === undefined) return '—'
-  return `${(ratio * 100).toFixed(ratio > 0 && ratio < 0.01 ? 2 : 0)}%`
+  // Both ends need decimals, not just the low one. At 0 places a `null_ratio`
+  // of 0.996 read "100%" — "this column is entirely empty" for a column that
+  // has values — and a `distinct_ratio` of 0.996 read as a unique key. Exact 0
+  // and exact 1 stay "0%" and "100%", which is the whole point of the reading.
+  const percent = ratio * 100
+  if (ratio <= 0 || ratio >= 1) return `${percent.toFixed(0)}%`
+  if (percent < 1 || percent > 99) return `${percent.toFixed(2)}%`
+  return `${percent.toFixed(0)}%`
 }
 
 export function formatDateTime(iso: string | null | undefined): string {
