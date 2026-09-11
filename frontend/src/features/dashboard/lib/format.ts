@@ -1,5 +1,7 @@
+import { datasetLabel } from '@/features/dashboard/lib/filters'
 import type {
   ActivityPoint,
+  DashboardFilters,
   Metric,
   MetricDefinition,
   ModelPoint,
@@ -87,48 +89,126 @@ export function collectDashboardWarnings(
 
 const CHART_TONES = ['cyan', 'blue', 'mint', 'magenta'] as const
 
-export function sessionsByDay(points: ActivityPoint[]): number[] {
-  const byDay = new Map<string, number>()
-  for (const point of points) {
-    byDay.set(point.day, (byDay.get(point.day) ?? 0) + point.session_count)
-  }
-  return [...byDay.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, count]) => count)
+export interface DayBucket {
+  /** `YYYY-MM-DD`, UTC — the calendar the API groups activity by. */
+  day: string
+  /** A day with no activity point had no session: a true 0. */
+  sessions: number
+  /** Known tokens. `null` when the day had sessions but none reported tokens. */
+  tokens: number | null
+  /** Replayable on `/sessions`; `null` when there is no session to open. */
+  filters: Record<string, unknown> | null
 }
 
-export function knownTokensByDay(points: ActivityPoint[]): number[] {
-  const byDay = new Map<string, number>()
-  for (const point of points) {
-    if (point.input_tokens == null && point.output_tokens == null) continue
-    const known = (point.input_tokens ?? 0) + (point.output_tokens ?? 0)
-    byDay.set(point.day, (byDay.get(point.day) ?? 0) + known)
-  }
-  return [...byDay.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([, tokens]) => tokens)
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/** Past this span a requested range is not drawn day by day; the data's own span is. */
+export const MAX_RANGE_DAYS = 3 * 366
+
+function toUtcDay(value: string | undefined, { endOfRange = false } = {}): string | undefined {
+  if (!value) return undefined
+  const time = Date.parse(value)
+  if (Number.isNaN(time)) return undefined
+  // A range ending exactly at midnight (a day drill-down) does not cover the next day.
+  const adjusted = endOfRange && time % DAY_MS === 0 ? time - DAY_MS : time
+  return new Date(adjusted).toISOString().slice(0, 10)
 }
 
-export function aggregateTools(points: ToolPoint[], limit = 6) {
+function daysBetween(first: string, last: string): number {
+  return Math.round((Date.parse(`${last}T00:00:00Z`) - Date.parse(`${first}T00:00:00Z`)) / DAY_MS)
+}
+
+function dayFilters(points: ActivityPoint[]): Record<string, unknown> | null {
+  const [head, ...rest] = points
+  if (!head) return null
+  const filters = { ...head.filters }
+  // One point per source: a day spanning several sources opens all of them.
+  if (rest.some((point) => point.filters.data_source_id !== head.filters.data_source_id)) {
+    delete filters.data_source_id
+  }
+  return filters
+}
+
+/**
+ * One bucket per calendar day over the displayed range, days without activity
+ * included, so spacing on the chart is proportional to time. The range is the
+ * requested one when it is known, widened to the data if needed.
+ */
+export function dailySeries(
+  points: ActivityPoint[],
+  range: Pick<DashboardFilters, 'date_from' | 'date_to'> = {},
+): DayBucket[] {
+  const byDay = new Map<string, ActivityPoint[]>()
+  for (const point of points) byDay.set(point.day, [...(byDay.get(point.day) ?? []), point])
+
+  const dataDays = [...byDay.keys()].sort()
+  const dataFirst = dataDays[0]
+  const dataLast = dataDays.at(-1)
+  if (!dataFirst || !dataLast) return []
+
+  const from = toUtcDay(range.date_from)
+  const to = toUtcDay(range.date_to, { endOfRange: true })
+  let first = from && from < dataFirst ? from : dataFirst
+  let last = to && to > dataLast ? to : dataLast
+  if (daysBetween(first, last) > MAX_RANGE_DAYS) {
+    first = dataFirst
+    last = dataLast
+  }
+
+  const start = Date.parse(`${first}T00:00:00Z`)
+  return Array.from({ length: daysBetween(first, last) + 1 }, (_, offset) => {
+    const day = new Date(start + offset * DAY_MS).toISOString().slice(0, 10)
+    const dayPoints = byDay.get(day) ?? []
+    const withTokens = dayPoints.filter((point) => point.input_tokens != null || point.output_tokens != null)
+    return {
+      day,
+      sessions: dayPoints.reduce((total, point) => total + point.session_count, 0),
+      tokens:
+        dayPoints.length === 0
+          ? 0
+          : withTokens.length === 0
+            ? null
+            : withTokens.reduce((total, point) => total + (point.input_tokens ?? 0) + (point.output_tokens ?? 0), 0),
+      filters: dayFilters(dayPoints),
+    }
+  })
+}
+
+export function hasKnownTokens(points: ActivityPoint[]): boolean {
+  return points.some((point) => point.input_tokens != null || point.output_tokens != null)
+}
+
+interface AggregateOptions {
+  /** Name the source in each label: without a source filter, one name can appear once per source. */
+  showSource?: boolean
+}
+
+function withSource(label: string, dataSourceId: number, showSource: boolean): string {
+  return showSource ? `${label} · ${datasetLabel(dataSourceId)}` : label
+}
+
+export function aggregateTools(points: ToolPoint[], { showSource = false, limit = 6 }: AggregateOptions & { limit?: number } = {}) {
   return [...points]
     .sort((left, right) => right.call_count - left.call_count)
     .slice(0, limit)
     .map((point, index) => ({
-      label: point.label,
+      label: withSource(point.label, point.data_source_id, showSource),
       value: point.call_count,
       tone: CHART_TONES[index % CHART_TONES.length],
       filters: point.filters,
     }))
 }
 
-export function aggregateModels(points: ModelPoint[]) {
+export function aggregateModels(points: ModelPoint[], { showSource = false }: AggregateOptions = {}) {
   return [...points]
     .sort((left, right) => right.call_count - left.call_count)
     .map((point, index) => ({
-      label: point.label,
+      label: withSource(point.label, point.data_source_id, showSource),
       value: point.call_count,
       tone: CHART_TONES[index % CHART_TONES.length],
-      filters: point.filters,
+      // `GET /sessions` has no "no model" filter: the point's filters, missing
+      // `model_id`, would open every session of the source instead.
+      filters: point.model_id == null ? null : point.filters,
     }))
 }
 

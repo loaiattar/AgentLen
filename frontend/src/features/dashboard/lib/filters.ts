@@ -118,14 +118,24 @@ export function periodToRange(
   }
 }
 
-export function searchToDashboardFilters(search: MetricsSearch, now = new Date()): DashboardFilters {
-  const dates =
-    search.date_from || search.date_to
-      ? {
-          ...(search.date_from ? { date_from: search.date_from } : {}),
-          ...(search.date_to ? { date_to: search.date_to } : {}),
-        }
-      : periodToRange(search.period, now)
+/**
+ * The filters the URL describes — identical for as long as the URL is.
+ *
+ * A period stays a period here and only becomes dates when a request is sent
+ * (`resolvePeriod`). Resolving it at render time put `new Date()`, to the
+ * millisecond, into every query key: each render made a new key, each response
+ * re-rendered, and the dashboard refetched in a loop (#122).
+ */
+export function searchToDashboardFilters(search: MetricsSearch): DashboardFilters {
+  const hasDates = Boolean(search.date_from || search.date_to)
+  const dates = hasDates
+    ? {
+        ...(search.date_from ? { date_from: search.date_from } : {}),
+        ...(search.date_to ? { date_to: search.date_to } : {}),
+      }
+    : search.period
+      ? { period: search.period }
+      : {}
 
   return {
     ...(search.data_source_id != null ? { data_source_id: search.data_source_id } : {}),
@@ -136,4 +146,17 @@ export function searchToDashboardFilters(search: MetricsSearch, now = new Date()
     ...(search.status ? { status: search.status } : {}),
     ...dates,
   }
+}
+
+/**
+ * The query parameters the API expects: a period becomes a date range, computed
+ * when the request leaves — never earlier, so it never reaches a query key.
+ */
+export function resolvePeriod(
+  filters: DashboardFilters,
+  now = new Date(),
+): Omit<DashboardFilters, 'period'> {
+  const { period, ...rest } = filters
+  if (!period || rest.date_from || rest.date_to) return rest
+  return { ...rest, ...periodToRange(period, now) }
 }

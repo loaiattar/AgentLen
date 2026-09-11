@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from agentlen.infrastructure.persistence.engine import to_async_url
@@ -59,7 +60,22 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 @pytest.fixture
 async def live_engine(database_url: str) -> AsyncIterator[AsyncEngine]:  # noqa: F811
-    """An async engine on the migrated test database."""
+    """An async engine on the migrated test database, emptied before each test.
+
+    The emptying is what makes these tests independent of the order they run
+    in. Without it, several tests that assert on an empty database passed only
+    because an earlier file happened to leave one behind — and two test modules
+    carried their own `TRUNCATE` in a `finally` to keep that arrangement
+    standing. Those are gone; cleaning belongs to the fixture that hands out
+    the database, not to whoever used it last.
+
+    Before rather than after: a test that fails midway still leaves the next
+    one a clean database, and the rows it left behind stay inspectable.
+
+    `TRUNCATE ... RESTART IDENTITY CASCADE` over re-running the migrations —
+    the same isolation for a fraction of the runtime, and it matches what
+    `clean_db` does for the integration suite.
+    """
     from alembic.config import Config
 
     from alembic import command
@@ -69,6 +85,17 @@ async def live_engine(database_url: str) -> AsyncIterator[AsyncEngine]:  # noqa:
     command.upgrade(cfg, "head")
 
     eng = create_async_engine(to_async_url(database_url))
+    async with eng.begin() as conn:
+        rows = await conn.execute(
+            text(
+                "SELECT tablename FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename <> 'alembic_version'"
+            )
+        )
+        names = [r[0] for r in rows]
+        if names:
+            await conn.execute(text(f"TRUNCATE {', '.join(names)} RESTART IDENTITY CASCADE"))
+
     yield eng
     await eng.dispose()
 

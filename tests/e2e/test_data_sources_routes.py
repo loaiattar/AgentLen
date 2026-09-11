@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
+from agentlen.interfaces.http.pagination import MAX_LIMIT
 from tests.integration.conftest import requires_postgres
 
 
@@ -48,6 +49,31 @@ async def test_created_source_appears_in_the_list(live_client: AsyncClient) -> N
 
     slugs = {s["slug"] for s in response.json()}
     assert "swe-chat" in slugs
+
+
+@requires_postgres
+async def test_list_is_a_bounded_bare_array_that_reports_its_total(
+    live_client: AsyncClient,
+) -> None:
+    """A documented exception to the page envelope (API.md §1): still an array,
+    so existing consumers keep working, but windowed and counted."""
+    for slug in ("window-a", "window-b", "window-c"):
+        await live_client.post("/api/v1/data-sources", json={"slug": slug, "name": slug})
+
+    full = await live_client.get("/api/v1/data-sources")
+    total = int(full.headers["x-total-count"])
+    assert total == len(full.json()) >= 3
+
+    page = await live_client.get("/api/v1/data-sources", params={"limit": 2, "offset": 1})
+    assert page.json() == full.json()[1:3]
+    assert page.headers["x-total-count"] == str(total)
+
+
+async def test_list_limit_above_the_ceiling_is_rejected(client: AsyncClient) -> None:
+    response = await client.get(f"/api/v1/data-sources?limit={MAX_LIMIT + 1}")
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "MALFORMED_REQUEST"
 
 
 @requires_postgres

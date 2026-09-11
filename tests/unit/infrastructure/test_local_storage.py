@@ -7,6 +7,7 @@ observed behaviour rather than on the code being written a certain way.
 from __future__ import annotations
 
 import hashlib
+import io
 import tracemalloc
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -14,10 +15,18 @@ from pathlib import Path
 import pytest
 
 from agentlen.application.ports.file_storage import (
+    FileStorage,
     FileTooLargeError,
     UnsupportedFileFormatError,
 )
-from agentlen.infrastructure.files.local_storage import LocalFileStorage, detect_format
+from agentlen.infrastructure.files.local_storage import (
+    HEAD_BYTES,
+    MAX_FIRST_LINE_BYTES,
+    LocalFileStorage,
+    detect_file_format,
+    detect_format,
+)
+from tests.fakes.file_storage import InMemoryFileStorage
 
 JSONL = b'{"session_id": "a3f2"}\n{"session_id": "b91c"}\n'
 CSV = b"id,name\n1,alpha\n"
@@ -154,3 +163,101 @@ def test_broken_json_is_refused_rather_than_read_as_csv() -> None:
 def test_binary_that_is_not_parquet_is_refused() -> None:
     with pytest.raises(UnsupportedFileFormatError):
         detect_format(b"\x89PNG\r\n\x1a\n\x00\x00", "t.csv")
+
+
+# ---------------------------------------------------------------------------
+# Detection past the head: long first lines, cut characters
+#
+# Run through both storages, so the in-memory double cannot drift back to a
+# head of its own that hides what production refuses.
+# ---------------------------------------------------------------------------
+
+#: A first record of 80 KB, longer than the head — a trace embedding tool output.
+LONG_FIRST_LINE = b'{"output": "' + b"x" * (80 * 1024) + b'"}\n{"session_id": "b91c"}\n'
+
+
+def _emoji_cut_by_the_head() -> bytes:
+    """A valid JSONL whose byte HEAD_BYTES falls inside a 4-byte emoji."""
+    prefix = b'{"session_id": "a3f2"}\n{"text": "'
+    prefix += b"x" * (HEAD_BYTES - 2 - len(prefix))
+    payload = prefix + "😀".encode() + b'"}\n'
+    assert payload[HEAD_BYTES - 2 : HEAD_BYTES + 2] == "😀".encode()
+    return payload
+
+
+@pytest.fixture(params=["local", "in_memory"])
+def storage(request: pytest.FixtureRequest, tmp_path: Path) -> FileStorage:
+    if request.param == "local":
+        return LocalFileStorage(tmp_path)
+    return InMemoryFileStorage()
+
+
+@pytest.mark.parametrize(
+    ("payload", "name", "expected"),
+    [
+        (LONG_FIRST_LINE, "t.jsonl", "jsonl"),
+        (_emoji_cut_by_the_head(), "t.jsonl", "jsonl"),
+        (b"id,name\n" + "1,é\n".encode() * (HEAD_BYTES // 4), "t.csv", "csv"),
+        (PARQUET, "t.parquet", "parquet"),
+        (b"PAR1" + b"\x00" * (2 * HEAD_BYTES) + b"PAR1", "t.parquet", "parquet"),
+    ],
+    ids=["80kb-first-line", "emoji-cut-at-head", "csv-longer-than-head", "parquet", "big-parquet"],
+)
+async def test_valid_files_longer_than_the_head_are_accepted(
+    storage: FileStorage, payload: bytes, name: str, expected: str
+) -> None:
+    stored = await storage.store(stream(payload, chunk=4096), original_name=name)
+
+    assert stored.detected_format == expected
+
+
+@pytest.mark.parametrize(
+    ("payload", "name"),
+    [
+        # 80 KB first line whose string is never closed.
+        (b'{"output": "' + b"x" * (80 * 1024) + b"\n{}\n", "t.jsonl"),
+        # Invalid UTF-8 well inside a head that is itself cut mid-file.
+        (b"\xff\xfe" * HEAD_BYTES, "t.csv"),
+    ],
+    ids=["broken-80kb-first-line", "binary-garbage"],
+)
+async def test_invalid_files_longer_than_the_head_are_still_refused(
+    storage: FileStorage, payload: bytes, name: str
+) -> None:
+    with pytest.raises(UnsupportedFileFormatError) as refused:
+        await storage.store(stream(payload, chunk=4096), original_name=name)
+
+    assert refused.value.code == "UNSUPPORTED_FILE_FORMAT"
+
+
+def test_a_cut_character_is_refused_when_the_file_really_ends_there() -> None:
+    """Tolerance is for a head cut mid-file, not for a truncated upload."""
+    with pytest.raises(UnsupportedFileFormatError):
+        detect_file_format(io.BytesIO('{"a": "é'.encode()[:-1]).read, "t.jsonl")
+
+
+def test_a_line_separator_inside_a_json_string_does_not_split_the_line() -> None:
+    """JSON allows U+2028 raw in a string; only "\\n" ends a JSONL record."""
+    assert detect_format('{"text": "a\u2028b"}\n'.encode(), "t.jsonl") == "jsonl"
+
+
+def test_detection_stops_reading_at_the_first_line_bound() -> None:
+    read_sizes: list[int] = []
+    source = io.BytesIO(b'{"output": "' + b"x" * (MAX_FIRST_LINE_BYTES * 2))
+
+    def read(size: int) -> bytes:
+        read_sizes.append(size)
+        return source.read(size)
+
+    assert detect_file_format(read, "t.jsonl") == "jsonl"
+    assert sum(read_sizes) == MAX_FIRST_LINE_BYTES + 1  # the bound, then "is there more?"
+
+
+def test_a_first_line_beyond_the_bound_needs_the_jsonl_name() -> None:
+    """Past the bound the record cannot be parsed; the extension must agree
+    with the opening brace, or nothing vouches for the content."""
+    cut_line = b'{"output": "' + b"x" * 1024
+
+    assert detect_format(cut_line, "t.ndjson", truncated=True) == "jsonl"
+    with pytest.raises(UnsupportedFileFormatError):
+        detect_format(cut_line, "t.csv", truncated=True)

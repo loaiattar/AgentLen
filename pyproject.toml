@@ -63,9 +63,12 @@ where = ["src"]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = [
-    "integration: needs a real Postgres (skipped when Docker is unavailable)",
-]
+# `--strict-markers` turns a typo in a marker name into a collection error
+# rather than a silently unregistered mark that filters nothing. The `integration`
+# marker it used to guard was declared and never applied to a single test; the
+# real gate is the `requires_postgres` skipif in tests/integration/conftest.py,
+# so the dead declaration is gone rather than left as a second, unused mechanism.
+addopts = "--strict-markers"
 
 # ---------------------------------------------------------------------------
 # Mypy — strict on domain and application only

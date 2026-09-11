@@ -6,11 +6,12 @@ The first half of the import journey: declaring where data comes from, before
 
 from __future__ import annotations
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Response, status
 
 from agentlen.application.dto.persistence import DataSourceRecord
 from agentlen.application.errors import ConflictError
 from agentlen.interfaces.http.dependencies import UnitOfWorkDep
+from agentlen.interfaces.http.pagination import TOTAL_COUNT_RESPONSE, Windowed, window
 from agentlen.interfaces.http.schemas.data_sources import DataSourceCreateIn, DataSourceOut
 
 router = APIRouter(prefix="/data-sources", tags=["data-sources"])
@@ -34,12 +35,15 @@ def _to_out(record: DataSourceRecord) -> DataSourceOut:
 @router.get(
     "",
     response_model=list[DataSourceOut],
-    summary="Every declared data source, with its version and retrieval date",
+    summary="Declared data sources, with version and retrieval date — a bounded bare array",
+    responses={200: TOTAL_COUNT_RESPONSE},
 )
-async def list_data_sources(uow: UnitOfWorkDep) -> list[DataSourceOut]:
+async def list_data_sources(
+    uow: UnitOfWorkDep, params: Windowed, response: Response
+) -> list[DataSourceOut]:
     async with uow:
         records = await uow.data_sources.list()
-    return [_to_out(r) for r in records]
+    return [_to_out(r) for r in window(records, params, response)]
 
 
 @router.post(

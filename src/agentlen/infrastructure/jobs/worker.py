@@ -28,6 +28,11 @@ logger = logging.getLogger("agentlen.worker")
 #: starts promptly, long enough not to hammer the database while idle.
 IDLE_SLEEP_SECONDS = 1.0
 
+#: How far down a `raise ... from` chain the failure summary looks. A SQLAlchemy
+#: error wraps the driver adapter's, which wraps the driver's own: that is
+#: three links, and the last one names what actually went wrong.
+_MAX_CAUSE_DEPTH = 4
+
 
 class _Queue(Protocol):
     async def claim_next(self, *, worker_id: str) -> int | None: ...
@@ -43,6 +48,40 @@ def default_worker_id() -> str:
     """Identifies the holder of a lock — a hostname and pid are what someone
     debugging a stuck job actually needs."""
     return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def failure_summary(import_run_id: int, exc: BaseException) -> str:
+    """What a failed import leaves behind, in the worker log and in
+    `import_run.error_summary`.
+
+    Class names only, never an exception's text. That text is not ours to
+    trust: SQLAlchemy renders the bound parameters of the failing statement,
+    and Postgres itself echoes the offending row (`DETAIL: Failing row contains
+    (...)`) — for a `raw_record` insert, the trace payload. `hide_parameters`
+    on the engine covers the first, nothing covers the second, so the message is
+    dropped rather than filtered: no redaction pattern knows which part of an
+    arbitrary payload is sensitive. The traceback goes with it, since its last
+    line is that same message.
+
+    The chain of causes stays, because it is what an operator needs:
+    `IntegrityError <- NotNullViolationError` says what kind of failure it was
+    without saying on which values.
+    """
+    names: list[str] = []
+    current: BaseException | None = exc
+    for _ in range(_MAX_CAUSE_DEPTH):
+        if current is None:
+            break
+        name = type(current).__name__
+        if not names or names[-1] != name:
+            names.append(name)
+        current = current.__cause__ or (
+            None if current.__suppress_context__ else current.__context__
+        )
+    return (
+        f"Import {import_run_id} en échec : {' <- '.join(names)} "
+        "(détail non conservé : il peut contenir des données de trace)."
+    )
 
 
 class ImportWorker:
@@ -80,8 +119,9 @@ class ImportWorker:
         except Exception as exc:  # noqa: BLE001 - the loop must survive one bad job
             # Released deliberately: a job that fails while holding its lock is
             # indistinguishable from a crashed worker, and nobody retries it.
-            logger.exception("Import %s en échec.", import_run_id)
-            await self._queue.mark_failed(import_run_id, error=f"{type(exc).__name__}: {exc}")
+            summary = failure_summary(import_run_id, exc)
+            logger.error("%s", summary)
+            await self._queue.mark_failed(import_run_id, error=summary)
         finally:
             self.processed += 1
         return True

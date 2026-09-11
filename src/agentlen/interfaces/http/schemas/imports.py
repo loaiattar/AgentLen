@@ -95,6 +95,9 @@ class ImportStatusOut(BaseModel):
 
 class ImportIssueOut(BaseModel):
     line_number: int | None = None
+    # The source record behind the issue, openable on `GET /records/{id}`.
+    # Null, like `line_number`, when the issue concerns no single line.
+    raw_record_id: int | None = None
     severity: str
     code: str
     message: str
