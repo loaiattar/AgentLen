@@ -1,8 +1,9 @@
 # Served by the `frontend` service (docker/frontend.Dockerfile).
 #
-# ${MAX_UPLOAD_SIZE_MB} is substituted when the container starts. nginx's own
-# variables ($host, $uri, …) are left untouched: they are not in the container
-# environment, and the entrypoint only substitutes variables that are.
+# ${MAX_UPLOAD_SIZE_MB} and API_KEY are substituted when the container starts.
+# nginx's own variables ($host, $uri, …) are left untouched: they are not in
+# the container environment, and the entrypoint only substitutes variables
+# that are.
 
 server {
     listen 8080;
@@ -27,6 +28,12 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+
+        # The browser never holds the API key (#149): nginx adds it here from
+        # the container's API_KEY, substituted at start-up, and it replaces any
+        # X-API-Key a client sends. No log line records it: the access log
+        # format and error messages carry no request headers.
+        proxy_set_header X-API-Key "${API_KEY}";
 
         # Stream multipart uploads to the API instead of spooling them first.
         proxy_request_buffering off;
