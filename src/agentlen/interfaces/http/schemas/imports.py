@@ -7,11 +7,20 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from agentlen.application.use_cases.preview_import import (
+    DEFAULT_SAMPLE_SIZE,
+    MAX_SAMPLE_SIZE,
+)
+
 
 class ImportPreviewIn(BaseModel):
     file_id: int
     mapping_id: int
-    sample_size: int = Field(default=20, ge=1)
+    # Bounded at both ends: the preview reads this many records server-side, so
+    # an unbounded value is work the caller can ask for for free. `max` on the
+    # front's number input is advisory — a typed value above it is submitted —
+    # so the limit has to live here. See MAX_SAMPLE_SIZE in `preview_import`.
+    sample_size: int = Field(default=DEFAULT_SAMPLE_SIZE, ge=1, le=MAX_SAMPLE_SIZE)
 
 
 class PreviewEntitiesOut(BaseModel):

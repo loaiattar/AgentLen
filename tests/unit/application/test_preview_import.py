@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from agentlen.application.errors import MappingInvalidError, NotFoundError
-from agentlen.application.use_cases.preview_import import PreviewImport
+from agentlen.application.use_cases.preview_import import MAX_SAMPLE_SIZE, PreviewImport
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from tests.fakes.file_reader import InMemoryFileReader
 from tests.fakes.repositories import InMemoryUnitOfWork
@@ -218,3 +218,26 @@ async def test_a_nonsense_sample_size_is_refused() -> None:
 
     with pytest.raises(ValueError):
         await preview.execute(file_id=file_id, mapping_id=mapping_id, sample_size=0)
+
+
+async def test_an_unbounded_sample_size_is_refused() -> None:
+    """`sample_size` is how many records the server reads, not how many it shows.
+
+    Left open, one request could ask the server to read a whole trace file to
+    render five rows per entity.
+    """
+    preview, _, reader, file_id, mapping_id = await build(valid_mapping())
+
+    with pytest.raises(ValueError):
+        await preview.execute(
+            file_id=file_id, mapping_id=mapping_id, sample_size=MAX_SAMPLE_SIZE + 1
+        )
+    assert reader.last_limit is None, "nothing should have been read"
+
+
+async def test_the_sample_size_ceiling_itself_is_accepted() -> None:
+    preview, _, reader, file_id, mapping_id = await build(valid_mapping())
+
+    await preview.execute(file_id=file_id, mapping_id=mapping_id, sample_size=MAX_SAMPLE_SIZE)
+
+    assert reader.last_limit == MAX_SAMPLE_SIZE

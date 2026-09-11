@@ -12,10 +12,23 @@ class FileUploadOut(BaseModel):
     size_bytes: int
     content_hash: str
     already_seen: bool = Field(
-        description="True when this content was already stored — the front should "
-        "warn before re-running an import on it."
+        description=(
+            "True when this content was already stored. It answers a question "
+            "about the *content hash*, not about imports: an upload of a file "
+            "that was stored but never imported comes back true, with an empty "
+            "`previous_import_run_ids`. On `GET /files/{id}` the file is stored "
+            "by definition, so the flag is always true there and carries no "
+            "signal. To ask whether importing again would create duplicates, "
+            "read `previous_import_run_ids`."
+        )
     )
-    previous_import_run_ids: list[int] = Field(default_factory=list)
+    previous_import_run_ids: list[int] = Field(
+        default_factory=list,
+        description=(
+            "The runs that already imported this content. Empty means no import "
+            "has used it, whatever `already_seen` says."
+        ),
+    )
 
 
 class FieldProfileOut(BaseModel):

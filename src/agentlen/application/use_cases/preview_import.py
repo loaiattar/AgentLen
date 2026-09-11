@@ -25,6 +25,13 @@ from agentlen.domain.services.record_normalizer import RecordNormalizer
 
 DEFAULT_SAMPLE_SIZE = 20
 
+#: The preview reads this many records from the file, so it is a work bound,
+#: not a display one. Left open, `sample_size: 9999999` made the server read a
+#: whole trace file to render five rows per entity. 500 matches
+#: `PROFILE_SAMPLE_SIZE`, the budget already accepted for profiling the same
+#: file, and is far above what judging a mapping needs.
+MAX_SAMPLE_SIZE = 500
+
 #: How many transformed rows to show per entity. Enough to judge a mapping,
 #: few enough that the response stays readable.
 _ROWS_SHOWN = 5
@@ -46,6 +53,8 @@ class PreviewImport:
     ) -> PreviewResult:
         if sample_size < 1:
             raise ValueError("sample_size must be at least 1")
+        if sample_size > MAX_SAMPLE_SIZE:
+            raise ValueError(f"sample_size must not exceed {MAX_SAMPLE_SIZE}")
 
         # Reads only. The block is left without commit, so even the lookups
         # roll back — there is no path from here to a write.

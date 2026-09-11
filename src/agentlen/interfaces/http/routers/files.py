@@ -91,7 +91,14 @@ async def get_file(file_id: int, uow: UnitOfWorkDep) -> FileUploadOut:
         format=record.format,
         size_bytes=record.size_bytes,
         content_hash=record.content_hash,
-        already_seen=len(runs) > 0,
+        # `already_seen` answers "was this content already stored", the same
+        # question `POST /files` answers — and on this route the answer is
+        # always yes, since the row was just read. It used to be computed as
+        # `len(runs) > 0`, which made the two endpoints contradict each other
+        # for the same file: a file uploaded and never imported came back true
+        # from the POST and false from here. Import history lives in
+        # `previous_import_run_ids`, and that is what a caller should read.
+        already_seen=True,
         previous_import_run_ids=runs,
     )
 
