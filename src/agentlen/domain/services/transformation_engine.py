@@ -109,17 +109,16 @@ class TransformationEngine:
                 if ok:
                     value = coerced
                 else:
+                    # A type mismatch rejects the record whatever `required`
+                    # says, unlike a failed operator. Deliberate, and pinned by
+                    # tests/integration/test_run_import.py: a field declared as
+                    # an int that arrives as a string is a broken mapping, not a
+                    # missing value, and the row it came from is not trusted.
+                    rejected = True
                     expected_name = self._expected_type_name(entity.target, field_rule.target)
-                    # Same policy as a failed operator: a required field rejects
-                    # the entity, an optional one drops its value and lets the
-                    # rest of the row through. A natural-key field counts as
-                    # required whatever the rule says — dropping it would let
-                    # the normalizer fall back to the positional index and give
-                    # the row a different identity, silently.
-                    critical = field_rule.required or field_rule.target in entity.natural_key
                     issues.append(
                         ImportIssue(
-                            severity="rejected" if critical else "warning",
+                            severity="rejected",
                             code="TYPE_MISMATCH",
                             message=(
                                 f"Field '{field_rule.target}' received "
@@ -132,10 +131,7 @@ class TransformationEngine:
                             line_number=line_number,
                         )
                     )
-                    if critical:
-                        rejected = True
-                        continue
-                    value = None
+                    continue
 
             if value is None and field_rule.required:
                 # A required field that failed → the whole entity is rejected.

@@ -265,12 +265,13 @@ def test_float_on_an_integer_field_is_rounded_not_rejected():
     assert results[0]["data"]["duration_ms"] == 1005
 
 
-def test_type_mismatch_on_an_optional_field_warns_and_keeps_the_entity():
-    """An optional field of the wrong type drops its value, it does not reject.
+def test_type_mismatch_rejects_the_record_even_on_an_optional_field():
+    """The stricter-than-operators policy this branch introduced, kept as is.
 
-    Matching the established policy for a failed operator: rejecting the whole
-    entity would drag its children down with PARENT_SESSION_MISSING over a field
-    nobody declared necessary.
+    A failed operator on an optional field only warns, but a declared int that
+    arrives as a string is a broken mapping rather than a missing value, so the
+    record is not trusted. Pinned here and in
+    tests/integration/test_run_import.py.
     """
     engine = TransformationEngine()
     mapping = _make_mapping(
@@ -280,36 +281,12 @@ def test_type_mismatch_on_an_optional_field_warns_and_keeps_the_entity():
                 natural_key=["external_id"],
                 fields=[
                     FieldRule(target="external_id", source="$.id", required=True),
-                    FieldRule(target="agent_name", source="$.agent"),
+                    FieldRule(target="duration_ms", source="$.dur"),
                 ],
             )
         ]
     )
-    results, issues = engine.apply(mapping, {"id": "s1", "agent": {"nested": "object"}})
-
-    assert len(results) == 1
-    assert "agent_name" not in results[0]["data"]
-    assert len(issues) == 1
-    assert issues[0].severity == "warning"
-    assert issues[0].code == "TYPE_MISMATCH"
-
-
-def test_type_mismatch_on_a_natural_key_field_rejects_even_when_optional():
-    """A natural-key field is identity: dropping it would silently renumber the row."""
-    engine = TransformationEngine()
-    mapping = _make_mapping(
-        [
-            EntityMapping(
-                target="tool_call",
-                natural_key=["sequence_index"],
-                fields=[
-                    FieldRule(target="tool_name", source="$.name", required=True),
-                    FieldRule(target="sequence_index", source="$.idx"),
-                ],
-            )
-        ]
-    )
-    results, issues = engine.apply(mapping, {"name": "Bash", "idx": "7"})
+    results, issues = engine.apply(mapping, {"id": "s1", "dur": "twelve"})
 
     assert results == []
     assert len(issues) == 1
