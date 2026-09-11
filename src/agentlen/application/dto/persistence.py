@@ -48,16 +48,33 @@ class ToolCallRow:
 class InsertOutcome:
     """What an insertion actually did.
 
-    `assigned` maps each entity's in-batch UUID to the id the database gave it,
-    so children can be linked to the parent that was just written.
+    `assigned` maps each entity this call wrote to the id the database gave it —
+    one row per natural key, however many times the batch repeats that key.
 
-    `duplicates` lists entities the database already had, recognised by their
-    natural key. They are not an error: re-importing a file is a normal act, and
-    the import report counts them separately from rejections (DATA_MODEL.md §6).
+    `existing` maps every other entity to the id of the row that already holds
+    its natural key: written earlier in the same batch, earlier in the same
+    import run, or by a previous import. Children need that id to attach to a
+    parent they did not create, which is why `ids` merges the two.
+
+    `duplicates` lists the entities the report counts as already imported. It is
+    a subset of `existing` and not an error: re-importing a file is a normal act,
+    counted apart from rejections (DATA_MODEL.md §6). A session that several
+    lines of one import describe is the same session, not a duplicate.
+
+    `unlinked` lists children that could not be written because their parent is
+    unknown. They are neither imported nor duplicates: the caller must say so
+    rather than let them disappear.
     """
 
     assigned: dict[UUID, int] = field(default_factory=dict)
     duplicates: tuple[UUID, ...] = ()
+    existing: dict[UUID, int] = field(default_factory=dict)
+    unlinked: tuple[UUID, ...] = ()
+
+    @property
+    def ids(self) -> dict[UUID, int]:
+        """Every entity's database id, whether written by this call or already stored."""
+        return {**self.existing, **self.assigned}
 
     @property
     def inserted_count(self) -> int:

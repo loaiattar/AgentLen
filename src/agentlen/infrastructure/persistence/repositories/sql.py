@@ -21,7 +21,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -53,6 +53,13 @@ class SqlAlchemySessionRepository(_Base):
         if not rows:
             return InsertOutcome()
 
+        # One candidate per natural key. Several lines of one file routinely
+        # carry the same session (TraceLab writes one line per round): they
+        # describe one session, so the first is written and the rest attach to it.
+        candidates: dict[tuple[int, str], SessionRow] = {}
+        for row in rows:
+            candidates.setdefault(_session_key(row), row)
+
         values = [
             {
                 "data_source_id": r.entity.data_source_id,
@@ -66,7 +73,7 @@ class SqlAlchemySessionRepository(_Base):
                 "duration_ms": r.entity.duration_ms,
                 "outcome": r.entity.outcome,
             }
-            for r in rows
+            for r in candidates.values()
         ]
         statement = (
             insert(t.session)
@@ -74,20 +81,47 @@ class SqlAlchemySessionRepository(_Base):
             .on_conflict_do_nothing(constraint="uq_session_source_external")
             .returning(t.session.c.id, t.session.c.data_source_id, t.session.c.external_id)
         )
-        returned = (await self._conn.execute(statement)).all()
+        written = {
+            (r.data_source_id, r.external_id): r.id
+            for r in (await self._conn.execute(statement)).all()
+        }
+        # RETURNING only yields the rows actually inserted: every other key is
+        # already stored, and its children still need that row's id.
+        stored = await self._stored([key for key in candidates if key not in written])
 
-        # RETURNING only yields the rows actually inserted, so anything missing
-        # from it collided on the natural key.
-        by_key = {(r.data_source_id, r.external_id): r.id for r in returned}
         assigned: dict[UUID, int] = {}
+        existing: dict[UUID, int] = {}
         duplicates: list[UUID] = []
         for row in rows:
-            key = (row.entity.data_source_id, row.entity.external_id)
-            if key in by_key:
-                assigned[row.entity.id] = by_key[key]
-            else:
+            key = _session_key(row)
+            first = candidates[key] is row
+            if key in written:
+                (assigned if first else existing)[row.entity.id] = written[key]
+                continue
+            if key not in stored:
+                raise RuntimeError(f"Session {key} neither inserted nor found after conflict.")
+            row_id, stored_run_id = stored[key]
+            existing[row.entity.id] = row_id
+            # Stored by a previous import: that is what a re-import looks like.
+            # Stored earlier in this run (a previous batch): the same session.
+            if first and stored_run_id != row.import_run_id:
                 duplicates.append(row.entity.id)
-        return InsertOutcome(assigned=assigned, duplicates=tuple(duplicates))
+        return InsertOutcome(assigned=assigned, existing=existing, duplicates=tuple(duplicates))
+
+    async def _stored(self, keys: list[tuple[int, str]]) -> dict[tuple[int, str], tuple[int, int]]:
+        """Id and import run of the sessions already holding these natural keys."""
+        if not keys:
+            return {}
+        query = select(
+            t.session.c.id,
+            t.session.c.data_source_id,
+            t.session.c.external_id,
+            t.session.c.import_run_id,
+        ).where(tuple_(t.session.c.data_source_id, t.session.c.external_id).in_(keys))
+        return {
+            (r.data_source_id, r.external_id): (r.id, r.import_run_id)
+            for r in (await self._conn.execute(query)).all()
+        }
 
     async def get(self, session_id: int) -> Session | None:
         row = (
@@ -144,12 +178,13 @@ class SqlAlchemyModelCallRepository(_Base):
     async def add_many(
         self, rows: list[ModelCallRow], *, session_ids: dict[Any, int]
     ) -> InsertOutcome:
-        pending = [(r, session_ids.get(r.entity.session_id)) for r in rows]
-        insertable = [(r, sid) for r, sid in pending if sid is not None]
-        # A child whose parent collided is itself already stored.
-        orphans = tuple(r.entity.id for r, sid in pending if sid is None)
-        if not insertable:
-            return InsertOutcome(duplicates=orphans)
+        linked, unlinked = _link_to_sessions(rows, session_ids)
+        if not linked:
+            return InsertOutcome(unlinked=unlinked)
+
+        candidates: dict[tuple[int, int], tuple[ModelCallRow, int]] = {}
+        for row, sid in linked:
+            candidates.setdefault((sid, row.entity.sequence_index), (row, sid))
 
         values = [
             {
@@ -167,7 +202,7 @@ class SqlAlchemyModelCallRepository(_Base):
                 "status": r.entity.status,
                 "error_code": r.entity.error_code,
             }
-            for r, sid in insertable
+            for r, sid in candidates.values()
         ]
         statement = (
             insert(t.model_call)
@@ -175,18 +210,14 @@ class SqlAlchemyModelCallRepository(_Base):
             .on_conflict_do_nothing(constraint="uq_model_call_session_sequence")
             .returning(t.model_call.c.id, t.model_call.c.session_id, t.model_call.c.sequence_index)
         )
-        returned = (await self._conn.execute(statement)).all()
-        by_key = {(r.session_id, r.sequence_index): r.id for r in returned}
-
-        assigned: dict[UUID, int] = {}
-        duplicates = list(orphans)
-        for row, sid in insertable:
-            key = (sid, row.entity.sequence_index)
-            if key in by_key:
-                assigned[row.entity.id] = by_key[key]
-            else:
-                duplicates.append(row.entity.id)
-        return InsertOutcome(assigned=assigned, duplicates=tuple(duplicates))
+        written = {
+            (r.session_id, r.sequence_index): r.id
+            for r in (await self._conn.execute(statement)).all()
+        }
+        stored = await _stored_calls(
+            self._conn, t.model_call, [key for key in candidates if key not in written]
+        )
+        return _call_outcome(linked, candidates, written, stored, unlinked)
 
 
 class SqlAlchemyToolCallRepository(_Base):
@@ -198,11 +229,13 @@ class SqlAlchemyToolCallRepository(_Base):
         model_call_ids: dict[Any, int] | None = None,
     ) -> InsertOutcome:
         model_call_ids = model_call_ids or {}
-        pending = [(r, session_ids.get(r.entity.session_id)) for r in rows]
-        insertable = [(r, sid) for r, sid in pending if sid is not None]
-        orphans = tuple(r.entity.id for r, sid in pending if sid is None)
-        if not insertable:
-            return InsertOutcome(duplicates=orphans)
+        linked, unlinked = _link_to_sessions(rows, session_ids)
+        if not linked:
+            return InsertOutcome(unlinked=unlinked)
+
+        candidates: dict[tuple[int, int], tuple[ToolCallRow, int]] = {}
+        for row, sid in linked:
+            candidates.setdefault((sid, row.entity.sequence_index), (row, sid))
 
         values = [
             {
@@ -216,7 +249,7 @@ class SqlAlchemyToolCallRepository(_Base):
                 "status": r.entity.status,
                 "error_message": r.entity.error_message,
             }
-            for r, sid in insertable
+            for r, sid in candidates.values()
         ]
         statement = (
             insert(t.tool_call)
@@ -224,18 +257,71 @@ class SqlAlchemyToolCallRepository(_Base):
             .on_conflict_do_nothing(constraint="uq_tool_call_session_sequence")
             .returning(t.tool_call.c.id, t.tool_call.c.session_id, t.tool_call.c.sequence_index)
         )
-        returned = (await self._conn.execute(statement)).all()
-        by_key = {(r.session_id, r.sequence_index): r.id for r in returned}
+        written = {
+            (r.session_id, r.sequence_index): r.id
+            for r in (await self._conn.execute(statement)).all()
+        }
+        stored = await _stored_calls(
+            self._conn, t.tool_call, [key for key in candidates if key not in written]
+        )
+        return _call_outcome(linked, candidates, written, stored, unlinked)
 
-        assigned: dict[UUID, int] = {}
-        duplicates = list(orphans)
-        for row, sid in insertable:
-            key = (sid, row.entity.sequence_index)
-            if key in by_key:
-                assigned[row.entity.id] = by_key[key]
-            else:
-                duplicates.append(row.entity.id)
-        return InsertOutcome(assigned=assigned, duplicates=tuple(duplicates))
+
+def _session_key(row: SessionRow) -> tuple[int, str]:
+    return (row.entity.data_source_id, row.entity.external_id)
+
+
+def _link_to_sessions(
+    rows: list[Any], session_ids: dict[Any, int]
+) -> tuple[list[tuple[Any, int]], tuple[UUID, ...]]:
+    """Pair each call with its session's database id; set apart those with none."""
+    linked: list[tuple[Any, int]] = []
+    unlinked: list[UUID] = []
+    for row in rows:
+        sid = session_ids.get(row.entity.session_id)
+        if sid is None:
+            unlinked.append(row.entity.id)
+        else:
+            linked.append((row, sid))
+    return linked, tuple(unlinked)
+
+
+async def _stored_calls(
+    conn: AsyncConnection, table: Any, keys: list[tuple[int, int]]
+) -> dict[tuple[int, int], int]:
+    """Id of the calls already holding these (session, sequence) keys."""
+    if not keys:
+        return {}
+    query = select(table.c.id, table.c.session_id, table.c.sequence_index).where(
+        tuple_(table.c.session_id, table.c.sequence_index).in_(keys)
+    )
+    return {(r.session_id, r.sequence_index): r.id for r in (await conn.execute(query)).all()}
+
+
+def _call_outcome(
+    linked: list[tuple[Any, int]],
+    candidates: dict[tuple[int, int], tuple[Any, int]],
+    written: dict[tuple[int, int], int],
+    stored: dict[tuple[int, int], int],
+    unlinked: tuple[UUID, ...],
+) -> InsertOutcome:
+    """A call is an event: the same key twice, in this batch or already stored,
+    is the same call recorded twice — a duplicate, still resolvable by id."""
+    assigned: dict[UUID, int] = {}
+    existing: dict[UUID, int] = {}
+    duplicates: list[UUID] = []
+    for row, sid in linked:
+        key = (sid, row.entity.sequence_index)
+        if key in written and candidates[key][0] is row:
+            assigned[row.entity.id] = written[key]
+            continue
+        if key not in written and key not in stored:
+            raise RuntimeError(f"Call {key} neither inserted nor found after conflict.")
+        existing[row.entity.id] = written[key] if key in written else stored[key]
+        duplicates.append(row.entity.id)
+    return InsertOutcome(
+        assigned=assigned, existing=existing, duplicates=tuple(duplicates), unlinked=unlinked
+    )
 
 
 class SqlAlchemyRawRecordRepository(_Base):

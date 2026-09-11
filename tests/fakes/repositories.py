@@ -111,17 +111,25 @@ class InMemorySessionRepository:
 
     async def add_many(self, rows: list[SessionRow]) -> InsertOutcome:
         assigned: dict[UUID, int] = {}
+        existing: dict[UUID, int] = {}
         duplicates: list[UUID] = []
+        counted: set[tuple[int, str]] = set()
         for row in rows:
             key = (row.entity.data_source_id, row.entity.external_id)
-            if key in self._s.session_keys:
-                duplicates.append(row.entity.id)
+            stored_id = self._s.session_keys.get(key)
+            if stored_id is None:
+                new_id = self._s.ids.take()
+                self._s.session_keys[key] = new_id
+                self._s.sessions[new_id] = (row.entity, row)
+                assigned[row.entity.id] = new_id
                 continue
-            new_id = self._s.ids.take()
-            self._s.session_keys[key] = new_id
-            self._s.sessions[new_id] = (row.entity, row)
-            assigned[row.entity.id] = new_id
-        return InsertOutcome(assigned=assigned, duplicates=tuple(duplicates))
+            existing[row.entity.id] = stored_id
+            _, stored_row = self._s.sessions[stored_id]
+            # Same run (earlier line or batch): the same session. Earlier run: a re-import.
+            if stored_row.import_run_id != row.import_run_id and key not in counted:
+                counted.add(key)
+                duplicates.append(row.entity.id)
+        return InsertOutcome(assigned=assigned, existing=existing, duplicates=tuple(duplicates))
 
     async def get(self, session_id: int) -> Session | None:
         found = self._s.sessions.get(session_id)
@@ -161,22 +169,30 @@ class InMemoryModelCallRepository:
         self, rows: list[ModelCallRow], *, session_ids: dict[Any, int]
     ) -> InsertOutcome:
         assigned: dict[UUID, int] = {}
+        existing: dict[UUID, int] = {}
         duplicates: list[UUID] = []
+        unlinked: list[UUID] = []
         for row in rows:
             parent = session_ids.get(row.entity.session_id)
             if parent is None:
-                # Parent was itself a duplicate: the child already exists too.
-                duplicates.append(row.entity.id)
+                unlinked.append(row.entity.id)
                 continue
             key = (parent, row.entity.sequence_index)
-            if key in self._s.model_call_keys:
+            stored_id = self._s.model_call_keys.get(key)
+            if stored_id is not None:
+                existing[row.entity.id] = stored_id
                 duplicates.append(row.entity.id)
                 continue
             new_id = self._s.ids.take()
             self._s.model_call_keys[key] = new_id
             self._s.model_calls.append((new_id, row))
             assigned[row.entity.id] = new_id
-        return InsertOutcome(assigned=assigned, duplicates=tuple(duplicates))
+        return InsertOutcome(
+            assigned=assigned,
+            existing=existing,
+            duplicates=tuple(duplicates),
+            unlinked=tuple(unlinked),
+        )
 
 
 class InMemoryToolCallRepository:
@@ -191,21 +207,30 @@ class InMemoryToolCallRepository:
         model_call_ids: dict[Any, int] | None = None,
     ) -> InsertOutcome:
         assigned: dict[UUID, int] = {}
+        existing: dict[UUID, int] = {}
         duplicates: list[UUID] = []
+        unlinked: list[UUID] = []
         for row in rows:
             parent = session_ids.get(row.entity.session_id)
             if parent is None:
-                duplicates.append(row.entity.id)
+                unlinked.append(row.entity.id)
                 continue
             key = (parent, row.entity.sequence_index)
-            if key in self._s.tool_call_keys:
+            stored_id = self._s.tool_call_keys.get(key)
+            if stored_id is not None:
+                existing[row.entity.id] = stored_id
                 duplicates.append(row.entity.id)
                 continue
             new_id = self._s.ids.take()
             self._s.tool_call_keys[key] = new_id
             self._s.tool_calls.append((new_id, row))
             assigned[row.entity.id] = new_id
-        return InsertOutcome(assigned=assigned, duplicates=tuple(duplicates))
+        return InsertOutcome(
+            assigned=assigned,
+            existing=existing,
+            duplicates=tuple(duplicates),
+            unlinked=tuple(unlinked),
+        )
 
 
 class InMemoryRawRecordRepository:
