@@ -15,12 +15,16 @@ measured rather than assumed.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from agentlen.application.errors import AnalyzerError
 from agentlen.infrastructure.ai.agent_tools import to_openai
-from agentlen.infrastructure.ai.base import BaseAnalyzerAdapter, ModelTurn, ToolCall
+from agentlen.infrastructure.ai.base import (
+    BaseAnalyzerAdapter,
+    ModelTurn,
+    ToolCall,
+    tool_result_content,
+)
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
@@ -63,17 +67,13 @@ class OpenAIAnalyzer(BaseAnalyzerAdapter):
         calls = []
         for call in raw_calls:
             function = call.get("function", {})
-            try:
-                arguments = json.loads(function.get("arguments") or "{}")
-            except json.JSONDecodeError:
-                # A model emitting unparsable arguments is a model error, not a
-                # crash: reported as such so the loop can surface it.
-                raise AnalyzerError(
-                    f"Arguments d'outil illisibles pour '{function.get('name')}'.",
-                    details={"provider": self.provider_name},
-                ) from None
+            # Not decoded here: arguments that are not a JSON object are the
+            # model's mistake to correct, handed back as the tool's result.
+            # Raising used to end the whole proposal (#152).
             calls.append(
-                ToolCall(id=call.get("id", ""), name=function.get("name", ""), arguments=arguments)
+                ToolCall.from_model(
+                    call.get("id", ""), function.get("name", ""), function.get("arguments")
+                )
             )
 
         return ModelTurn(
@@ -97,7 +97,7 @@ class OpenAIAnalyzer(BaseAnalyzerAdapter):
             {
                 "role": "tool",
                 "tool_call_id": call.id,
-                "content": json.dumps(result, ensure_ascii=False),
+                "content": tool_result_content(result),
             }
             for call, result in results
         ]

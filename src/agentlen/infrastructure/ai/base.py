@@ -27,11 +27,12 @@ from typing import Any
 
 import httpx
 
+from agentlen.application.dto.mapping_document import document_to_mapping
 from agentlen.application.errors import AnalyzerError
 from agentlen.application.ports.tool_executor import ImportAgentToolExecutor
 from agentlen.domain.errors import AgentMaxIterationsError
-from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
-from agentlen.infrastructure.ai.prompts.analysis import PROMPT_VERSION
+from agentlen.domain.model.mapping import Mapping, MappingProposal
+from agentlen.infrastructure.ai.prompts.analysis import PROMPT_VERSION, wrap_as_data
 from agentlen.infrastructure.ai.sanitizer import sanitize_samples, sanitize_value
 from agentlen.infrastructure.config.settings import AISettings
 
@@ -54,6 +55,46 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
+    #: Set when the model's arguments were not a JSON object. The loop sends it
+    #: back as the tool's result instead of running the tool: the model can fix
+    #: a malformed call, not a 500 it never sees (#152).
+    arguments_error: str | None = None
+
+    @classmethod
+    def from_model(cls, call_id: str, name: str, arguments: Any) -> ToolCall:
+        """Read the arguments as the provider sent them.
+
+        OpenAI sends a JSON string; Anthropic, and some OpenAI-compatible hosts,
+        send the object itself. Absent arguments are an empty object.
+        """
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments) if arguments.strip() else None
+            except (ValueError, RecursionError):
+                return cls(call_id, name, {}, "Tool arguments are not valid JSON.")
+        if arguments is None:
+            return cls(call_id, name, {})
+        if not isinstance(arguments, dict):
+            return cls(call_id, name, {}, "Tool arguments must be a JSON object.")
+        return cls(call_id, name, arguments)
+
+
+def tool_result_content(result: dict[str, Any]) -> str:
+    """A tool result as it goes back to the model: its JSON, fenced as data.
+
+    Results carry trace content — field paths, sample values — and went back as
+    bare `json.dumps`, which escapes neither `<` nor `>`. A value holding the
+    closing delimiter left the data block the prompt builds everywhere else
+    (#152).
+    """
+    return wrap_as_data(json.dumps(result, ensure_ascii=False))
+
+
+async def _run_tool(call: ToolCall, executor: ImportAgentToolExecutor) -> dict[str, Any]:
+    """The executor's answer, or the reason the call could not be read."""
+    if call.arguments_error is not None:
+        return {"error": call.arguments_error}
+    return await executor.execute(call.name, call.arguments)
 
 
 @dataclass(frozen=True)
@@ -194,6 +235,24 @@ class BaseAnalyzerAdapter:
             details={"cause": type(last).__name__ if last else "unknown"},
         )
 
+    async def _next_turn(self, messages: list[dict[str, Any]]) -> ModelTurn:
+        """One round trip, the reply read into a `ModelTurn`.
+
+        The body is JSON by now (`_post` sees to that) but not necessarily in the
+        provider's shape: a proxy answering `[]`, a `choices` entry that is a
+        string, a `tool_use` block without an `id`. `_parse_turn` indexes straight
+        into it, and the bare `AttributeError` or `KeyError` reached the catch-all
+        500 (#152). Only the exception class is kept: its message can quote the body.
+        """
+        payload = await self._post(self._build_request(messages))
+        try:
+            return self._parse_turn(payload)
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError) as exc:
+            raise AnalyzerError(
+                f"Le fournisseur {self.provider_name} a renvoyé une réponse de forme inattendue.",
+                details={"provider": self.provider_name, "cause": type(exc).__name__},
+            ) from exc
+
     async def run_agent_loop(
         self,
         profile: Any,
@@ -220,7 +279,7 @@ class BaseAnalyzerAdapter:
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
 
         for _ in range(self._settings.max_iterations):
-            turn = self._parse_turn(await self._post(self._build_request(messages)))
+            turn = await self._next_turn(messages)
 
             if turn.stop_reason != "tool_use":
                 return self._to_proposal(turn.text)
@@ -229,8 +288,9 @@ class BaseAnalyzerAdapter:
             for call in turn.tool_calls:
                 # The executor refuses anything outside the whitelist and
                 # returns {"error": ...} rather than raising, so one bad tool
-                # name does not end the conversation.
-                results.append((call, await tool_executor.execute(call.name, call.arguments)))
+                # name does not end the conversation. Unreadable arguments are
+                # answered the same way, before they reach it.
+                results.append((call, await _run_tool(call, tool_executor)))
 
             messages.append(self._assistant_message(turn))
             messages.extend(self._tool_results_message(results))
@@ -254,13 +314,10 @@ class BaseAnalyzerAdapter:
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
 
         for _ in range(self._settings.max_refinement_iterations):
-            turn = self._parse_turn(await self._post(self._build_request(messages)))
+            turn = await self._next_turn(messages)
             if turn.stop_reason != "tool_use":
                 return self._to_proposal(turn.text)
-            results = [
-                (call, await tool_executor.execute(call.name, call.arguments))
-                for call in turn.tool_calls
-            ]
+            results = [(call, await _run_tool(call, tool_executor)) for call in turn.tool_calls]
             messages.append(self._assistant_message(turn))
             messages.extend(self._tool_results_message(results))
 
@@ -289,9 +346,9 @@ class BaseAnalyzerAdapter:
         try:
             return MappingProposal(
                 mapping=_document_to_mapping(payload["mapping"]),
-                rationale=tuple(payload.get("rationale", ())),
-                ambiguities=tuple(payload["ambiguities"]),
-                unmapped_fields=tuple(payload["unmapped_fields"]),
+                rationale=_objects(payload.get("rationale") or (), "rationale"),
+                ambiguities=_objects(payload["ambiguities"], "ambiguities"),
+                unmapped_fields=_objects(payload["unmapped_fields"], "unmapped_fields"),
                 analyzer_descriptor=self.descriptor,
             )
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
@@ -347,54 +404,58 @@ def _truncate(text: str, limit: int = MAX_HISTORY_MESSAGE_LENGTH) -> str:
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
-    """Find the JSON object in a reply that may be wrapped in prose or fences."""
+    """Find the JSON object in a reply that may be wrapped in prose or fences.
+
+    Only an object counts. `json.loads` takes `42`, `"text"` or a list just as
+    well, and `"mapping" in 42` then raised `TypeError`, a 500 (#152). Content
+    that is not even a string (some compatible hosts send a list of parts) is no
+    document either.
+    """
+    if not isinstance(text, str):
+        return None
     candidate = text.strip()
     if candidate.startswith("```"):
         candidate = candidate.split("```")[1]
         if candidate.startswith("json"):
             candidate = candidate[4:]
-    try:
-        parsed: dict[str, Any] = json.loads(candidate)
+    parsed = _loads_object(candidate)
+    if parsed is not None:
         return parsed
-    except json.JSONDecodeError:
-        pass
     start, end = candidate.find("{"), candidate.rfind("}")
     if start == -1 or end <= start:
         return None
+    return _loads_object(candidate[start : end + 1])
+
+
+def _loads_object(text: str) -> dict[str, Any] | None:
     try:
-        parsed = json.loads(candidate[start : end + 1])
-        return parsed
-    except json.JSONDecodeError:
+        parsed = json.loads(text)
+    except (ValueError, RecursionError):
         return None
+    return parsed if isinstance(parsed, dict) else None
 
 
-def _document_to_mapping(document: dict[str, Any]) -> Mapping:
-    from uuid import uuid4
+def _objects(value: Any, key: str) -> tuple[dict[str, Any], ...]:
+    """A section of the answer as MAPPING_CONTRACT.md §5 gives it: a list of objects.
 
-    return Mapping(
-        id=uuid4(),
-        name=document.get("name", "proposed"),
-        version=1,
-        source_format=document.get("source_format", "jsonl"),
-        entities=tuple(
-            EntityMapping(
-                target=entity["target"],
-                natural_key=tuple(entity.get("natural_key", ())),
-                iterate=entity.get("iterate"),
-                parent=entity.get("parent"),
-                fields=tuple(
-                    FieldRule(
-                        target=rule["target"],
-                        source=rule["source"],
-                        required=rule.get("required", False),
-                        operators=tuple(rule.get("operators", ())),
-                    )
-                    for rule in entity.get("fields", ())
-                ),
-            )
-            for entity in document.get("entities", ())
-        ),
-    )
+    The response schema types these `list[dict]`. A list of strings was stored as
+    it came, and the proposal then failed its own response with a 500.
+    """
+    if not isinstance(value, list | tuple) or not all(isinstance(item, dict) for item in value):
+        raise TypeError(f"'{key}' must be a list of objects")
+    return tuple(value)
+
+
+def _document_to_mapping(document: Any) -> Mapping:
+    """The model's `mapping`, read by the same checked converter as the tools.
+
+    A second copy here indexed it without guards: a string where an operator
+    belongs came through, and `mapping_validator` then raised on it (#152). A
+    proposal keeps its own defaults for what a model may leave out.
+    """
+    if isinstance(document, dict):
+        document = {"name": "proposed", "source_format": "jsonl", **document}
+    return document_to_mapping(document)
 
 
 def _mapping_payload(mapping: Mapping) -> dict[str, Any]:

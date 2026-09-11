@@ -395,3 +395,37 @@ def test_empty_iterate_is_not_treated_as_iterated():
         "MAPPING_INVALID_NATURAL_KEY",
         "MAPPING_MISSING_SEQUENCE_INDEX",
     }
+
+
+@pytest.mark.parametrize(
+    ("operator", "code"),
+    [
+        ("trim", "INVALID_OPERATOR_PARAM"),
+        (["trim"], "INVALID_OPERATOR_PARAM"),
+        ({"op": ["trim"]}, "MAPPING_UNKNOWN_OPERATOR"),
+        ({"op": "cast", "to": ["integer"]}, "INVALID_OPERATOR_PARAM"),
+        ({"op": "map_values", "table": {}, "on_unknown": ["null"]}, "INVALID_OPERATOR_PARAM"),
+    ],
+)
+def test_an_operator_of_the_wrong_type_is_reported_not_raised(operator, code):
+    """#152: operators can come from a model's JSON.
+
+    `op.get` raised on a string, and `in` on a frozenset raised on a list —
+    `validate` promises never to raise, and the proposal failed with a 500.
+    """
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="session",
+                natural_key=["external_id"],
+                fields=[
+                    FieldRule(target="external_id", source="$.session_id", operators=[operator])
+                ],
+            )
+        ]
+    )
+
+    errors = validate(mapping)
+
+    assert [error.code for error in errors] == [code]
+    assert "operators[0]" in errors[0].field_path
