@@ -84,7 +84,7 @@ Tous les composants du design system sont dans `frontend/src/components/ui/`.
 | `Timeline` | Session detail |
 | `AiPanel` | Insights mapping, pas un chat |
 | `Modal`, `Drawer`, `Tooltip` | Overlays glass |
-| `PageHeader`, `AppSidebar`, `TopNav`, `AtmosphericBackground` | Shell |
+| `PageHeader`, `AppSidebar`, `TopNav`, `AtmosphericBackground`, `Wordmark`, `PublicHeader` | Shell |
 
 shadcn/ui : `frontend/components.json` pointe vers `src/components/ui` et `src/app/styles/globals.css`. Un nouveau primitive shadcn est généré dans ce dossier, puis recâblé sur les tokens (pas de palette shadcn par défaut).
 
@@ -106,7 +106,9 @@ Le shell (`AppLayout`) applique le fond atmosphérique, la sidebar glass et la t
 
 | Route | Page |
 |---|---|
-| `/` | Overview Bento |
+| `/` | Landing publique |
+| `/login` · `/register` | Authentification |
+| `/overview` | Overview Bento |
 | `/sessions` | Explorer + table |
 | `/sessions/$sessionId` | Timeline |
 | `/imports` | Nouvel import + historique |

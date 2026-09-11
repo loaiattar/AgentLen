@@ -9,9 +9,18 @@ export interface TopNavProps {
   periodLabel: string
   datasetItems: OverflowMenuItem[]
   periodItems: OverflowMenuItem[]
+  accountLabel?: string
+  accountItems?: OverflowMenuItem[]
 }
 
-export function TopNav({ datasetLabel, periodLabel, datasetItems, periodItems }: TopNavProps) {
+export function TopNav({
+  datasetLabel,
+  periodLabel,
+  datasetItems,
+  periodItems,
+  accountLabel = 'AS',
+  accountItems,
+}: TopNavProps) {
   return (
     <header className="flex h-[var(--header-height)] items-center gap-[var(--space-1)] px-[var(--space-2)] md:px-[var(--space-4)]">
       <SearchField placeholder="Search sessions, imports, mappings…" aria-label="Global search" />
@@ -51,15 +60,33 @@ export function TopNav({ datasetLabel, periodLabel, datasetItems, periodItems }:
         <Bell />
       </Button>
 
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        aria-label="Account"
-        className="rounded-pill bg-primary-soft text-meta text-foreground"
-      >
-        AS
-      </Button>
+      {accountItems && accountItems.length > 0 ? (
+        <OverflowMenu
+          label="Account"
+          items={accountItems}
+          trigger={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Account"
+              className="rounded-pill bg-primary-soft text-meta text-foreground"
+            >
+              {accountLabel}
+            </Button>
+          }
+        />
+      ) : (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Account"
+          className="rounded-pill bg-primary-soft text-meta text-foreground"
+        >
+          {accountLabel}
+        </Button>
+      )}
     </header>
   )
 }

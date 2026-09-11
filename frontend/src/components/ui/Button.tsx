@@ -11,12 +11,12 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary:
-          'bg-primary-emphasis text-foreground shadow-glass hover:brightness-[1.04] active:scale-[0.98] active:brightness-[0.98]',
+          'bg-primary text-on-dark shadow-glass hover:brightness-[1.08] active:scale-[0.98] active:brightness-[0.94]',
         secondary:
           'glass-surface text-foreground hover:bg-glass-strong hover:border-glass-border-strong active:scale-[0.98]',
         ghost:
-          'bg-transparent text-foreground-muted hover:bg-primary-soft hover:text-foreground active:scale-[0.98]',
-        text: 'bg-transparent px-0 text-primary underline-offset-4 hover:underline active:opacity-80',
+          'bg-transparent text-foreground hover:bg-primary-soft hover:text-foreground active:scale-[0.98]',
+        text: 'bg-transparent px-0 text-foreground underline-offset-4 hover:underline active:opacity-80',
         ai: 'bg-accent-magenta-soft text-foreground ring-1 ring-accent-magenta/25 hover:ring-accent-magenta/45 active:scale-[0.98]',
         danger:
           'bg-error-soft text-foreground ring-1 ring-error/30 hover:bg-error/20 active:scale-[0.98]',

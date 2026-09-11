@@ -1,15 +1,19 @@
+import { clearSessionToken, getSessionToken } from '@/lib/auth/session'
+
 /** Backend prefix from API.md. Paths passed to apiClient are relative to this (e.g. `/metrics/overview`). */
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 const API_KEY = import.meta.env.VITE_API_KEY ?? ''
 
 export class ApiError extends Error {
   status: number
+  code: string | null
   body: unknown
 
-  constructor(message: string, status: number, body: unknown) {
+  constructor(message: string, status: number, body: unknown, code: string | null = null) {
     super(message)
     this.name = 'ApiError'
     this.status = status
+    this.code = code
     this.body = body
   }
 }
@@ -24,25 +28,40 @@ function joinUrl(base: string, path: string): string {
   return `${normalizedBase}${normalizedPath}`
 }
 
-function messageFromErrorBody(body: unknown, fallback: string): string {
+function errorPayload(body: unknown): { message?: unknown; code?: unknown } | undefined {
   if (body && typeof body === 'object' && 'error' in body) {
-    const payload = (body as { error?: { message?: unknown } }).error
-    if (typeof payload?.message === 'string' && payload.message.length > 0) {
-      return payload.message
-    }
+    return (body as { error?: { message?: unknown; code?: unknown } }).error
+  }
+  return undefined
+}
+
+function messageFromErrorBody(body: unknown, fallback: string): string {
+  const payload = errorPayload(body)
+  if (typeof payload?.message === 'string' && payload.message.length > 0) {
+    return payload.message
   }
   return fallback
+}
+
+function codeFromErrorBody(body: unknown): string | null {
+  const payload = errorPayload(body)
+  if (typeof payload?.code === 'string' && payload.code.length > 0) {
+    return payload.code
+  }
+  return null
 }
 
 async function request<TResponse>(path: string, options: RequestOptions = {}): Promise<TResponse> {
   const { body, headers, ...rest } = options
   const isFormData = body instanceof FormData
+  const sessionToken = getSessionToken()
 
   const response = await fetch(joinUrl(API_BASE_URL, path), {
     ...rest,
     headers: {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
+      ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
       ...headers,
     },
     body: isFormData ? body : body !== undefined ? JSON.stringify(body) : undefined,
@@ -51,7 +70,11 @@ async function request<TResponse>(path: string, options: RequestOptions = {}): P
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => null)
-    throw new ApiError(messageFromErrorBody(errorBody, response.statusText), response.status, errorBody)
+    const code = codeFromErrorBody(errorBody)
+    if (code === 'UNAUTHENTICATED') {
+      clearSessionToken()
+    }
+    throw new ApiError(messageFromErrorBody(errorBody, response.statusText), response.status, errorBody, code)
   }
 
   if (response.status === 204) {

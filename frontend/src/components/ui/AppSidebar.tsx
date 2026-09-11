@@ -2,6 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router'
 
 import { cn } from '@/lib/utils/cn'
 import { StatusDot } from '@/components/ui/StatusDot'
+import { Wordmark } from '@/components/ui/Wordmark'
 import { isShellNavActive, SHELL_NAV_ITEMS, shellNavItemVariants } from '@/components/ui/shell-nav'
 
 export function AppSidebar() {
@@ -11,11 +12,11 @@ export function AppSidebar() {
     <aside className="glass-surface hidden w-[var(--sidebar-width)] shrink-0 flex-col rounded-none border-y-0 border-l-0 lg:flex">
       <div className="flex h-[var(--header-height)] items-center px-[var(--space-3)]">
         <Link
-          to="/"
+          to="/overview"
           search={(prev) => prev}
-          className="font-display text-section text-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="outline-none focus-visible:ring-2 focus-visible:ring-primary-emphasis focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
-          AgentScope
+          <Wordmark />
         </Link>
       </div>
 

@@ -4,9 +4,17 @@ Chaque écran a un focus primaire et au plus une action primaire visible.
 
 Responsive : desktop = composition Bento 12 col. Tablet = 6 col. Mobile = 1 col, réordonné par importance (pas un simple stack desktop).
 
-## Overview `/`
+## Overview `/overview`
 
 2×2 Agent activity · 2×1 Total sessions · 1×1 Error rate · 1×1 Data quality · 3×2 Token consumption · 1×2 Model mix · 2×2 Tool usage · 2×1 Avg duration · 2×1 Recent activity.
+
+## Landing `/`
+
+Hero + aperçu dashboard glass · Bento capacités · Import → Normalize → Explore · assistant IA. CTAs : Get started (`/register`), Sign in (`/login`).
+
+## Auth `/login` · `/register`
+
+Un module glass, champs nécessaires seulement, erreurs inline, loading, lien de bascule.
 
 ## Sessions `/sessions`
 

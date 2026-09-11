@@ -7,8 +7,8 @@
  * Balance: 80% light neutrals / 15% liquid glass / 5% accents.
  *
  * Brand primitives:
- *   Cyan     #00F7FF  → --primary-emphasis (fills, charts, glow — never body text)
- *   Dark cyan#008B94  → --primary (links, focus, ink on light surfaces)
+ *   Cyan     #00F7FF  → --primary-emphasis (charts, glow, focus — never button text)
+ *   Dark cyan#008B94  → --primary (primary button fill, links, icons)
  *   Mint     #B0FFFA  → --accent-mint (healthy / decorative)
  *   Magenta  #FF0087  → --accent-magenta (AI, charts)
  *   Pink     #FF7DB0  → --accent-pink (errors, warnings, decorative)
