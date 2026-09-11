@@ -1,7 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router'
-
-import { DataQualityPage } from '@/features/quality/pages/DataQualityPage'
+import { createFileRoute, lazyRouteComponent } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_app/quality/')({
-  component: DataQualityPage,
+  component: lazyRouteComponent(() => import('@/features/quality/pages/DataQualityPage'), 'DataQualityPage'),
 })
