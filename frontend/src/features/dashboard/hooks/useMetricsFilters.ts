@@ -1,20 +1,27 @@
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 
 import {
-  DATASET_OPTIONS,
   datasetLabel,
+  datasetOptions,
+  EXPLORATION_KEYS,
   PERIOD_OPTIONS,
   periodLabel,
+  readDateRange,
   searchToDashboardFilters,
+  withoutIgnoredDates,
+  withoutSearchKeys,
+  type ExplorationKey,
   type MetricsPeriod,
   type MetricsSearch,
 } from '@/features/dashboard/lib/filters'
+import { useDataSourcesQuery } from '@/features/imports/api/imports.queries'
 
 const appRoute = getRouteApi('/_app')
 
 export function useMetricsFilters() {
   const search = appRoute.useSearch()
   const navigate = useNavigate()
+  const sources = useDataSourcesQuery()
   const filters = searchToDashboardFilters(search)
 
   const patchSearch = (patch: (prev: MetricsSearch) => MetricsSearch) => {
@@ -24,8 +31,11 @@ export function useMetricsFilters() {
   return {
     search,
     filters,
-    datasetLabel: datasetLabel(search.data_source_id),
-    periodLabel: periodLabel(search.period),
+    sources: sources.data ?? [],
+    datasetLabel: datasetLabel(search.data_source_id, sources.data),
+    periodLabel: periodLabel(search),
+    // Dates stay raw in `search` (see `parseMetricsSearch`), so the page can say what it ignores.
+    ignoredDates: readDateRange(search).ignored,
     setDataSourceId: (dataSourceId: number | undefined) => {
       patchSearch((prev) => {
         const next: MetricsSearch = { ...prev }
@@ -47,7 +57,10 @@ export function useMetricsFilters() {
         return next
       })
     },
-    datasetOptions: DATASET_OPTIONS,
+    removeFilter: (key: ExplorationKey) => patchSearch((prev) => withoutSearchKeys(prev, [key])),
+    clearExploration: () => patchSearch((prev) => withoutSearchKeys(prev, EXPLORATION_KEYS)),
+    dropIgnoredDates: () => patchSearch(withoutIgnoredDates),
+    datasetOptions: datasetOptions(sources),
     periodOptions: PERIOD_OPTIONS,
   }
 }
