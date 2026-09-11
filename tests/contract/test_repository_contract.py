@@ -435,6 +435,80 @@ async def test_a_session_without_duration_stays_none(uow: Any) -> None:
         assert stored.started_at is None
 
 
+async def test_a_session_without_start_takes_its_earliest_dated_call(uow: Any) -> None:
+    """#200. A source that dates only its calls still dates its sessions, by the
+    earliest call, model or tool. A stored start is kept, and a session with no
+    dated call stays undated: nothing is invented."""
+    from agentlen.application.dto.persistence import ToolCallRow
+    from agentlen.domain.model.tool_call import ToolCall
+
+    tool_at = datetime(2026, 6, 1, 5, 40, tzinfo=UTC)
+    model_at = datetime(2026, 6, 1, 5, 41, tzinfo=UTC)
+    async with uow:
+        p = await _provenance(uow)
+        undated = Session(id=uuid4(), data_source_id=p["source"], external_id="undated")
+        mapped = _session(p["source"], "mapped")
+        callless = Session(id=uuid4(), data_source_id=p["source"], external_id="callless")
+        sessions = await uow.sessions.add_many(
+            [
+                SessionRow(entity=s, import_run_id=p["run"], raw_record_id=p["raw"])
+                for s in (undated, mapped, callless)
+            ]
+        )
+        await uow.model_calls.add_many(
+            [
+                ModelCallRow(
+                    entity=ModelCall(
+                        id=uuid4(),
+                        session_id=session.id,
+                        sequence_index=index,
+                        token_usage=TokenUsage(),
+                        status="ok",
+                        started_at=at,
+                    ),
+                    raw_record_id=p["raw"],
+                )
+                for session, index, at in (
+                    (undated, 0, model_at),
+                    (undated, 1, None),
+                    (mapped, 0, tool_at),
+                    (callless, 0, None),
+                )
+            ],
+            session_ids=sessions.ids,
+        )
+        await uow.tool_calls.add_many(
+            [
+                ToolCallRow(
+                    entity=ToolCall(
+                        id=uuid4(),
+                        session_id=undated.id,
+                        sequence_index=0,
+                        tool_name="Bash",
+                        status="ok",
+                        started_at=tool_at,
+                    ),
+                    raw_record_id=p["raw"],
+                    tool_id=await uow.referentials.resolve("tool", "Bash"),
+                )
+            ],
+            session_ids=sessions.ids,
+        )
+        ids = list(sessions.ids.values())
+        assert await uow.sessions.fill_missing_started_at(ids) == 1
+        assert await uow.sessions.fill_missing_started_at(ids) == 0, "a derived start is kept"
+        await uow.commit()
+
+    async with uow:
+        stored = {
+            s.external_id: await uow.sessions.get(sessions.ids[s.id])
+            for s in (undated, mapped, callless)
+        }
+        assert stored["undated"] is not None and stored["undated"].started_at == tool_at
+        assert stored["mapped"] is not None and stored["mapped"].started_at == STARTED
+        assert stored["callless"] is not None and stored["callless"].started_at is None
+
+
 # ---------------------------------------------------------------------------
 # Transaction boundary
 # ---------------------------------------------------------------------------

@@ -248,7 +248,7 @@ Pour chaque enregistrement source, le moteur :
 2. persiste le `raw_record` (payload intact + hash) ;
 3. pour chaque entité : résout `iterate` s'il existe (§2.1 ; un `iterate` qui ne désigne pas une liste produit `ITERATE_NOT_A_LIST`), puis pour chaque champ applique les opérateurs **dans l'ordre déclaré** ;
 4. sur échec : produit un `ImportIssue` avec code, chemin et message ; l'entité est rejetée, mais **le reste de l'enregistrement continue d'être traité** (un import partiel expliqué vaut mieux qu'un échec global) ;
-5. calcule la clé naturelle, insère avec `ON CONFLICT DO NOTHING` ;
+5. calcule la clé naturelle, insère avec `ON CONFLICT DO NOTHING`, puis donne à chaque session du lot restée sans `started_at` le `started_at` le plus ancien de ses appels stockés. Une date mappée n'est jamais remplacée, et une session sans appel daté reste sans date. Une source qui ne date que ses appels (le seed mappe `$.emitted_at` des outils TraceLab) se date donc en mappant le `started_at` des appels. La date déduite est fixée au premier lot qui en fournit une : un appel plus ancien arrivé ensuite ne la recule pas ;
 6. incrémente les compteurs du bilan.
 
 **Lecture.** Avant l'étape 1, le lecteur rend chaque enregistrement en valeurs JSON : dates et heures en texte ISO 8601 (`2024-01-02T03:04:05+01:00`), durées en `PT…S` (`PT90.5S`), décimaux en texte exact (`"12.340"` : un flottant l'arrondirait), `NaN` et infinis en `null`. Une ligne qui ne peut être ni lue ni stockée produit **une** issue `rejected` et n'est pas transformée ; les autres lignes continuent et l'import finit `partial`. Rien n'est échappé ni corrigé : le payload est gardé tel qu'écrit, ou pas du tout (un `raw_record` au payload `null` garde alors le numéro de ligne de l'issue).

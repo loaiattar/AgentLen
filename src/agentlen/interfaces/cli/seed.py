@@ -72,6 +72,12 @@ def _tracelab_mapping() -> Mapping:
     through to `ModelCall` today, so mapping it would be silently dropped
     downstream — a pre-existing gap outside this issue's scope, not something
     to paper over here.
+
+    Time: a line has no flat timestamp. Its instants sit in `timing_events`, a
+    list a field `source` cannot index into (MAPPING_CONTRACT.md §2.1), so
+    neither the session nor the model call is dated by the mapping. Each tool
+    call is: `emitted_at` is its start, and the import dates the session from
+    its earliest dated call (MAPPING_CONTRACT.md §7).
     """
     return Mapping(
         id=uuid4(),
@@ -155,6 +161,11 @@ def _tracelab_mapping() -> Mapping:
                         target="duration_ms",
                         source="$.tool_wall_latency_ms",
                         operators=({"op": "cast", "to": "integer", "on_error": "null"},),
+                    ),
+                    FieldRule(
+                        target="started_at",
+                        source="$.emitted_at",
+                        operators=({"op": "parse_datetime", "format": "iso8601"},),
                     ),
                 ),
             ),

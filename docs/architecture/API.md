@@ -384,6 +384,20 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
 }
 ```
 
+**`GET /metrics/activity` → `200`** : un point par jour (UTC) et par source. Une session est placée au jour de son `started_at`, et une session sans date n'y figure pas. Quand le périmètre en contient, `warnings` le dit, pour qu'une série vide ne se lise pas comme « aucune activité » :
+
+```json
+{
+  "points": [],
+  "filters_applied": {},
+  "warnings": [
+    "2 session(s) sur 2 sans date de début, absente(s) de cette série : ni la source ni les appels de ces sessions ne portent d'horodatage mappé."
+  ]
+}
+```
+
+`warnings` existe sur les quatre routes de graphique, et le front l'affiche. Il signale aujourd'hui les métriques de cache non comparables entre sources (`/metrics/models`) et les sessions sans date (`/metrics/activity`).
+
 ---
 
 ## 8. Service

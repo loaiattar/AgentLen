@@ -12,7 +12,7 @@ and against the SQLAlchemy implementations, which is what keeps the claim true.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from types import TracebackType
 from typing import Any
@@ -160,6 +160,29 @@ class InMemorySessionRepository:
                 if data_source_id is None or e.data_source_id == data_source_id
             ]
         )
+
+    async def fill_missing_started_at(self, session_ids: list[int]) -> int:
+        wanted = set(session_ids)
+        calls: dict[int, ModelCallRow | ToolCallRow] = {
+            **dict(self._s.model_calls),
+            **dict(self._s.tool_calls),
+        }
+        firsts: dict[int, datetime] = {}
+        for (session_id, _), call_id in (
+            *self._s.model_call_keys.items(),
+            *self._s.tool_call_keys.items(),
+        ):
+            started = calls[call_id].entity.started_at
+            if session_id in wanted and started is not None:
+                firsts[session_id] = min(started, firsts.get(session_id, started))
+        filled = 0
+        for session_id, first in firsts.items():
+            entity, row = self._s.sessions[session_id]
+            if entity.started_at is None:
+                dated = replace(entity, started_at=first)
+                self._s.sessions[session_id] = (dated, replace(row, entity=dated))
+                filled += 1
+        return filled
 
 
 class InMemoryModelCallRepository:

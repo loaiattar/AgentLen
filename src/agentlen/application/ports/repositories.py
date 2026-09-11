@@ -44,6 +44,16 @@ class SessionRepository(Protocol):
         """
         ...
 
+    # Before `list`: past it, a bare `list[...]` annotation names the method.
+    async def fill_missing_started_at(self, session_ids: list[int]) -> int:
+        """Date the listed sessions that have no `started_at` from their calls.
+
+        Such a session takes the earliest `started_at` among its model and tool
+        calls. A stored start is never overwritten, and a session with no dated
+        call stays NULL. Returns how many sessions were dated.
+        """
+        ...
+
     async def get(self, session_id: int) -> Session | None: ...
 
     async def list(

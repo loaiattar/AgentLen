@@ -318,6 +318,10 @@ class RunImport:
 
             issues.extend(_unlinked_issues(model_outcome, tool_outcome))
 
+            # A session the mapping does not date takes its earliest dated call,
+            # or the activity series cannot place it (#200, DATA_MODEL.md §5).
+            await uow.sessions.fill_missing_started_at(list(set(session_outcome.ids.values())))
+
             rejected_lines = {issue.line_number for issue in issues if issue.severity == "rejected"}
             counters.rejected += len(rejected_lines - {None})
 

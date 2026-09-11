@@ -133,5 +133,6 @@ class PointsOut[T](BaseModel):
     warnings: list[str] = Field(
         default_factory=list,
         description="Non-empty when a value must not be read as comparable "
-        "across sources. The front is expected to surface these.",
+        "across sources, or when sessions in scope are missing from the series "
+        "(no start date, on /metrics/activity). The front is expected to surface these.",
     )

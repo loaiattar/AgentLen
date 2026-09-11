@@ -271,6 +271,7 @@ CREATE INDEX ON tool_call (model_call_id);
 | Colonne | Anomalie | Justification |
 |---|---|---|
 | `session.duration_ms` | Dérivable de `ended_at - started_at` | Certaines sources fournissent une durée **sans** bornes temporelles. La colonne porte donc une information non dérivable ; elle est calculée à l'ingestion quand les bornes existent, et une contrainte de cohérence est vérifiée par test. |
+| `session.started_at` | Complété depuis les appels quand la source ne le fournit pas | L'activité place une session au jour de son début : sans date, elle en est absente. À l'import, une session sans `started_at` reçoit le `started_at` le plus ancien de ses appels (modèle ou outil). C'est le début du premier appel observé, qui ne précède jamais le vrai début. Une date mappée n'est jamais remplacée, et une session sans appel daté reste `NULL` (MAPPING_CONTRACT.md §7). |
 | `import_run.records_*` | Agrégats recalculables depuis `raw_record`/`import_issue` | Le bilan d'import est un **fait historique figé**. Le recalculer après purge des `raw_record` donnerait un résultat faux. |
 | `tool_call.arguments` (JSONB) | Non atomique | Les arguments d'outils sont polymorphes par nature ; les modéliser en relationnel exigerait une table par outil. Ils ne servent qu'à l'affichage détaillé, jamais à un agrégat. |
 | `raw_record.payload` (JSONB) | Non atomique | C'est **volontairement** de la donnée non normalisée : la conservation du brut est une exigence du sujet. |
