@@ -1,12 +1,14 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   useCreateImportMutation,
+  useFileProfileQuery,
+  useFileQuery,
   usePreviewImportMutation,
-  useProfileFileMutation,
   useUploadFileMutation,
 } from '@/features/imports/api/imports.queries'
-import type { FileProfile, FileUpload, ImportPreview } from '@/features/imports/types'
+import { usePipelineSearch } from '@/features/imports/hooks/usePipelineSearch'
+import type { ImportPreview } from '@/features/imports/types'
 
 export const WIZARD_STEPS = ['upload', 'profile', 'mapping', 'preview', 'run'] as const
 export type WizardStep = (typeof WIZARD_STEPS)[number]
@@ -34,29 +36,13 @@ export function clampSampleSize(value: number): number {
   return Math.min(Math.max(Math.trunc(value), MIN_SAMPLE_SIZE), MAX_SAMPLE_SIZE)
 }
 
-interface WizardState {
-  file: FileUpload | null
-  profile: FileProfile | null
-  dataSourceId: number | null
-  mappingId: number | null
-  preview: ImportPreview | null
-  importRunId: number | null
-  /** `already_seen` is a warning, not a block — but it must be acknowledged. */
-  duplicateAcknowledged: boolean
-}
-
-const EMPTY_STATE: WizardState = {
-  file: null,
-  profile: null,
-  dataSourceId: null,
-  mappingId: null,
-  preview: null,
-  importRunId: null,
-  duplicateAcknowledged: false,
-}
-
 /**
  * Drives `upload → profile → mapping → preview → import → tracking`.
+ *
+ * File, source and mapping live in the shared pipeline search so the mapping
+ * studio can leave and come back without losing the run. Local state is only
+ * what must not survive a mapping change: the dry-run, the duplicate ack, and
+ * the launched run id.
  *
  * Two invariants the issue calls out explicitly, enforced here rather than in
  * the page so no future caller can route around them:
@@ -68,103 +54,109 @@ const EMPTY_STATE: WizardState = {
  *    acknowledgement before the import can start.
  */
 export function useImportWizard() {
-  const [state, setState] = useState<WizardState>(EMPTY_STATE)
+  const pipeline = usePipelineSearch('/imports/new')
+  const fileId = pipeline.fileId ?? null
+  const dataSourceId = pipeline.dataSourceId ?? null
+  const mappingId = pipeline.mappingId ?? null
+
+  const fileQuery = useFileQuery(fileId)
+  const profileQuery = useFileProfileQuery(fileId)
+  const file = fileQuery.data ?? null
+  const profile = profileQuery.data ?? null
+
+  const [preview, setPreview] = useState<ImportPreview | null>(null)
+  const [importRunId, setImportRunId] = useState<number | null>(null)
+  const [duplicateAcknowledged, setDuplicateAcknowledged] = useState(false)
   const [sampleSize, setRawSampleSize] = useState(DEFAULT_SAMPLE_SIZE)
   const setSampleSize = useCallback((value: number) => {
     setRawSampleSize(clampSampleSize(value))
   }, [])
 
   const uploadMutation = useUploadFileMutation()
-  const profileMutation = useProfileFileMutation()
   const previewMutation = usePreviewImportMutation()
   const createMutation = useCreateImportMutation()
 
-  const reset = useCallback(() => {
-    setState(EMPTY_STATE)
-    uploadMutation.reset()
-    profileMutation.reset()
+  useEffect(() => {
+    setPreview(null)
+    setImportRunId(null)
+    setDuplicateAcknowledged(false)
     previewMutation.reset()
     createMutation.reset()
-  }, [uploadMutation, profileMutation, previewMutation, createMutation])
+  }, [fileId, previewMutation.reset, createMutation.reset])
+
+  useEffect(() => {
+    setPreview(null)
+    previewMutation.reset()
+  }, [mappingId, previewMutation.reset])
+
+  const reset = useCallback(() => {
+    pipeline.setFileId(undefined)
+    setPreview(null)
+    setImportRunId(null)
+    setDuplicateAcknowledged(false)
+    uploadMutation.reset()
+    previewMutation.reset()
+    createMutation.reset()
+  }, [pipeline.setFileId, uploadMutation, previewMutation, createMutation])
 
   const uploadFile = useCallback(
-    async (file: File) => {
-      // A new file invalidates everything downstream of it.
-      setState(EMPTY_STATE)
+    async (fileToUpload: File) => {
       previewMutation.reset()
       createMutation.reset()
+      setPreview(null)
+      setImportRunId(null)
+      setDuplicateAcknowledged(false)
 
-      // Every caller invokes this as `void wizard.uploadFile(file)`, so a
-      // rejection here would surface as an unhandled promise rejection. The
-      // error is already on screen through `uploadMutation.error`.
       let upload
       try {
-        upload = await uploadMutation.mutateAsync(file)
+        upload = await uploadMutation.mutateAsync(fileToUpload)
       } catch {
         return undefined
       }
-      setState((current) => ({ ...current, file: upload }))
-
-      // Profiling is what makes the mapping step meaningful, so it runs
-      // straight away; a failure here leaves the file selected and is
-      // surfaced through `profileMutation.error` rather than thrown away.
-      try {
-        const profile = await profileMutation.mutateAsync(upload.id)
-        setState((current) => ({ ...current, profile }))
-      } catch {
-        /* surfaced via profileMutation.error */
-      }
-
+      pipeline.setFileId(upload.id)
       return upload
     },
-    [uploadMutation, profileMutation, previewMutation, createMutation],
+    [pipeline.setFileId, uploadMutation, previewMutation, createMutation],
   )
 
   const retryProfile = useCallback(async () => {
-    if (state.file === null) return
-    try {
-      const profile = await profileMutation.mutateAsync(state.file.id)
-      setState((current) => ({ ...current, profile }))
-    } catch {
-      /* surfaced via profileMutation.error */
-    }
-  }, [state.file, profileMutation])
+    if (fileId == null) return
+    await profileQuery.refetch()
+  }, [fileId, profileQuery])
 
-  const selectDataSource = useCallback((dataSourceId: number | null) => {
-    setState((current) => ({
-      ...current,
-      dataSourceId,
-      // Mappings are scoped to a source: keep no selection across a change.
-      mappingId: null,
-      preview: null,
-    }))
-    previewMutation.reset()
-  }, [previewMutation])
+  const selectDataSource = useCallback(
+    (nextDataSourceId: number | null) => {
+      pipeline.setDataSourceId(nextDataSourceId ?? undefined)
+    },
+    [pipeline.setDataSourceId],
+  )
 
-  const selectMapping = useCallback((mappingId: number | null) => {
-    setState((current) => ({ ...current, mappingId, preview: null }))
-    previewMutation.reset()
-  }, [previewMutation])
+  const selectMapping = useCallback(
+    (nextMappingId: number | null) => {
+      pipeline.setMappingId(nextMappingId ?? undefined)
+    },
+    [pipeline.setMappingId],
+  )
 
   const acknowledgeDuplicate = useCallback(() => {
-    setState((current) => ({ ...current, duplicateAcknowledged: true }))
+    setDuplicateAcknowledged(true)
   }, [])
 
-  const canPreview = state.file !== null && state.mappingId !== null
+  const canPreview = file !== null && mappingId !== null
 
   const runPreview = useCallback(async () => {
-    if (state.file === null || state.mappingId === null) return
+    if (file === null || mappingId === null) return
     try {
-      const preview = await previewMutation.mutateAsync({
-        file_id: state.file.id,
-        mapping_id: state.mappingId,
+      const nextPreview = await previewMutation.mutateAsync({
+        file_id: file.id,
+        mapping_id: mappingId,
         sample_size: sampleSize,
       })
-      setState((current) => ({ ...current, preview }))
+      setPreview(nextPreview)
     } catch {
       /* surfaced via previewMutation.error */
     }
-  }, [state.file, state.mappingId, sampleSize, previewMutation])
+  }, [file, mappingId, sampleSize, previewMutation])
 
   // `already_seen` comes back true whenever the *content hash* is known, even
   // when the file was uploaded and never imported (`upload_file.py` returns the
@@ -172,55 +164,62 @@ export function useImportWizard() {
   // re-import a duplicate, so that is what gates the launch — otherwise
   // "Replace" followed by re-picking the same file blocked the wizard behind a
   // warning about an import that never happened.
-  const alreadyImported = (state.file?.previous_import_run_ids?.length ?? 0) > 0
-  const duplicateBlocked = alreadyImported && !state.duplicateAcknowledged
+  const alreadyImported = (file?.previous_import_run_ids?.length ?? 0) > 0
+  const duplicateBlocked = alreadyImported && !duplicateAcknowledged
 
   const canLaunch =
-    state.file !== null &&
-    state.mappingId !== null &&
-    state.dataSourceId !== null &&
-    state.preview !== null &&
+    file !== null &&
+    mappingId !== null &&
+    dataSourceId !== null &&
+    preview !== null &&
     !duplicateBlocked
 
   const launchBlockedReason = useMemo(() => {
-    if (state.file === null) return 'Upload a file first.'
-    if (state.dataSourceId === null) return 'Pick the data source this file belongs to.'
-    if (state.mappingId === null) return 'Pick the mapping to apply.'
-    if (state.preview === null) return 'Run the preview before importing.'
+    if (file === null) return 'Upload a file first.'
+    if (dataSourceId === null) return 'Pick the data source this file belongs to.'
+    if (mappingId === null) return 'Pick the mapping to apply.'
+    if (preview === null) return 'Run the preview before importing.'
     if (duplicateBlocked) return 'This exact file was already imported — acknowledge before re-importing.'
     return null
-  }, [state.file, state.dataSourceId, state.mappingId, state.preview, duplicateBlocked])
+  }, [file, dataSourceId, mappingId, preview, duplicateBlocked])
 
   const launchImport = useCallback(async () => {
-    if (state.file === null || state.mappingId === null || state.dataSourceId === null) return
-    // Belt and braces: the button is disabled, but the guard lives here too.
-    if (state.preview === null) return
+    if (file === null || mappingId === null || dataSourceId === null) return
+    if (preview === null) return
 
     let created
     try {
       created = await createMutation.mutateAsync({
-        data_source_id: state.dataSourceId,
-        file_upload_id: state.file.id,
-        mapping_id: state.mappingId,
+        data_source_id: dataSourceId,
+        file_upload_id: file.id,
+        mapping_id: mappingId,
       })
     } catch {
       return undefined
     }
-    setState((current) => ({ ...current, importRunId: created.import_run_id }))
+    setImportRunId(created.import_run_id)
     return created
-  }, [state.file, state.mappingId, state.dataSourceId, state.preview, createMutation])
+  }, [file, mappingId, dataSourceId, preview, createMutation])
 
   const currentStep: WizardStep = useMemo(() => {
-    if (state.importRunId !== null) return 'run'
-    if (state.preview !== null) return 'preview'
-    if (state.mappingId !== null) return 'mapping'
-    if (state.profile !== null) return 'profile'
-    if (state.file !== null) return 'profile'
+    if (importRunId !== null) return 'run'
+    if (preview !== null) return 'preview'
+    if (mappingId !== null) return 'mapping'
+    if (profile !== null) return 'profile'
+    if (file !== null) return 'profile'
     return 'upload'
-  }, [state])
+  }, [importRunId, preview, mappingId, profile, file])
 
   return {
-    ...state,
+    file,
+    profile,
+    dataSourceId,
+    mappingId,
+    preview,
+    importRunId,
+    duplicateAcknowledged,
+    fileQuery,
+    profileQuery,
     sampleSize,
     setSampleSize,
     currentStep,
@@ -237,7 +236,6 @@ export function useImportWizard() {
     launchImport,
     reset,
     uploadMutation,
-    profileMutation,
     previewMutation,
     createMutation,
   }

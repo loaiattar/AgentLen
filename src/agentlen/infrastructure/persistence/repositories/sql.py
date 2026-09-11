@@ -438,6 +438,16 @@ class SqlAlchemyMappingRepository(_Base):
             query = query.where(t.mapping.c.status == status)
         return int((await self._conn.execute(query)).scalar_one())
 
+    async def latest_version(self, *, data_source_id: int, name: str) -> int | None:
+        from sqlalchemy import func
+
+        query = select(func.max(t.mapping.c.version)).where(
+            t.mapping.c.data_source_id == data_source_id,
+            t.mapping.c.name == name,
+        )
+        highest = (await self._conn.execute(query)).scalar_one_or_none()
+        return int(highest) if highest is not None else None
+
     async def supersede(self, mapping_id: int) -> None:
         await self._conn.execute(
             t.mapping.update().where(t.mapping.c.id == mapping_id).values(status="superseded")
@@ -568,6 +578,12 @@ class SqlAlchemyMappingProposalRepository(_Base):
         )
 
     async def list_messages(self, proposal_id: int, *, limit: int) -> list[dict[str, str | int]]:
+        # Postgres refuses a negative LIMIT outright — it does not read it as
+        # "no limit" — and `LIMIT 0` costs a round trip to learn nothing. The
+        # in-memory double already answered `[]` for both; this is the contract,
+        # now pinned in tests/contract.
+        if limit <= 0:
+            return []
         recent = (
             select(t.mapping_proposal_message)
             .where(t.mapping_proposal_message.c.mapping_proposal_id == proposal_id)

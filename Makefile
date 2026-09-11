@@ -35,7 +35,7 @@ ci-logs:
 lint:
 	ruff format --check .
 	ruff check .
-	mypy --strict src/agentlen/domain src/agentlen/application src/agentlen/infrastructure/ai
+	mypy --strict src/agentlen
 	lint-imports
 
 ## format: apply formatting and the safe lint fixes

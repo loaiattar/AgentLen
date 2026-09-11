@@ -21,6 +21,7 @@ from agentlen.application.ports.repositories import (
     FileUploadRepository,
     ImportIssueRepository,
     ImportRunRepository,
+    MappingProposalRepository,
     MappingRepository,
     ModelCallRepository,
     RawRecordRepository,
@@ -52,6 +53,11 @@ class SqlAlchemyUnitOfWork:
     # assigned in __aenter__), because Protocol attribute matching is
     # invariant: an inferred `SqlAlchemyDataSourceRepository` attribute type
     # would not satisfy `data_sources: DataSourceRepository` on `UnitOfWork`.
+    #
+    # Every repository belongs in this list. `mapping_proposals` was missing,
+    # so this class silently stopped satisfying `UnitOfWork` — and nothing said
+    # so, because the CI type check did not cover `interfaces/`, the only place
+    # the conversion is actually performed.
     sessions: SessionRepository
     model_calls: ModelCallRepository
     tool_calls: ToolCallRepository
@@ -59,6 +65,7 @@ class SqlAlchemyUnitOfWork:
     import_runs: ImportRunRepository
     import_issues: ImportIssueRepository
     mappings: MappingRepository
+    mapping_proposals: MappingProposalRepository
     data_sources: DataSourceRepository
     file_uploads: FileUploadRepository
     referentials: ReferentialRepository

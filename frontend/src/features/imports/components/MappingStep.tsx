@@ -4,7 +4,7 @@ import { Field } from '@/components/ui/Field'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/features/imports/components/SelectField'
 import { useDataSourcesQuery } from '@/features/imports/api/imports.queries'
-import { useMappingsQuery } from '@/features/mappings/api/mappings.queries'
+import { useMappingQuery, useMappingsQuery } from '@/features/mappings/api/mappings.queries'
 
 export interface MappingStepProps {
   fileId: number | null
@@ -38,8 +38,14 @@ export function MappingStep({
 }: MappingStepProps) {
   const dataSources = useDataSourcesQuery()
   const mappings = useMappingsQuery(dataSourceId ?? undefined)
+  const selectedMapping = useMappingQuery(mappingId)
 
   const mappingsUnavailable = mappings.isError
+  const mappingOptions = mappings.data ?? []
+  const options =
+    selectedMapping.data != null && !mappingOptions.some((item) => item.id === selectedMapping.data.id)
+      ? [selectedMapping.data, ...mappingOptions]
+      : mappingOptions
 
   const assistantLink =
     fileId === null ? null : (
@@ -131,7 +137,7 @@ export function MappingStep({
             }
           >
             <option value="">{mappings.isPending ? 'Loading…' : 'Select a mapping'}</option>
-            {(mappings.data ?? []).map((mapping) => (
+            {options.map((mapping) => (
               <option key={mapping.id} value={mapping.id}>
                 {mapping.name} · v{mapping.version} ({mapping.status})
               </option>

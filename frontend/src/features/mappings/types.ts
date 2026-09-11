@@ -34,6 +34,15 @@ export interface MappingDocument {
 }
 
 /**
+ * What `mapping_to_document()` puts on a proposal. `name` lives on the
+ * document here; a saved `Mapping` lifts it to a sibling of `id` / `version`.
+ */
+export interface MappingProposalDocument extends MappingDocument {
+  name: string
+  mapping_version?: string
+}
+
+/**
  * `MappingOut`. `status` is a free string backend-side (`mappings.py` filters
  * on it without a whitelist), so it is not narrowed here: an unknown lifecycle
  * value must render, not break the select.

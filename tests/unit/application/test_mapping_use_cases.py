@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
 from agentlen.application.dto.mapping_document import mapping_to_document
 from agentlen.application.errors import ConflictError, MappingInvalidError, NotFoundError
-from agentlen.application.use_cases.propose_mapping import ProposeMapping
+from agentlen.application.use_cases.propose_mapping import MappingValidationTools, ProposeMapping
 from agentlen.application.use_cases.refine_mapping import RefineMapping
 from agentlen.application.use_cases.save_mapping import SaveMapping
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
 from agentlen.domain.model.profile import FieldProfile, FileProfile
+from agentlen.domain.services import mapping_validator
 from agentlen.infrastructure.ai.fake_adapter import FakeAnalyzer
 from agentlen.infrastructure.ai.sanitizer import ProfileExampleSanitizer
 from tests.fakes.repositories import InMemoryUnitOfWork
@@ -292,6 +294,55 @@ async def test_save_mapping_validates_before_any_write_and_versions() -> None:
     assert len(uow._store.mappings) == before
 
 
+async def test_versioning_a_superseded_version_is_refused() -> None:
+    """Two PUTs against v1 both used to compute v1 + 1.
+
+    The version was derived from the row the caller named rather than from the
+    highest one stored, so the second insert violated
+    `uq_mapping_name_version` — an unhandled IntegrityError, i.e. a 500 on an
+    ordinary double click. Refusing is deliberate: the caller was editing a
+    document someone has since replaced.
+    """
+    uow = InMemoryUnitOfWork()
+    source_id = await stored_data_source(uow, "superseded-src")
+    first_id = await SaveMapping(uow).execute(
+        valid_mapping(name="versioned"), data_source_id=source_id
+    )
+    await SaveMapping(uow).execute(
+        valid_mapping(), data_source_id=None, previous_mapping_id=first_id
+    )
+    before = len(uow._store.mappings)
+
+    with pytest.raises(ConflictError) as caught:
+        await SaveMapping(uow).execute(
+            valid_mapping(), data_source_id=None, previous_mapping_id=first_id
+        )
+
+    assert caught.value.details["version"] == 1
+    assert caught.value.details["latest_version"] == 2
+    assert len(uow._store.mappings) == before, "nothing should have been written"
+
+
+async def test_versioning_the_latest_version_still_works() -> None:
+    """The refusal must not catch the ordinary case."""
+    uow = InMemoryUnitOfWork()
+    source_id = await stored_data_source(uow, "chain-src")
+    first_id = await SaveMapping(uow).execute(
+        valid_mapping(name="chained"), data_source_id=source_id
+    )
+    second_id = await SaveMapping(uow).execute(
+        valid_mapping(), data_source_id=None, previous_mapping_id=first_id
+    )
+    third_id = await SaveMapping(uow).execute(
+        valid_mapping(), data_source_id=None, previous_mapping_id=second_id
+    )
+
+    async with uow as transaction:
+        third = await transaction.mappings.get(third_id)
+    assert third is not None
+    assert (third.name, third.version) == ("chained", 3)
+
+
 async def test_versioning_rejects_a_data_source_change() -> None:
     uow = InMemoryUnitOfWork()
     source_id = await stored_data_source(uow, "first-source")
@@ -304,6 +355,42 @@ async def test_versioning_rejects_a_data_source_change() -> None:
             data_source_id=other_source_id,
             previous_mapping_id=first_id,
         )
+
+
+async def test_the_target_schema_tool_reads_the_validator_not_a_copy() -> None:
+    """One source of truth for the entity names the model is allowed to target.
+
+    The tool used to return a hardcoded `["session", "model_call", "tool_call"]`,
+    and `EntityMapping` carried a third copy in a `VALID_TARGETS` frozenset with
+    a `validate_target` method nothing called. Adding an entity to `_SCHEMA`
+    would have left the model being told about the entities of the day the list
+    was typed.
+    """
+    tools = MappingValidationTools(
+        FileProfile(file_id=1, format="jsonl", record_count=0, sampled_records=0)
+    )
+
+    answer = await tools.execute("get_target_schema", {})
+
+    assert answer == {"entities": sorted(mapping_validator.VALID_TARGETS)}
+    assert set(answer["entities"]) == set(mapping_validator._SCHEMA)
+
+
+def test_an_unknown_entity_target_is_reported_not_raised() -> None:
+    """The whitelist is enforced by the validator, which reports rather than raises.
+
+    Everything downstream depends on that: `SaveMapping` turns the report into a
+    422, and the `validate_mapping` tool hands it back to the model so it can
+    correct itself. Raising here would end the conversation instead.
+    """
+    mapping = replace(
+        valid_mapping(),
+        entities=(replace(valid_mapping().entities[0], target="not_an_entity"),),
+    )
+
+    errors = mapping_validator.validate(mapping)
+
+    assert [e.code for e in errors] == ["MAPPING_UNKNOWN_TARGET"]
 
 
 def test_profile_sanitizer_redacts_values_and_keeps_the_path_addressable() -> None:
@@ -337,6 +424,50 @@ def test_profile_sanitizer_redacts_values_and_keeps_the_path_addressable() -> No
     assert "alice" not in str(sanitized.min_value)
     assert "secret-value-123" not in str(sanitized.max_value)
     assert sanitized.examples == ("[REDACTED_EMAIL]",)
+
+
+def test_profile_sanitizer_redacts_values_a_profiler_left_untyped() -> None:
+    """The class calls itself defense in depth for *any* profiler adapter.
+
+    `FieldProfile` annotates `examples` as `tuple[str, ...]` and the extrema as
+    `str | None`, but annotations bind nothing at runtime and `__post_init__`
+    only converts the containers. A profiler leaving a `datetime`, an `int` or
+    raw `bytes` in there used to reach `re2.sub` and raise `TypeError` — a 500
+    on the proposal route — instead of being redacted. `PolarsFileProfiler`
+    does `str(v)` upstream, so this guards the next adapter.
+    """
+    field = FieldProfile(
+        path="$.mixed",
+        types=("string",),
+        null_ratio=0,
+        min_value=datetime(2026, 9, 11, 8, 30, tzinfo=UTC),  # type: ignore[arg-type]
+        max_value=42,  # type: ignore[arg-type]
+        examples=(b"\x00\x01binaire", 7, "contact: alice@example.com"),  # type: ignore[arg-type]
+    )
+    profile = FileProfile(
+        file_id=1, format="jsonl", record_count=1, sampled_records=1, fields=(field,)
+    )
+
+    sanitized = ProfileExampleSanitizer().sanitize(profile).fields[0]
+
+    assert sanitized.min_value == "2026-09-11 08:30:00+00:00"
+    assert sanitized.max_value == "42"
+    assert sanitized.examples[0] == "[BINARY:9 bytes]"
+    assert sanitized.examples[1] == "7"
+    assert sanitized.examples[2] == "contact: [REDACTED_EMAIL]"
+
+
+def test_profile_sanitizer_leaves_absent_extrema_absent() -> None:
+    """`None` is not a value to redact — it means the profiler had nothing."""
+    field = FieldProfile(path="$.empty", types=("null",), null_ratio=1.0, examples=())
+    profile = FileProfile(
+        file_id=1, format="jsonl", record_count=1, sampled_records=1, fields=(field,)
+    )
+
+    sanitized = ProfileExampleSanitizer().sanitize(profile).fields[0]
+
+    assert sanitized.min_value is None
+    assert sanitized.max_value is None
 
 
 def test_profile_sanitizer_keeps_distinct_paths_distinct() -> None:

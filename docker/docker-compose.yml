@@ -94,13 +94,13 @@ services:
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
-      args:
-        # Vite inlines it into the bundle at build time. Taken from the same
-        # `.env` as `api`, so the key the interface sends always matches.
-        VITE_API_KEY: ${API_KEY:?API_KEY must be set in .env}
     # Only what nginx needs — not `env_file: .env`, which would hand the
     # provider API keys to a container that has no use for them.
     environment:
+      # Read at start-up, never at build time: nginx adds it to every `/api`
+      # call, so neither the image nor the bundle contains it (#149). Taken
+      # from the same `.env` as `api`, so the two always match.
+      API_KEY: ${API_KEY:?API_KEY must be set in .env}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-512}
     depends_on:
       api:
