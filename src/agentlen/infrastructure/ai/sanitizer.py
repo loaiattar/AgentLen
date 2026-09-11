@@ -54,7 +54,18 @@ SanitizedSamples = NewType("SanitizedSamples", list[dict[str, Any]])
 
 
 class ProfileExampleSanitizer:
-    """Defense in depth for profiles supplied by any profiler adapter."""
+    """Defense in depth for profiles supplied by any profiler adapter.
+
+    **`path` is deliberately left alone.** Everywhere else in this module a key
+    is data; here it is not. `FieldProfile.path` is the JSONPath the analyzer
+    copies verbatim into `FieldRule.source`, and the rules below fire on real
+    path text: `$["/home/alice/project"]` becomes `$["/home/[USER]/project"]`,
+    `$["alice@example.com"]` becomes `$["[REDACTED_EMAIL]"]`. The saved mapping
+    would then point at a path that does not exist in the file, and the field
+    would resolve to null at import time with no validation error to show for
+    it. The values reachable through that path — `min_value`, `max_value`,
+    `examples` — are what has to be redacted, and they are.
+    """
 
     def sanitize(self, profile: FileProfile) -> FileProfile:
         return replace(
@@ -62,7 +73,6 @@ class ProfileExampleSanitizer:
             fields=tuple(
                 replace(
                     field,
-                    path=sanitize_key(field.path),
                     min_value=(
                         sanitize_value(field.min_value)
                         if isinstance(field.min_value, str)

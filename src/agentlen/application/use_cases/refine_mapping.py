@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
-from agentlen.application.dto.mapping_document import mapping_to_document
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
 from agentlen.application.ports.unit_of_work import UnitOfWork
 from agentlen.application.use_cases.propose_mapping import (
@@ -12,8 +9,26 @@ from agentlen.application.use_cases.propose_mapping import (
     MappingValidationTools,
     StoredProposal,
 )
+from agentlen.domain.model.mapping import Mapping
 from agentlen.domain.model.profile import FileProfile
 from agentlen.domain.services import mapping_validator
+
+
+def _summarize(mapping: Mapping) -> str:
+    """What the assistant turn stores — a line, not the whole document.
+
+    These rows exist for one reason: `RefineMapping` reads the last
+    `2 * max_turns` of them back and the adapter injects them into the next
+    refinement prompt. Storing `mapping_to_document(...)` there put a complete
+    mapping in every assistant turn, so by the tenth round the prompt carried
+    ten of them, double-encoded, on top of the current mapping — tens to
+    hundreds of KB, and eventually a provider context-length error. The mapping
+    itself is not lost: `mapping_proposals.update` persists it in the same
+    transaction, and nothing but the prompt ever reads these rows.
+    """
+    entities = ", ".join(entity.target for entity in mapping.entities) or "aucune"
+    rules = sum(len(entity.fields) for entity in mapping.entities)
+    return f"Proposition mise à jour : {rules} règle(s) sur {entities}."
 
 
 class RefineMapping:
@@ -49,7 +64,7 @@ class RefineMapping:
             await uow.mapping_proposals.add_message(
                 proposal_id,
                 role="assistant",
-                content=json.dumps(mapping_to_document(refined.mapping), ensure_ascii=False),
+                content=_summarize(refined.mapping),
             )
             await uow.commit()
         return StoredProposal(proposal_id, refined)

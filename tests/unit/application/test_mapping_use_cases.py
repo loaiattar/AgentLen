@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 from uuid import uuid4
 
 import pytest
 
 from agentlen.application.dto.mapping_document import mapping_to_document
-from agentlen.application.errors import ConflictError, MappingInvalidError
+from agentlen.application.errors import ConflictError, MappingInvalidError, NotFoundError
 from agentlen.application.use_cases.propose_mapping import ProposeMapping
 from agentlen.application.use_cases.refine_mapping import RefineMapping
 from agentlen.application.use_cases.save_mapping import SaveMapping
@@ -145,6 +144,71 @@ async def test_invalid_proposal_is_returned_with_localized_errors() -> None:
     assert result.validation["errors"][0]["field_path"]
 
 
+async def test_proposal_reports_404_when_the_file_disappears_during_the_agent_loop() -> None:
+    """The existence check has to be inside the write transaction.
+
+    It used to run before the agent loop and never again, so a file deleted
+    during the loop — up to `max_iterations` provider calls long — let the
+    insert violate the `file_upload_id` foreign key. The operator saw a driver
+    error and a 500 where the answer is a 404.
+    """
+    uow = InMemoryUnitOfWork()
+    file_id = await stored_file(uow)
+
+    class DeletingAnalyzer(RecordingFakeAnalyzer):
+        async def run_agent_loop(self, profile, tool_executor, hint=None):
+            uow._store.file_uploads.clear()
+            return await super().run_agent_loop(profile, tool_executor, hint)
+
+    with pytest.raises(NotFoundError):
+        await ProposeMapping(
+            uow, DeletingAnalyzer(), FakeProfiler(), ProfileExampleSanitizer()
+        ).execute(file_id=file_id, data_source_id=None)
+
+
+async def test_versioning_reports_the_missing_mapping_before_validating() -> None:
+    """`update_mapping` cannot know the name it is versioning.
+
+    It passes `name=""` / `version=1` placeholders and lets `SaveMapping`
+    resolve the real ones from the previous row. Validating before that
+    resolution checked the placeholders, and answered a PUT against an unknown
+    id with 422 MAPPING_INVALID instead of 404.
+    """
+    uow = InMemoryUnitOfWork()
+    invalid = replace(
+        valid_mapping(name=""),
+        entities=(
+            replace(
+                valid_mapping().entities[0],
+                fields=(FieldRule(target="bad", source="$.bad"),),
+            ),
+        ),
+    )
+
+    with pytest.raises(NotFoundError):
+        await SaveMapping(uow).execute(invalid, data_source_id=None, previous_mapping_id=99999)
+
+
+async def test_versioning_validates_the_resolved_name_and_version() -> None:
+    """And the document that is actually written is the one that is checked."""
+    uow = InMemoryUnitOfWork()
+    source_id = await stored_data_source(uow, "resolved")
+    first_id = await SaveMapping(uow).execute(
+        valid_mapping(name="resolved"), data_source_id=source_id
+    )
+
+    second_id = await SaveMapping(uow).execute(
+        valid_mapping(name="", version=1),
+        data_source_id=None,
+        previous_mapping_id=first_id,
+    )
+
+    async with uow as transaction:
+        second = await transaction.mappings.get(second_id)
+    assert second is not None
+    assert (second.name, second.version) == ("resolved", 2)
+
+
 async def test_refinement_context_contains_only_latest_turns() -> None:
     uow = InMemoryUnitOfWork()
     analyzer = RecordingFakeAnalyzer()
@@ -183,9 +247,13 @@ async def test_refinement_context_contains_only_latest_turns() -> None:
         "message-11",
     ]
     assert uow._store.proposal_messages[-2] == (proposal_id, "user", "new turn")
-    assistant_document = json.loads(uow._store.proposal_messages[-1][2])
     assert uow._store.proposal_messages[-1][0:2] == (proposal_id, "assistant")
-    assert assistant_document["name"] == "refined"
+    # The assistant turn is a summary, not the document. These rows are replayed
+    # into the next refinement prompt, so storing the whole mapping in each of
+    # them made the prompt grow without bound across a conversation.
+    assistant_turn = uow._store.proposal_messages[-1][2]
+    assert assistant_turn == "Proposition mise à jour : 1 règle(s) sur session."
+    assert "$.id" not in assistant_turn
     assert [message["turn_index"] for message in analyzer.history_seen] == list(range(2, 12))
 
 
@@ -238,14 +306,22 @@ async def test_versioning_rejects_a_data_source_change() -> None:
         )
 
 
-def test_profile_sanitizer_redacts_paths_and_extrema() -> None:
+def test_profile_sanitizer_redacts_values_and_keeps_the_path_addressable() -> None:
+    """The path is structure, not data — redacting it broke the mapping.
+
+    `FieldProfile.path` is what the analyzer copies verbatim into
+    `FieldRule.source`. Rewriting `/home/alice/…` to `/home/[USER]/…` produced a
+    mapping addressing a path that does not exist in the file, and the field
+    resolved to null at import time with nothing to show the operator. The
+    values reachable through the path are what must be redacted.
+    """
     field = FieldProfile(
         path="$.nested./home/alice/private",
         types=("string",),
         null_ratio=0,
         min_value="/home/alice/private",
         max_value="API_KEY=secret-value-123",
-        examples=(),
+        examples=("alice@example.com",),
     )
     profile = FileProfile(
         file_id=1,
@@ -257,9 +333,35 @@ def test_profile_sanitizer_redacts_paths_and_extrema() -> None:
 
     sanitized = ProfileExampleSanitizer().sanitize(profile).fields[0]
 
-    assert "alice" not in sanitized.path
+    assert sanitized.path == "$.nested./home/alice/private"
     assert "alice" not in str(sanitized.min_value)
     assert "secret-value-123" not in str(sanitized.max_value)
+    assert sanitized.examples == ("[REDACTED_EMAIL]",)
+
+
+def test_profile_sanitizer_keeps_distinct_paths_distinct() -> None:
+    """Two users' paths used to collapse onto one key.
+
+    `sanitize_key` has no collision handling, so `/home/alice/x` and
+    `/home/bob/x` both became `/home/[USER]/x` and
+    `MappingValidationTools.get_field_profile` returned the first for both.
+    """
+
+    def field(path: str) -> FieldProfile:
+        return FieldProfile(path=path, types=("string",), null_ratio=0, examples=())
+
+    profile = FileProfile(
+        file_id=1,
+        format="jsonl",
+        record_count=1,
+        sampled_records=1,
+        fields=(field('$["/home/alice/x"]'), field('$["/home/bob/x"]')),
+    )
+
+    paths = [f.path for f in ProfileExampleSanitizer().sanitize(profile).fields]
+
+    assert paths == ['$["/home/alice/x"]', '$["/home/bob/x"]']
+    assert len(set(paths)) == 2
 
 
 async def test_in_memory_message_window_matches_persisted_indices_and_zero_limit() -> None:

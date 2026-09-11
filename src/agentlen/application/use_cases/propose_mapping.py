@@ -111,6 +111,13 @@ class ProposeMapping:
         # proposals remain normal, editable results.
         mapping_validator.validate(proposal.mapping)
         async with self._uow as uow:
+            # Re-checked inside the write transaction. The check above ran
+            # before the agent loop — up to `max_iterations` provider calls
+            # ago — and a file deleted in that window would violate the
+            # `file_upload_id` foreign key, surfacing as a driver error and a
+            # 500 where the caller should see a 404.
+            if await uow.file_uploads.get_by_id(file_id) is None:
+                raise NotFoundError("File", file_id)
             proposal_id = await uow.mapping_proposals.save(
                 proposal, file_upload_id=file_id, data_source_id=data_source_id
             )

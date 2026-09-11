@@ -231,12 +231,7 @@ class BaseAnalyzerAdapter:
         """Apply an operator's correction and re-validate through the tools."""
         from agentlen.infrastructure.ai.prompts.analysis import build_refinement_prompt
 
-        history_text = json.dumps(history, ensure_ascii=False)
-        instruction = (
-            f"Conversation récente :\n{history_text}\n\nNouvelle instruction :\n{user_message}"
-            if history_text
-            else user_message
-        )
+        instruction = _build_refinement_instruction(history, user_message)
         prompt = build_refinement_prompt(
             mapping=_mapping_payload(proposal.mapping), instruction=instruction
         )
@@ -287,6 +282,39 @@ class BaseAnalyzerAdapter:
 # ---------------------------------------------------------------------------
 # helpers shared by adapters and the fake
 # ---------------------------------------------------------------------------
+
+
+# One stored turn is a short summary (see `RefineMapping`), but a row written by
+# an older deployment can be a whole mapping document. Bounding each turn here
+# keeps a long conversation from pushing the prompt past the provider's context
+# window whatever is already in the table.
+MAX_HISTORY_MESSAGE_LENGTH = 500
+
+
+def _build_refinement_instruction(
+    history: tuple[dict[str, str | int], ...], user_message: str
+) -> str:
+    """Prefix the operator's instruction with the recent conversation, if any.
+
+    `json.dumps(())` is `"[]"`, which is truthy — testing the serialized text
+    made the no-history branch unreachable and sent `Conversation récente :\n[]`
+    on every first refinement. The emptiness test belongs on `history` itself.
+    """
+    if not history:
+        return user_message
+    turns = [
+        {
+            **turn,
+            "content": _truncate(str(turn.get("content", ""))),
+        }
+        for turn in history
+    ]
+    history_text = json.dumps(turns, ensure_ascii=False)
+    return f"Conversation récente :\n{history_text}\n\nNouvelle instruction :\n{user_message}"
+
+
+def _truncate(text: str, limit: int = MAX_HISTORY_MESSAGE_LENGTH) -> str:
+    return text if len(text) <= limit else text[:limit] + "…[truncated]"
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
