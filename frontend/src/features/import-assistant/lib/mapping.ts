@@ -1,4 +1,9 @@
-import type { MappingDocument, ProposalRationale, ProposalResponse } from '@/features/import-assistant/types'
+import type {
+  MappingDocument,
+  MappingProposalDocument,
+  ProposalRationale,
+  ProposalResponse,
+} from '@/features/import-assistant/types'
 
 export function confidencePercent(value: string | number | undefined): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -58,31 +63,121 @@ export function updateFieldSource<T extends MappingDocument>(
   }
 }
 
-function fieldSources(mapping: MappingDocument): Map<string, string> {
-  const sources = new Map<string, string>()
+interface FieldSignature {
+  source: string
+  required: boolean
+  /** Rendered form, for the status text. */
+  operators: string
+  /** Raw form, for equality — `describeOperators` only shows `op` and `to`. */
+  operatorsKey: string
+}
+
+interface EntitySignature {
+  naturalKey: string
+  iterate: string
+}
+
+function fieldSignatures(mapping: MappingDocument): Map<string, FieldSignature> {
+  const signatures = new Map<string, FieldSignature>()
   for (const entity of mapping.entities) {
     for (const field of entity.fields) {
-      sources.set(`${entity.target}.${field.target}`, field.source ?? '')
+      signatures.set(`${entity.target}.${field.target}`, {
+        source: field.source ?? '',
+        required: field.required === true,
+        operators: describeOperators(field.operators),
+        operatorsKey: JSON.stringify(field.operators ?? []),
+      })
     }
   }
-  return sources
+  return signatures
+}
+
+function entitySignatures(mapping: MappingDocument): Map<string, EntitySignature> {
+  const signatures = new Map<string, EntitySignature>()
+  for (const entity of mapping.entities) {
+    signatures.set(entity.target, {
+      naturalKey: (entity.natural_key ?? []).join(', ') || 'none',
+      iterate: entity.iterate ?? 'none',
+    })
+  }
+  return signatures
+}
+
+function union<T>(left: Iterable<T>, right: Iterable<T>): Set<T> {
+  return new Set([...left, ...right])
+}
+
+/**
+ * Every part of the document the studio can show, not just `source`: a status
+ * turn that says nothing changed while the Operators line next to it reads
+ * `to_int` is a lie the chat must not tell.
+ */
+function diffMappings(before: MappingProposalDocument, after: MappingProposalDocument): string[] {
+  const changes: string[] = []
+
+  if (before.name !== after.name) changes.push(`name: ${before.name} → ${after.name}`)
+  if (before.source_format !== after.source_format) {
+    changes.push(`source format: ${before.source_format} → ${after.source_format}`)
+  }
+
+  const previousEntities = entitySignatures(before)
+  const nextEntities = entitySignatures(after)
+  const gone = new Set<string>()
+  for (const target of union(previousEntities.keys(), nextEntities.keys())) {
+    const from = previousEntities.get(target)
+    const to = nextEntities.get(target)
+    if (from == null) {
+      changes.push(`${target} entity added`)
+      gone.add(target)
+      continue
+    }
+    if (to == null) {
+      changes.push(`${target} entity removed`)
+      gone.add(target)
+      continue
+    }
+    if (from.naturalKey !== to.naturalKey) {
+      changes.push(`${target} natural key: ${from.naturalKey} → ${to.naturalKey}`)
+    }
+    if (from.iterate !== to.iterate) changes.push(`${target} iterate: ${from.iterate} → ${to.iterate}`)
+  }
+
+  const previousFields = fieldSignatures(before)
+  const nextFields = fieldSignatures(after)
+  for (const key of union(previousFields.keys(), nextFields.keys())) {
+    // An added or removed entity already accounts for all of its fields.
+    if (gone.has(key.slice(0, key.indexOf('.')))) continue
+    const from = previousFields.get(key)
+    const to = nextFields.get(key)
+    if (from == null) {
+      changes.push(`${key} added (${to?.source || 'no source'})`)
+      continue
+    }
+    if (to == null) {
+      changes.push(`${key} removed`)
+      continue
+    }
+    if (from.source !== to.source) {
+      changes.push(`${key}: ${from.source || 'none'} → ${to.source || 'none'}`)
+    }
+    if (from.required !== to.required) {
+      changes.push(`${key} ${to.required ? 'now required' : 'no longer required'}`)
+    }
+    if (from.operatorsKey !== to.operatorsKey) {
+      changes.push(
+        from.operators === to.operators
+          ? `${key} operator options changed`
+          : `${key} operators: ${from.operators} → ${to.operators}`,
+      )
+    }
+  }
+
+  return changes
 }
 
 /** Status text from two API proposals. Never claims an update that did not happen. */
 export function describeProposalChange(before: ProposalResponse, after: ProposalResponse): string {
-  const previous = fieldSources(before.mapping)
-  const next = fieldSources(after.mapping)
-  const keys = new Set([...previous.keys(), ...next.keys()])
-  const changes: string[] = []
-
-  for (const key of keys) {
-    const from = previous.get(key)
-    const to = next.get(key)
-    if (from === to) continue
-    if (from == null) changes.push(`${key} added (${to})`)
-    else if (to == null) changes.push(`${key} removed`)
-    else changes.push(`${key}: ${from} → ${to}`)
-  }
+  const changes = diffMappings(before.mapping, after.mapping)
 
   const validationNow = after.validation.valid
   const validationWas = before.validation.valid
@@ -99,6 +194,6 @@ export function describeProposalChange(before: ProposalResponse, after: Proposal
 
   const preview = changes.slice(0, 3).join('; ')
   const extra = changes.length > 3 ? ` (+${changes.length - 3} more)` : ''
-  const mappingLine = `Updated ${changes.length} field source(s). ${preview}${extra}`
+  const mappingLine = `Applied ${changes.length} change(s). ${preview}${extra}`
   return validationLine ? `${mappingLine} ${validationLine}` : mappingLine
 }

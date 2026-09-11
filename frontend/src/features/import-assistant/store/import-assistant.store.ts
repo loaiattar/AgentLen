@@ -13,7 +13,7 @@ interface AssistantDraftState {
   setMappingDraft: (proposalId: number, mapping: MappingProposalDocument) => void
   clearMappingDraft: () => void
   setAcceptedMappingId: (id: number | null) => void
-  syncProposal: (proposalId: number | undefined) => void
+  syncProposal: (proposalId: number | undefined, mappingId: number | undefined) => void
 }
 
 export const useImportAssistantStore = create<AssistantDraftState>((set, get) => ({
@@ -27,14 +27,27 @@ export const useImportAssistantStore = create<AssistantDraftState>((set, get) =>
   setMappingDraft: (draftProposalId, mappingDraft) => set({ draftProposalId, mappingDraft }),
   clearMappingDraft: () => set({ mappingDraft: null }),
   setAcceptedMappingId: (acceptedMappingId) => set({ acceptedMappingId }),
-  syncProposal: (proposalId) => {
-    if (proposalId === get().draftProposalId) return
-    set({
-      composer: '',
-      turns: [],
-      mappingDraft: null,
-      draftProposalId: proposalId ?? null,
-      acceptedMappingId: null,
-    })
+  /**
+   * The URL owns `mapping_id`, this store only mirrors it. Seeding
+   * `acceptedMappingId` from the search params is what makes a reload — or a
+   * shared link — resume on the accepted mapping instead of offering to accept
+   * the same proposal a second time; dropping it when the id leaves the URL
+   * (a data source change clears `mapping_id`) is what stops the studio from
+   * advertising a mapping the pipeline no longer carries.
+   */
+  syncProposal: (proposalId, mappingId) => {
+    const state = get()
+    const nextMappingId = mappingId ?? null
+    if (proposalId !== state.draftProposalId) {
+      set({
+        composer: '',
+        turns: [],
+        mappingDraft: null,
+        draftProposalId: proposalId ?? null,
+        acceptedMappingId: nextMappingId,
+      })
+      return
+    }
+    if (nextMappingId !== state.acceptedMappingId) set({ acceptedMappingId: nextMappingId })
   },
 }))

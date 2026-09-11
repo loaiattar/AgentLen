@@ -30,7 +30,8 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 export function ImportAssistantPage() {
-  const { fileId, proposalId, dataSourceId, setFileId, setProposalId, setMappingId } = useAssistantSearch()
+  const { fileId, proposalId, mappingId, dataSourceId, setFileId, setProposalId, setMappingId } =
+    useAssistantSearch()
   const syncProposal = useImportAssistantStore((state) => state.syncProposal)
   const composer = useImportAssistantStore((state) => state.composer)
   const turns = useImportAssistantStore((state) => state.turns)
@@ -43,8 +44,8 @@ export function ImportAssistantPage() {
   const setAcceptedMappingId = useImportAssistantStore((state) => state.setAcceptedMappingId)
 
   useEffect(() => {
-    syncProposal(proposalId)
-  }, [proposalId, syncProposal])
+    syncProposal(proposalId, mappingId)
+  }, [proposalId, mappingId, syncProposal])
 
   const providers = useAiProvidersQuery()
   const file = useFileQuery(fileId)
@@ -60,6 +61,10 @@ export function ImportAssistantPage() {
   const mapping = mappingDraft ?? proposal.data?.mapping
   const activeProvider = providers.data?.active
   const canPropose = fileId != null && !propose.isPending
+  // Refining asks the server to rework *its* proposal, which knows nothing of an
+  // unsaved draft. Save the edits first rather than let the round-trip drop them.
+  const canRefine =
+    proposalId != null && proposal.data != null && mappingDraft == null && acceptedMappingId == null
   const canAccept =
     proposal.data != null &&
     proposal.data.validation.valid &&
@@ -92,7 +97,7 @@ export function ImportAssistantPage() {
   const sendMessage = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const message = composer.trim()
-    if (!message || proposalId == null || refine.isPending || acceptedMappingId != null) return
+    if (!message || !canRefine || refine.isPending) return
     const previous = proposal.data
     if (previous == null) return
     refine.mutate(
@@ -102,7 +107,6 @@ export function ImportAssistantPage() {
           pushTurn({ role: 'user', content: message })
           pushTurn({ role: 'status', content: describeProposalChange(previous, next) })
           setComposer('')
-          clearMappingDraft()
         },
       },
     )
@@ -249,10 +253,10 @@ export function ImportAssistantPage() {
               rationale={proposal.data?.rationale ?? []}
               dirty={mappingDraft != null}
               saving={patch.isPending}
-              locked={acceptedMappingId != null}
+              locked={acceptedMappingId != null || refine.isPending}
               onSaveEdits={saveEdits}
               onSourceChange={(entity, target, source) => {
-                if (proposalId == null || acceptedMappingId != null) return
+                if (proposalId == null || acceptedMappingId != null || refine.isPending) return
                 setMappingDraft(proposalId, updateFieldSource(mapping, entity, target, source))
               }}
             />
@@ -310,7 +314,8 @@ export function ImportAssistantPage() {
                   </p>
                 ) : mappingDraft != null ? (
                   <p className="text-secondary text-foreground-muted">
-                    Save your edits before accepting. The assistant does not apply a mapping on its own.
+                    Save your edits before accepting or refining. The assistant does not apply a mapping on
+                    its own.
                   </p>
                 ) : dataSourceId == null && proposal.data != null ? (
                   <p className="text-secondary text-foreground-muted">
@@ -320,13 +325,15 @@ export function ImportAssistantPage() {
                 <form onSubmit={sendMessage} className="grid gap-2">
                   <Textarea
                     value={composer}
-                    disabled={proposalId == null || refine.isPending || acceptedMappingId != null}
+                    disabled={!canRefine || refine.isPending}
                     placeholder={
                       acceptedMappingId != null
                         ? 'Mapping already accepted'
                         : proposalId == null
                           ? 'Propose a mapping first'
-                          : 'Ask the assistant to adjust a field'
+                          : mappingDraft != null
+                            ? 'Save your edits first'
+                            : 'Ask the assistant to adjust a field'
                     }
                     aria-label="Message to the mapping assistant"
                     onChange={(event) => setComposer(event.target.value)}
@@ -335,12 +342,7 @@ export function ImportAssistantPage() {
                     type="submit"
                     variant="ai"
                     size="sm"
-                    disabled={
-                      proposalId == null ||
-                      proposal.data == null ||
-                      composer.trim().length === 0 ||
-                      acceptedMappingId != null
-                    }
+                    disabled={!canRefine || composer.trim().length === 0}
                     loading={refine.isPending}
                   >
                     Send
