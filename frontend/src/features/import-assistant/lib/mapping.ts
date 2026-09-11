@@ -5,14 +5,17 @@ import type {
   ProposalResponse,
 } from '@/features/import-assistant/types'
 
-export function confidencePercent(value: string | number | undefined): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return Math.round(value <= 1 ? value * 100 : value)
-  }
-  if (value === 'high') return 90
-  if (value === 'medium') return 60
-  if (value === 'low') return 35
-  return undefined
+const CONFIDENCE_LABELS = ['high', 'medium', 'low'] as const
+export type ConfidenceLabel = (typeof CONFIDENCE_LABELS)[number]
+
+/**
+ * The label the agent returned (`prompts/analysis.py` asks for high, medium or
+ * low), shown as is. It is not a measure, so it never becomes a percentage;
+ * anything else — a number, free text — is not shown at all.
+ */
+export function confidenceLabel(value: string | number | undefined): ConfidenceLabel | undefined {
+  const label = typeof value === 'string' ? value.trim().toLowerCase() : undefined
+  return CONFIDENCE_LABELS.find((known) => known === label)
 }
 
 export function rationaleBody(item: ProposalRationale): string {
@@ -35,11 +38,11 @@ export function fieldConfidence(
   rationale: ProposalRationale[],
   entityTarget: string,
   fieldTarget: string,
-): number | undefined {
+): ConfidenceLabel | undefined {
   const match = rationale.find(
     (item) => item.target === `${entityTarget}.${fieldTarget}` || item.target === fieldTarget,
   )
-  return confidencePercent(match?.confidence)
+  return confidenceLabel(match?.confidence)
 }
 
 export function updateFieldSource<T extends MappingDocument>(

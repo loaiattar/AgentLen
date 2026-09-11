@@ -13,13 +13,12 @@ class FileUploadOut(BaseModel):
     content_hash: str
     already_seen: bool = Field(
         description=(
-            "True when this content was already stored. It answers a question "
-            "about the *content hash*, not about imports: an upload of a file "
-            "that was stored but never imported comes back true, with an empty "
-            "`previous_import_run_ids`. On `GET /files/{id}` the file is stored "
-            "by definition, so the flag is always true there and carries no "
-            "signal. To ask whether importing again would create duplicates, "
-            "read `previous_import_run_ids`."
+            "True only when this `POST /files` reused a file stored before "
+            "(same content hash). It says nothing about imports: an upload of a "
+            "file that was stored but never imported comes back true, with an "
+            "empty `previous_import_run_ids`. `GET /files/{id}` uploads nothing, "
+            "so it is always false there. To ask whether importing again would "
+            "create duplicates, read `previous_import_run_ids`."
         )
     )
     previous_import_run_ids: list[int] = Field(

@@ -1,7 +1,7 @@
 import { Link } from '@tanstack/react-router'
 
+import { Button } from '@/components/ui/Button'
 import { Field } from '@/components/ui/Field'
-import { Input } from '@/components/ui/Input'
 import { Select } from '@/features/imports/components/SelectField'
 import { useDataSourcesQuery } from '@/features/imports/api/imports.queries'
 import { useMappingQuery, useMappingsQuery } from '@/features/mappings/api/mappings.queries'
@@ -24,10 +24,9 @@ export interface MappingStepProps {
  * `useCreateMappingMutation` lands in the list below on its own: both features
  * invalidate the same `mappingKeys`.
  *
- * `GET /mappings` can still be missing on an older deployment, so the select
- * degrades to a plain id input when the route answers an error rather than a
- * list. That keeps the import path usable — the seeded `tracelab-jsonl`
- * mapping has an id the user can read off `make seed`.
+ * When `GET /mappings` fails, the select stays, disabled, with the error and a
+ * Retry. It used to become a free-text id input — a fallback for backends older
+ * than #52 — so a transient 500 asked the user for an id they cannot know.
  */
 export function MappingStep({
   fileId,
@@ -96,26 +95,24 @@ export function MappingStep({
 
       {mappingsUnavailable ? (
         <Field
-          label="Mapping id"
-          htmlFor="import-mapping-id"
-          hint={
-            <>
-              GET /mappings is unavailable on this backend. Enter the mapping id directly.
-              {assistantLink === null ? null : <> Or: {assistantLink}.</>}
-            </>
-          }
+          label="Mapping"
+          htmlFor="import-mapping"
+          error={mappings.error?.message || 'Unable to load mappings.'}
         >
-          <Input
-            id="import-mapping-id"
-            type="number"
-            min={1}
-            inputMode="numeric"
-            placeholder="e.g. 1"
-            value={mappingId ?? ''}
-            onChange={(event) =>
-              onMappingChange(event.target.value === '' ? null : Number(event.target.value))
-            }
-          />
+          <div className="flex items-center gap-2">
+            <Select id="import-mapping" value="" disabled error>
+              <option value="">Mappings unavailable</option>
+            </Select>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              loading={mappings.isFetching}
+              onClick={() => void mappings.refetch()}
+            >
+              Retry
+            </Button>
+          </div>
         </Field>
       ) : (
         <Field

@@ -52,7 +52,7 @@ export function MappingColumn({
                 />
                 <p className="text-meta text-foreground-subtle">{describeOperators(field.operators)}</p>
                 {confidence != null ? (
-                  <p className="text-meta text-accent-magenta">Confidence {confidence}%</p>
+                  <p className="text-meta text-accent-magenta">Confidence: {confidence}</p>
                 ) : null}
               </li>
             )

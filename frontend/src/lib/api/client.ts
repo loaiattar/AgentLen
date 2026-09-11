@@ -74,7 +74,10 @@ async function request<TResponse>(path: string, options: RequestOptions = {}): P
     if (code === 'UNAUTHENTICATED') {
       clearSessionToken()
     }
-    throw new ApiError(messageFromErrorBody(errorBody, response.statusText), response.status, errorBody, code)
+    // `statusText` is empty over HTTP/2 and on a proxy's HTML error page, and an
+    // empty message renders as a blank error: fall back to the status itself.
+    const fallback = response.statusText || `Request failed with status ${response.status}`
+    throw new ApiError(messageFromErrorBody(errorBody, fallback), response.status, errorBody, code)
   }
 
   if (response.status === 204) {

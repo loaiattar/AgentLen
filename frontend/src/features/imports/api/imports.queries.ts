@@ -1,8 +1,10 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef } from 'react'
 
 import { apiClient } from '@/lib/api/client'
 import { dashboardKeys } from '@/features/dashboard/api/dashboard.keys'
 import { dataSourceKeys, fileKeys, importKeys } from '@/features/imports/api/imports.keys'
+import { sessionsKeys } from '@/features/sessions/api/sessions.keys'
 import {
   isTerminal,
   type DataSource,
@@ -191,7 +193,8 @@ export function useImportsQuery(params: PageParams = {}) {
  * screen, for as long as the tab stayed open.
  */
 export function useImportQuery(importRunId: number | null) {
-  return useQuery({
+  const queryClient = useQueryClient()
+  const query = useQuery({
     ...importQueries.detail(importRunId ?? 0),
     enabled: importRunId !== null,
     refetchInterval: (query) => {
@@ -201,6 +204,25 @@ export function useImportQuery(importRunId: number | null) {
       return isTerminal(status) ? false : IMPORT_POLL_INTERVAL_MS
     },
   })
+
+  // A run that ends changes what other screens show: the run list (still
+  // `running` otherwise), the file's import history, sessions and metrics.
+  // Only an observed transition counts — reopening an old run invalidates nothing.
+  // File *details* only: a profile never changes, and refetching it is a POST.
+  const status = query.data?.status
+  const previousStatus = useRef<ImportRunStatus | undefined>(undefined)
+  useEffect(() => {
+    const previous = previousStatus.current
+    previousStatus.current = status
+    if (previous === undefined || status === undefined) return
+    if (isTerminal(previous) || !isTerminal(status)) return
+    const fileDetails = [...fileKeys.all, 'detail']
+    for (const queryKey of [importKeys.all, fileDetails, sessionsKeys.all, dashboardKeys.all]) {
+      void queryClient.invalidateQueries({ queryKey })
+    }
+  }, [status, queryClient])
+
+  return query
 }
 
 /**

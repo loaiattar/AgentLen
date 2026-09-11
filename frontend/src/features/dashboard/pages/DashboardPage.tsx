@@ -77,10 +77,10 @@ export function DashboardPage() {
 
   if (isError) {
     const message =
-      overview.error?.message ??
-      activity.error?.message ??
-      tools.error?.message ??
-      models.error?.message ??
+      overview.error?.message ||
+      activity.error?.message ||
+      tools.error?.message ||
+      models.error?.message ||
       'Unable to load metrics.'
 
     return (
