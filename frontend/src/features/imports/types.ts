@@ -7,19 +7,8 @@
  * missing value stays distinguishable from a zero (ARCHITECTURE §2).
  */
 
-/** Envelope of every list endpoint (`schemas/common.py`). */
-export interface Page<T> {
-  items: T[]
-  /** Total matching rows, ignoring limit and offset. */
-  total: number
-  limit: number
-  offset: number
-}
-
-export interface PageParams {
-  limit?: number
-  offset?: number
-}
+/** The list envelope and its params are shared app-wide (`lib/api/types`). */
+export type { Page, PageParams } from '@/lib/api/types'
 
 // --- Data sources (API.md §2) ------------------------------------------------
 
@@ -68,22 +57,6 @@ export interface FileProfile {
   /** How many rows the profile actually looked at — bounded, unlike `record_count`. */
   sampled_records: number
   fields: FieldProfile[]
-}
-
-// --- Mappings (API.md §4) ----------------------------------------------------
-
-export type MappingStatus = 'draft' | 'validated' | 'active' | 'superseded' | 'rejected' | 'archived'
-
-/**
- * The subset of a mapping this workflow needs to let the user pick one.
- * The full document belongs to the mappings feature (#32 / #52).
- */
-export interface MappingSummary {
-  id: number
-  name: string
-  version: number
-  status: MappingStatus
-  data_source_id: number | null
 }
 
 // --- Imports (API.md §5) -----------------------------------------------------

@@ -19,8 +19,4 @@ export const dataSourceKeys = {
   list: () => [...dataSourceKeys.all, 'list'] as const,
 }
 
-export const mappingKeys = {
-  all: ['mappings'] as const,
-  list: (dataSourceId: number | undefined) =>
-    [...mappingKeys.all, 'list', dataSourceId ?? 'any'] as const,
-}
+// Mapping keys belong to `features/mappings` — both features invalidate them.

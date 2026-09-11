@@ -1,9 +1,13 @@
+import { Link } from '@tanstack/react-router'
+
 import { Field } from '@/components/ui/Field'
 import { Input } from '@/components/ui/Input'
 import { Select } from '@/features/imports/components/SelectField'
-import { useDataSourcesQuery, useMappingsQuery } from '@/features/imports/api/imports.queries'
+import { useDataSourcesQuery } from '@/features/imports/api/imports.queries'
+import { useMappingsQuery } from '@/features/mappings/api/mappings.queries'
 
 export interface MappingStepProps {
+  fileId: number | null
   dataSourceId: number | null
   mappingId: number | null
   onDataSourceChange: (id: number | null) => void
@@ -13,13 +17,20 @@ export interface MappingStepProps {
 /**
  * Picks the data source the file belongs to and the mapping to apply.
  *
- * `GET /mappings` (API.md §4) is owned by issue #52 and is not merged yet, so
- * the select degrades to a plain id input when the route answers an error
- * instead of a list. That keeps the whole import path usable today — the seeded
- * `tracelab-jsonl` mapping has an id the user can read off `make seed` — and
- * needs no change here once #52 lands.
+ * The select only *chooses* among saved mappings; authoring one is the
+ * assistant's job (#31), so the hint links there carrying this file and source
+ * — the assistant needs a `file_id` to propose anything, and this wizard is
+ * where a file exists. Coming back, a mapping saved through
+ * `useCreateMappingMutation` lands in the list below on its own: both features
+ * invalidate the same `mappingKeys`.
+ *
+ * `GET /mappings` can still be missing on an older deployment, so the select
+ * degrades to a plain id input when the route answers an error rather than a
+ * list. That keeps the import path usable — the seeded `tracelab-jsonl`
+ * mapping has an id the user can read off `make seed`.
  */
 export function MappingStep({
+  fileId,
   dataSourceId,
   mappingId,
   onDataSourceChange,
@@ -29,6 +40,21 @@ export function MappingStep({
   const mappings = useMappingsQuery(dataSourceId ?? undefined)
 
   const mappingsUnavailable = mappings.isError
+
+  const assistantLink =
+    fileId === null ? null : (
+      <Link
+        to="/import-assistant"
+        search={(prev) => ({
+          ...prev,
+          file_id: fileId,
+          data_source_id: dataSourceId ?? undefined,
+        })}
+        className="text-primary underline-offset-2 hover:underline"
+      >
+        Let the assistant propose one
+      </Link>
+    )
 
   return (
     <div className="grid gap-6 md:grid-cols-2">
@@ -66,7 +92,12 @@ export function MappingStep({
         <Field
           label="Mapping id"
           htmlFor="import-mapping-id"
-          hint="GET /mappings is unavailable on this backend (issue #52). Enter the mapping id directly."
+          hint={
+            <>
+              GET /mappings is unavailable on this backend. Enter the mapping id directly.
+              {assistantLink === null ? null : <> Or: {assistantLink}.</>}
+            </>
+          }
         >
           <Input
             id="import-mapping-id"
@@ -84,7 +115,12 @@ export function MappingStep({
         <Field
           label="Mapping"
           htmlFor="import-mapping"
-          hint="The document that turns this file's fields into the common model."
+          hint={
+            <>
+              The document that turns this file&rsquo;s fields into the common model.
+              {assistantLink === null ? null : <> No mapping fits? {assistantLink}.</>}
+            </>
+          }
         >
           <Select
             id="import-mapping"

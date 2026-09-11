@@ -135,6 +135,7 @@ export function ImportWizardPage() {
           description="The mapping turns this file's fields into the common model. No code is executed."
         >
           <MappingStep
+            fileId={wizard.file.id}
             dataSourceId={wizard.dataSourceId}
             mappingId={wizard.mappingId}
             onDataSourceChange={wizard.selectDataSource}

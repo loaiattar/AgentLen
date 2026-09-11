@@ -1,12 +1,7 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiClient } from '@/lib/api/client'
-import {
-  dataSourceKeys,
-  fileKeys,
-  importKeys,
-  mappingKeys,
-} from '@/features/imports/api/imports.keys'
+import { dataSourceKeys, fileKeys, importKeys } from '@/features/imports/api/imports.keys'
 import {
   isTerminal,
   type DataSource,
@@ -19,7 +14,6 @@ import {
   type ImportPreviewRequest,
   type ImportSeverity,
   type ImportStatus,
-  type MappingSummary,
   type Page,
   type PageParams,
 } from '@/features/imports/types'
@@ -110,38 +104,6 @@ export function useCreateDataSourceMutation() {
       void queryClient.invalidateQueries({ queryKey: dataSourceKeys.all })
     },
   })
-}
-
-// --- Mappings ----------------------------------------------------------------
-
-/**
- * `GET /mappings` (API.md §4) is not merged yet — issue #52 / PR #96 owns it.
- * The envelope it will use is therefore not observable from here, and the two
- * list routes already shipped disagree (`/data-sources` returns a bare array,
- * `/imports` a `Page`). Accept both rather than guess one and break on merge.
- */
-function normalizeMappingList(payload: Page<MappingSummary> | MappingSummary[]): MappingSummary[] {
-  return Array.isArray(payload) ? payload : payload.items
-}
-
-export const mappingQueries = {
-  list: (dataSourceId?: number) =>
-    queryOptions({
-      queryKey: mappingKeys.list(dataSourceId),
-      queryFn: async () => {
-        const payload = await apiClient.get<Page<MappingSummary> | MappingSummary[]>(
-          `/mappings${toQueryString({ data_source_id: dataSourceId, limit: 200 })}`,
-        )
-        return normalizeMappingList(payload)
-      },
-      // The route may not exist on the deployed backend yet: fail fast to the
-      // manual fallback instead of retrying a 404 the user cannot fix.
-      retry: false,
-    }),
-}
-
-export function useMappingsQuery(dataSourceId?: number) {
-  return useQuery(mappingQueries.list(dataSourceId))
 }
 
 // --- Imports -----------------------------------------------------------------

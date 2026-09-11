@@ -11,6 +11,8 @@ export const SESSION_PAGE_SIZE_MAX = 200
 
 export interface MetricsSearch {
   data_source_id?: number
+  /** Carries an uploaded file from the import wizard to the mapping assistant. */
+  file_id?: number
   agent_id?: number
   model_id?: number
   tool_id?: number
@@ -54,6 +56,7 @@ function parseIntParam(value: unknown, { min, max }: { min: number; max?: number
 export function parseMetricsSearch(search: Record<string, unknown>): MetricsSearch {
   const parsed: MetricsSearch = {}
   const dataSourceId = parseIntParam(search.data_source_id, { min: 1 })
+  const fileId = parseIntParam(search.file_id, { min: 1 })
   const agentId = parseIntParam(search.agent_id, { min: 1 })
   const modelId = parseIntParam(search.model_id, { min: 1 })
   const toolId = parseIntParam(search.tool_id, { min: 1 })
@@ -62,6 +65,7 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   const offset = parseIntParam(search.offset, { min: 0 })
 
   if (dataSourceId != null) parsed.data_source_id = dataSourceId
+  if (fileId != null) parsed.file_id = fileId
   if (agentId != null) parsed.agent_id = agentId
   if (modelId != null) parsed.model_id = modelId
   if (toolId != null) parsed.tool_id = toolId
