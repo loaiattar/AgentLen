@@ -8,6 +8,7 @@ into a false positive.
 from __future__ import annotations
 
 import hashlib
+import io
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from agentlen.application.ports.file_storage import (
     StoredFile,
     UnsupportedFileFormatError,
 )
-from agentlen.infrastructure.files.local_storage import ALLOWED_EXTENSIONS, detect_format
+from agentlen.infrastructure.files.local_storage import ALLOWED_EXTENSIONS, detect_file_format
 
 
 class InMemoryFileStorage:
@@ -35,7 +36,10 @@ class InMemoryFileStorage:
             if len(body) > self._max_bytes:
                 raise FileTooLargeError("Fichier trop volumineux.")
 
-        detected = detect_format(body[: 1024 * 1024], original_name)
+        # The same reading rule as the real storage — same head size, same
+        # extension for a long first line — not a bigger head of its own that
+        # would hide the cases production refuses.
+        detected = detect_file_format(io.BytesIO(body).read, original_name)
         content_hash = hashlib.sha256(body).hexdigest()
         self.contents[content_hash] = body
         return StoredFile(
