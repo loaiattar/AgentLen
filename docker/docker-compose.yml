@@ -31,6 +31,10 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+    # Brought back after a crash or a host reboot, but not after `make down`.
+    # A failed migration exits the container, which then retries it rather than
+    # serving traffic against a schema it never applied.
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -72,6 +76,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+    # The worker already waits out a database outage; this covers the process
+    # dying for any other reason, which would leave every import `pending`.
+    restart: unless-stopped
     env_file:
       - .env
     environment:
@@ -80,10 +87,10 @@ services:
       db:
         condition: service_healthy
       # `worker` claims rows from `import_run` on startup; if it starts before
-      # Alembic has created that table it crashes outright (the claim query
-      # isn't behind a retry). Waiting for `api`'s readiness — which is only
-      # healthy once migrations are applied — makes that ordering explicit
-      # instead of racing `api`'s migration step.
+      # Alembic has created that table, every claim fails and is retried with a
+      # growing delay. Waiting for `api`'s readiness — which is only healthy
+      # once migrations are applied — makes that ordering explicit instead of
+      # racing `api`'s migration step.
       api:
         condition: service_healthy
     volumes:
