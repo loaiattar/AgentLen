@@ -311,6 +311,73 @@ async def test_a_call_whose_session_is_unknown_is_unlinked_not_a_duplicate(uow: 
         await uow.commit()
 
 
+@pytest.mark.parametrize("bind_limit", [32_767, 40], ids=["one-statement", "split"])
+async def test_outcomes_do_not_depend_on_how_many_statements_a_batch_takes(
+    uow: Any, bind_limit: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#136. asyncpg binds at most 32 767 parameters per statement, so the SQL
+    side splits large batches. Forty parameters is a few rows per INSERT and
+    twenty keys per lookup: RETURNING, stored keys, in-batch repeats and orphans
+    all cross a slice boundary, and must still be counted as in one statement."""
+    from agentlen.domain.model.import_run import ImportIssue
+    from agentlen.infrastructure.persistence.repositories import sql as sql_repositories
+
+    monkeypatch.setattr(sql_repositories, "MAX_BIND_PARAMETERS", bind_limit)
+    async with uow:
+        p = await _provenance(uow)
+        earlier = [_session(p["source"], f"s{i}") for i in range(25)]
+        stored = await uow.sessions.add_many(
+            [SessionRow(entity=s, import_run_id=p["run"], raw_record_id=p["raw"]) for s in earlier]
+        )
+        first_calls = [_model_call(earlier[0], i, p["raw"]) for i in range(25)]
+        earlier_calls = await uow.model_calls.add_many(first_calls, session_ids=stored.ids)
+
+        rerun = await _second_run(uow, p)
+        batch = [_session(p["source"], f"s{i}") for i in range(30)]
+        repeat = _session(p["source"], "s27")
+        sessions = await uow.sessions.add_many(
+            [
+                SessionRow(entity=s, import_run_id=rerun, raw_record_id=p["raw"])
+                for s in [*batch, repeat]
+            ]
+        )
+        calls = [_model_call(batch[0], i, p["raw"]) for i in range(30)]
+        repeated_call = _model_call(batch[0], 27, p["raw"])
+        orphan = _model_call(_session(p["source"], "never-stored"), 0, p["raw"])
+        outcome = await uow.model_calls.add_many(
+            [*calls, repeated_call, orphan], session_ids=sessions.ids
+        )
+
+        raw = await uow.raw_records.add_many(
+            import_run_id=rerun, records=[(line, {"line": line}) for line in range(1, 31)]
+        )
+        await uow.import_issues.add_many(
+            import_run_id=rerun,
+            issues=[
+                (
+                    ImportIssue(severity="rejected", code="CAST_FAILED", message=f"m{line}"),
+                    raw[line],
+                )
+                for line in range(1, 31)
+            ],
+        )
+        await uow.commit()
+
+    assert (sessions.inserted_count, sessions.duplicate_count, len(sessions.ids)) == (5, 25, 31)
+    assert sessions.ids[repeat.id] == sessions.assigned[batch[27].id]
+    assert sessions.ids[batch[3].id] == stored.assigned[earlier[3].id]
+    assert (outcome.inserted_count, outcome.duplicate_count) == (5, 26)
+    assert outcome.unlinked == (orphan.entity.id,)
+    assert outcome.ids[repeated_call.entity.id] == outcome.assigned[calls[27].entity.id]
+    assert outcome.ids[calls[3].entity.id] == earlier_calls.assigned[first_calls[3].entity.id]
+    assert sorted(raw) == list(range(1, 31))
+    async with uow:
+        listed = await uow.import_issues.list(import_run_id=rerun, limit=50)
+    assert [(r.issue.message, r.issue.line_number) for r in listed] == [
+        (f"m{line}", line) for line in range(1, 31)
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Absent is not zero, all the way down to storage
 # ---------------------------------------------------------------------------

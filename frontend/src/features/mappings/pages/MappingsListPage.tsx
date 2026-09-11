@@ -4,14 +4,14 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
 
 const mappings = [
-  { name: 'TraceLab v3', source: 'TraceLab', version: '3.1', fields: 18, model: 'gpt-4.1', status: 'active' },
-  { name: 'SWE-chat core', source: 'SWE-chat', version: '1.4', fields: 12, model: 'claude-sonnet', status: 'draft' },
+  { name: 'TraceLab v3', source: 'TraceLab', version: '3.1', fields: 18, model: 'Configured model', status: 'active' },
+  { name: 'SWE-chat core', source: 'SWE-chat', version: '1.4', fields: 12, model: 'Configured model', status: 'draft' },
 ]
 
 export function MappingsListPage() {
   return (
     <div>
-      <PageHeader kicker="Mappings" title="Library" />
+      <PageHeader title="Mappings" />
       <div className="glass-surface rounded-xl p-2">
         <Table>
           <TableHeader>

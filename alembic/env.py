@@ -19,7 +19,14 @@ from alembic import context
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers` defaults to True, which switches off every
+    # logger created before this line — including the application's own, since
+    # they exist as soon as their module is imported. Migrations run in-process
+    # here (the test fixtures, `seed`), so the default left `agentlen.worker`
+    # silent for the rest of the process: `pytest -q` over the whole suite was
+    # red because one worker test could no longer see its own log record, while
+    # the same test passed alone.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # A caller (the test suite, a script) may have set the URL programmatically
 # on the Config; that wins. Otherwise fall back to the environment.

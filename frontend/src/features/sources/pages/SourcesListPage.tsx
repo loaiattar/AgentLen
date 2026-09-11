@@ -12,7 +12,7 @@ const sources = [
 export function SourcesListPage() {
   return (
     <div>
-      <PageHeader kicker="Data sources" title="Connected origins" />
+      <PageHeader title="Data sources" />
       <BentoGrid>
         {sources.map((source) => (
           <BentoModule key={source.name} cols={2} interactive>
