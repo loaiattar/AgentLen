@@ -39,8 +39,8 @@ class AISettings(BaseSettings):
             "which is how Groq, Mistral, OpenRouter, Ollama and the rest are reached."
         ),
     )
-    timeout_seconds: float = 60.0
-    max_output_tokens: int = 8000
+    timeout_seconds: float = Field(default=60.0, gt=0)
+    max_output_tokens: int = Field(default=8000, ge=1)
     max_tokens_parameter: Literal["max_tokens", "max_completion_tokens"] = Field(
         default="max_tokens",
         description=(
@@ -52,8 +52,26 @@ class AISettings(BaseSettings):
             "liste de préfixes dans le code, qui se périme à chaque sortie."
         ),
     )
-    max_iterations: int = 10
-    max_conversation_turns: int = 10
+    max_iterations: int = Field(
+        default=10,
+        ge=1,
+        description="Tool-loop bound for the initial analysis (AI_MAX_ITERATIONS).",
+    )
+    max_conversation_turns: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "How many stored turns are replayed into a refinement prompt "
+            "(AI_MAX_CONVERSATION_TURNS). This used to bound the refinement "
+            "tool loop as well; that bound is now max_refinement_iterations, so "
+            "an operator who lowered this one to cap spend must set that one too."
+        ),
+    )
+    max_refinement_iterations: int = Field(
+        default=10,
+        ge=1,
+        description="Tool-loop bound for one refinement (AI_MAX_REFINEMENT_ITERATIONS).",
+    )
 
 
 class ProviderKeys(BaseSettings):

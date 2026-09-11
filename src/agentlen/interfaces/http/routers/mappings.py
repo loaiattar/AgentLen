@@ -13,8 +13,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Query, status
 
-from agentlen.application.errors import ConflictError, MappingInvalidError, NotFoundError
-from agentlen.application.ports.unit_of_work import UnitOfWork
+from agentlen.application.errors import NotFoundError
+from agentlen.application.use_cases.save_mapping import SaveMapping
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.services import mapping_validator
 from agentlen.interfaces.http.dependencies import UnitOfWorkDep
@@ -61,14 +61,6 @@ def _to_domain(body: MappingDocumentIn, *, name: str, version: int) -> Mapping:
     )
 
 
-def _validate_or_raise(mapping: Mapping) -> None:
-    errors = mapping_validator.validate(mapping)
-    if errors:
-        raise MappingInvalidError(
-            [{"code": e.code, "field_path": e.field_path, "message": e.message} for e in errors]
-        )
-
-
 def _to_out(row: dict[str, Any]) -> MappingOut:
     return MappingOut(
         id=row["id"],
@@ -80,15 +72,6 @@ def _to_out(row: dict[str, Any]) -> MappingOut:
         entities=row["document"]["entities"],
         created_at=row["created_at"],
     )
-
-
-async def _ensure_name_is_free(uow: UnitOfWork, *, data_source_id: int, name: str) -> None:
-    existing = await uow.mappings.list_records(data_source_id=data_source_id, limit=1000, offset=0)
-    if any(r["name"] == name for r in existing):
-        raise ConflictError(
-            f"Un mapping nommé '{name}' existe déjà pour cette source.",
-            details={"name": name, "data_source_id": data_source_id},
-        )
 
 
 @router.get(
@@ -119,15 +102,8 @@ async def list_mappings(
 )
 async def create_mapping(body: MappingCreateIn, uow: UnitOfWorkDep) -> MappingOut:
     mapping = _to_domain(body, name=body.name, version=1)
-    _validate_or_raise(mapping)
-
+    new_id = await SaveMapping(uow).execute(mapping, data_source_id=body.data_source_id)
     async with uow:
-        if await uow.data_sources.get_by_id(body.data_source_id) is None:
-            raise NotFoundError("DataSource", body.data_source_id)
-        await _ensure_name_is_free(uow, data_source_id=body.data_source_id, name=body.name)
-
-        new_id = await uow.mappings.save(mapping, data_source_id=body.data_source_id)
-        await uow.commit()
         row = await uow.mappings.get_by_id(new_id)
 
     assert row is not None  # just created, in the same transaction
@@ -168,17 +144,11 @@ async def get_mapping(mapping_id: int, uow: UnitOfWorkDep) -> MappingOut:
 async def update_mapping(
     mapping_id: int, body: MappingDocumentIn, uow: UnitOfWorkDep
 ) -> MappingOut:
+    new_mapping = _to_domain(body, name="", version=1)
+    new_id = await SaveMapping(uow).execute(
+        new_mapping, data_source_id=None, previous_mapping_id=mapping_id
+    )
     async with uow:
-        current = await uow.mappings.get_by_id(mapping_id)
-        if current is None:
-            raise NotFoundError("Mapping", mapping_id)
-
-        new_mapping = _to_domain(body, name=current["name"], version=current["version"] + 1)
-        _validate_or_raise(new_mapping)
-
-        new_id = await uow.mappings.save(new_mapping, data_source_id=current["data_source_id"])
-        await uow.mappings.supersede(mapping_id)
-        await uow.commit()
         row = await uow.mappings.get_by_id(new_id)
 
     assert row is not None  # just created, in the same transaction

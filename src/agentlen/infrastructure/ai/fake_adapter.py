@@ -87,6 +87,7 @@ class FakeAnalyzer(BaseAnalyzerAdapter):
         proposal: MappingProposal,
         user_message: str,
         tool_executor: ImportAgentToolExecutor,
+        history: tuple[dict[str, str | int], ...] = (),
     ) -> MappingProposal:
         await tool_executor.execute("validate_mapping", {"mapping": {}})
         self.tool_calls_made.append("validate_mapping")

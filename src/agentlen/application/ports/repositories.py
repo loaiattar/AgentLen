@@ -194,6 +194,10 @@ class MappingProposalRepository(Protocol):
 
     async def add_message(self, proposal_id: int, *, role: str, content: str) -> None: ...
 
+    async def list_messages(
+        self, proposal_id: int, *, limit: int
+    ) -> list[dict[str, str | int]]: ...
+
 
 class DataSourceRepository(Protocol):
     async def get_by_slug(self, slug: str) -> int | None: ...

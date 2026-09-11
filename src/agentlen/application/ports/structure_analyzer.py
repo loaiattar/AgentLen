@@ -35,6 +35,7 @@ class StructureAnalyzer(Protocol):
         proposal: MappingProposal,
         user_message: str,
         tool_executor: ImportAgentToolExecutor,
+        history: tuple[dict[str, str | int], ...] = (),
     ) -> MappingProposal:
         """Incorporate a user correction and re-validate via tools."""
         ...

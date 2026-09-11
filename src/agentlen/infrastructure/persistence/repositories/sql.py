@@ -567,6 +567,24 @@ class SqlAlchemyMappingProposalRepository(_Base):
             )
         )
 
+    async def list_messages(self, proposal_id: int, *, limit: int) -> list[dict[str, str | int]]:
+        recent = (
+            select(t.mapping_proposal_message)
+            .where(t.mapping_proposal_message.c.mapping_proposal_id == proposal_id)
+            .order_by(t.mapping_proposal_message.c.turn_index.desc())
+            .limit(limit)
+            .subquery()
+        )
+        rows = (await self._conn.execute(select(recent).order_by(recent.c.turn_index))).mappings()
+        return [
+            {
+                "turn_index": int(row["turn_index"]),
+                "role": str(row["role"]),
+                "content": str(row["content"]),
+            }
+            for row in rows
+        ]
+
 
 def _validation_document(mapping: Mapping) -> dict[str, Any]:
     from agentlen.domain.services.mapping_validator import validate
