@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from agentlen.domain.errors import InvalidOperatorParamError, OperatorFailedError
+from agentlen.domain.errors import (
+    InvalidOperatorParamError,
+    OperatorFailedError,
+    UnsupportedPathError,
+)
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
+from agentlen.domain.services import json_path
+from agentlen.domain.services.json_path import JsonPath
+
+# Resolves a mapping path against the row being transformed (json_path.py).
+Lookup = Callable[[str], object | None]
 
 
 class RegexExtractor(Protocol):
@@ -59,13 +69,18 @@ class TransformationEngine:
         issues: list[ImportIssue] = []
 
         for entity_mapping in mapping.entities:
+            rows: list[object] = [raw_record]
+            prefix: JsonPath | None = None
             if entity_mapping.iterate:
-                rows = self._extract_rows(raw_record, entity_mapping.iterate)
-            else:
-                rows = [raw_record]
+                rows, prefix, row_issues = self._extract_rows(
+                    raw_record, entity_mapping, entity_mapping.iterate, line_number
+                )
+                issues.extend(row_issues)
 
             for source_index, row in enumerate(rows):
-                entity_data, entity_issues = self._apply_entity(entity_mapping, row, line_number)
+                entity_data, entity_issues = self._apply_entity(
+                    entity_mapping, row, prefix, line_number
+                )
                 issues.extend(entity_issues)
                 if entity_data is not None:
                     results.append(
@@ -85,15 +100,19 @@ class TransformationEngine:
     def _apply_entity(
         self,
         entity: EntityMapping,
-        row: dict[str, Any],
+        row: object,
+        prefix: JsonPath | None,
         line_number: int | None,
     ) -> tuple[dict[str, Any] | None, list[ImportIssue]]:
         data: dict[str, Any] = {}
         issues: list[ImportIssue] = []
         rejected = False
 
+        def lookup(path: str) -> object | None:
+            return json_path.resolve(row, json_path.source_path(path, prefix))
+
         for field_rule in entity.fields:
-            value, field_issues = self._apply_field(field_rule, row, entity.target, line_number)
+            value, field_issues = self._apply_field(field_rule, lookup, entity.target, line_number)
             issues.extend(field_issues)
 
             if value is None and field_rule.required:
@@ -122,7 +141,7 @@ class TransformationEngine:
     def _apply_field(
         self,
         rule: FieldRule,
-        row: dict[str, Any],
+        lookup: Lookup,
         entity_target: str,
         line_number: int | None,
     ) -> tuple[object | None, list[ImportIssue]]:
@@ -130,14 +149,19 @@ class TransformationEngine:
 
         # Extract raw value from the record using the source path. Operators that
         # combine several source fields (coalesce/concat/hash) ignore this and
-        # resolve their own `sources` list against `row` instead.
-        value = self._extract(row, rule.source)
+        # resolve their own `sources` list through the same `lookup` instead.
+        try:
+            value = lookup(rule.source)
+        except UnsupportedPathError as exc:  # refused by MappingValidator; explained, not raised
+            severity = "rejected" if rule.required else "warning"
+            path = f"{field_path}.source"
+            return None, [ImportIssue(severity, exc.code, exc.message, path, line_number)]
 
         # Apply operators in order
         for op in rule.operators:
             try:
-                value = self._apply_operator(op, value, row)
-            except (OperatorFailedError, InvalidOperatorParamError) as exc:
+                value = self._apply_operator(op, value, lookup)
+            except (OperatorFailedError, InvalidOperatorParamError, UnsupportedPathError) as exc:
                 issue = ImportIssue(
                     severity="rejected" if rule.required else "warning",
                     code=exc.code,
@@ -158,38 +182,34 @@ class TransformationEngine:
 
         return value, []
 
-    def _extract(self, record: dict[str, Any], source_path: str) -> object | None:
-        """Extract a value from a dict using a simple dot/bracket path.
-
-        Supports '$.field' and '$.nested.field' notation.
-        Returns None when the path doesn't exist.
-        """
-        if source_path.startswith("$."):
-            source_path = source_path[2:]
-        elif source_path == "$":
-            return record
-
-        current: object = record
-        for part in source_path.split("."):
-            if not isinstance(current, dict):
-                return None
-            current = current.get(part)
-            if current is None:
-                return None
-        return current
-
-    def _extract_rows(self, record: dict[str, Any], iterate_path: str) -> list[dict[str, Any]]:
-        """Extract a list of sub-records using an iterate path.
-
-        Only supports simple paths (no filter expressions at this stage).
-        """
-        value = self._extract(record, iterate_path)
-        if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
-        return []
+    @staticmethod
+    def _extract_rows(
+        record: dict[str, Any], entity: EntityMapping, iterate: str, line_number: int | None
+    ) -> tuple[list[object], JsonPath | None, list[ImportIssue]]:
+        """Rows of an `iterate` entity, and its parsed path (the prefix a `source`
+        may repeat). A value of another type where the list should be is
+        explained, never turned into zero rows in silence."""
+        field_path = f"entities[target={entity.target}].iterate"
+        try:
+            prefix = json_path.iterate_path(iterate)
+        except UnsupportedPathError as exc:
+            return (
+                [],
+                None,
+                [ImportIssue("rejected", exc.code, exc.message, field_path, line_number)],
+            )
+        rows, problem = json_path.resolve_rows(record, prefix)
+        if problem is None:
+            return rows, prefix, []
+        message = (
+            f"iterate path '{iterate}' does not designate a list on this record ({problem}): "
+            f"the '{entity.target}' rows it should hold were not produced."
+        )
+        issue = ImportIssue("rejected", "ITERATE_NOT_A_LIST", message, field_path, line_number)
+        return rows, prefix, [issue]
 
     def _apply_operator(  # noqa: PLR0911, PLR0912
-        self, op: dict[str, Any], value: object, row: dict[str, Any]
+        self, op: dict[str, Any], value: object, lookup: Lookup
     ) -> object:
         op_name = op.get("op")
 
@@ -213,11 +233,11 @@ class TransformationEngine:
             case "parse_datetime":
                 return self._parse_datetime(value, op["format"])
             case "coalesce":
-                return self._coalesce(row, op["sources"])
+                return self._coalesce(lookup, op["sources"])
             case "concat":
-                return self._concat(row, op["sources"], op.get("separator", ""))
+                return self._concat(lookup, op["sources"], op.get("separator", ""))
             case "hash":
-                return self._hash(row, op["sources"], op.get("algorithm", "sha256"))
+                return self._hash(lookup, op["sources"], op.get("algorithm", "sha256"))
             case "regex_extract":
                 return self._regex_extract(value, op["pattern"], op.get("group", 0))
             case "split_rows":
@@ -253,31 +273,31 @@ class TransformationEngine:
 
         return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
-    def _coalesce(self, row: dict[str, Any], sources: list[str]) -> object:
+    def _coalesce(self, lookup: Lookup, sources: list[str]) -> object:
         """First non-null value among `sources`, or None if all are null."""
         for source in sources:
-            resolved = self._extract(row, source)
+            resolved = lookup(source)
             if resolved is not None:
                 return resolved
         return None
 
-    def _concat(self, row: dict[str, Any], sources: list[str], separator: str) -> str | None:
+    def _concat(self, lookup: Lookup, sources: list[str], separator: str) -> str | None:
         """Join the non-null values of `sources` with `separator`.
 
         A null source is skipped. If every source is null, returns None
         rather than an empty string.
         """
-        parts = [str(v) for s in sources if (v := self._extract(row, s)) is not None]
+        parts = [str(v) for s in sources if (v := lookup(s)) is not None]
         return separator.join(parts) if parts else None
 
-    def _hash(self, row: dict[str, Any], sources: list[str], algorithm: str) -> str:
+    def _hash(self, lookup: Lookup, sources: list[str], algorithm: str) -> str:
         """SHA-256 of the resolved `sources` values, canonicalized the same way
         as Deduplicator.content_hash (sorted keys, stable regardless of the
         order values were collected in) — used as a synthetic natural key.
         """
         if algorithm != "sha256":
             raise ValueError(f"Unsupported hash algorithm '{algorithm}'")
-        values = {source: self._extract(row, source) for source in sources}
+        values = {source: lookup(source) for source in sources}
         canonical = json.dumps(values, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(canonical.encode()).hexdigest()
 
