@@ -14,7 +14,7 @@ profile showed is what the import reads.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from contextlib import closing
 from itertools import batched, islice
 from pathlib import Path
@@ -49,7 +49,7 @@ class PolarsRecordReader:
 
 def _records(
     path: str, format_: str, *, limit: int | None = None, chunk_size: int | None = None
-) -> Iterator[dict[str, Any]]:
+) -> Generator[dict[str, Any], None, None]:
     # A zero-byte file holds no records in any format; Polars would raise on
     # it instead (same short-circuit as the profiler).
     if Path(path).stat().st_size == 0:
