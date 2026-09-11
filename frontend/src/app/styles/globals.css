@@ -137,8 +137,6 @@
   --card-foreground: var(--foreground);
   --popover: var(--glass-strong);
   --popover-foreground: var(--foreground);
-  --secondary: var(--glass-soft);
-  --secondary-foreground: var(--foreground);
   --muted: var(--surface-sunken);
   --muted-foreground: var(--foreground-muted);
   --accent: var(--primary-soft);
@@ -258,8 +256,13 @@
   --color-card-foreground: var(--card-foreground);
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
+  /* No `--color-secondary` here on purpose. The type scale already defines
+     `--text-secondary`, and a colour of the same name makes `text-secondary`
+     ambiguous: Tailwind resolved it as the colour, so every `text-secondary`
+     element lost its font size *and* had its colour overwritten with
+     `--glass-soft` — white on white in light mode, near-black on near-black in
+     dark. Nothing used `bg-secondary` or `text-secondary` as a colour; the
+     Button's `secondary` variant is a CVA name, not this token. */
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
@@ -469,6 +472,12 @@
   animation: atmosphere-drift 28s var(--ease-out) infinite;
 }
 
+.skeleton-shimmer {
+  background-image: var(--skeleton-shimmer);
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .atmosphere-motion,
   .skeleton-shimmer {
@@ -479,10 +488,4 @@
   .glass-module[data-interactive="true"]:active {
     transform: none;
   }
-}
-
-.skeleton-shimmer {
-  background-image: var(--skeleton-shimmer);
-  background-size: 200% 100%;
-  animation: shimmer 1.6s ease-in-out infinite;
 }
