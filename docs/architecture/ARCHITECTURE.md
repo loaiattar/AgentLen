@@ -379,8 +379,17 @@ AI_TIMEOUT_SECONDS=60
 AI_MAX_OUTPUT_TOKENS=8000
 ANTHROPIC_API_KEY=
 OPENAI_API_KEY=
-AI_API_KEY=                        # pour openai_compatible
+AI_API_KEY=                        # pour openai_compatible ; vide pour un hôte sans clé (Ollama)
 ```
+
+**Fournisseur inutilisable.** Tant qu'il manque une variable, l'API démarre quand même :
+tout fonctionne sauf l'assistant d'import. Elle journalise au démarrage qu'aucun
+fournisseur IA n'est utilisable, et `GET /ai/providers` renvoie `active.configured: false`
+avec `active.missing`, la liste des variables à renseigner : `AI_PROVIDER` quand le
+fournisseur est vide ou inconnu, sinon la clé, `AI_MODEL` ou `AI_BASE_URL` qu'il exige.
+`fake` ne compte comme configuré que là où ses fixtures existent, dans une copie des
+sources. L'image Docker ne contient pas `tests/` : avec le `AI_PROVIDER=fake` de
+`.env.example`, `make up` signale donc `AI_PROVIDER` à renseigner.
 
 **`openai_compatible` — un adaptateur, tout un écosystème.** La quasi-totalité des
 fournisseurs expose aujourd'hui le contrat de l'API OpenAI (`POST /v1/chat/completions`,
@@ -409,18 +418,22 @@ un mini-framework fragile au lieu d'un produit.
 
 ```python
 # infrastructure/ai/factory.py
-_REGISTRY: dict[str, type[BaseAnalyzerAdapter]] = {
+_REGISTRY: dict[str, type] = {
     "anthropic": AnthropicAnalyzer,
     "openai": OpenAIAnalyzer,
+    # Même dialecte, autre hôte : Groq, Mistral, OpenRouter, Ollama… choisis par AI_BASE_URL.
+    "openai_compatible": OpenAICompatibleAnalyzer,
     "fake": FakeAnalyzer,
 }
 
-def build_structure_analyzer(settings: AISettings) -> StructureAnalyzer:
+def build_structure_analyzer(settings: AISettings, keys: ProviderKeys) -> StructureAnalyzer:
     try:
         adapter_cls = _REGISTRY[settings.provider]
     except KeyError:
-        raise UnsupportedProviderError(settings.provider, sorted(_REGISTRY))
-    return adapter_cls(settings)
+        raise UnsupportedProviderError(settings.provider, supported_providers()) from None
+    # La clé du fournisseur (ANTHROPIC_API_KEY, OPENAI_API_KEY ou AI_API_KEY) est
+    # refusée si elle manque, sauf pour openai_compatible, qui peut viser un hôte sans clé.
+    return adapter_cls(settings, api_key)
 ```
 
 **Ajouter un fournisseur = une classe + une ligne de registre.** Aucun use case, aucune règle métier, aucun moteur d'import n'est touché.
@@ -431,7 +444,7 @@ Chaque adaptateur convertit la réponse brute du fournisseur vers le **même** o
 
 ### Substitut de test
 
-`FakeAnalyzer` rejoue des propositions enregistrées depuis `tests/fixtures/ai_responses/`. **La CI ne fait aucun appel réseau et ne requiert aucune clé.** Les deux configurations réelles sont vérifiées manuellement et consignées dans `docs/verification/ai-models-report.md` (livrable exigé par le sujet).
+`FakeAnalyzer` rejoue des propositions enregistrées depuis `tests/fixtures/ai_responses/`. **La CI ne fait aucun appel réseau et ne requiert aucune clé.** Ces fixtures ne sont pas copiées dans l'image Docker : `fake` y est signalé comme non configuré (voir « Fournisseur inutilisable »). Les deux configurations réelles sont vérifiées manuellement et consignées dans `docs/verification/ai-models-report.md` (livrable exigé par le sujet).
 
 ---
 
