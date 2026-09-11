@@ -51,6 +51,10 @@ test:
 test-all:
 	pytest -q
 
+## test-acceptance: only the six tests the brief requires, named after the requirements
+test-acceptance:
+	pytest -m acceptance -v
+
 ## up: start db + api + worker + frontend (http://localhost:8080), building images if needed
 up:
 	@$(COMPOSE) up --build -d

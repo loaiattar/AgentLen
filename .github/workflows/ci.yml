@@ -118,7 +118,7 @@ jobs:
           alembic downgrade base
           alembic upgrade head
 
-      - name: pytest tests/integration tests/e2e tests/contract
+      - name: pytest tests/integration tests/e2e tests/contract tests/acceptance
         # A skipped test still exits 0. The database fixtures skip when they
         # decide Postgres is out of reach, so without this check the job could
         # report success having exercised no database at all — the same class
@@ -126,13 +126,17 @@ jobs:
         # would fail first, but that guard is accidental: it depends on step
         # order, and would vanish the day someone reorders them.
         #
+        # `tests/acceptance` is here too — the six behaviours the brief requires
+        # all need a real database, and a requirement that only runs when
+        # someone remembers to type `make test-acceptance` is not demonstrated.
+        #
         # `tests/contract` is in scope here, and this is the job that makes it
         # mean something: it is the only place both halves run, so a double
         # that has drifted from the SQL repository fails rather than agreeing
         # with itself. It was in no job at all before.
         run: |
           set -o pipefail
-          pytest tests/integration tests/e2e tests/contract -q | tee pytest-db.out
+          pytest tests/integration tests/e2e tests/contract tests/acceptance -q | tee pytest-db.out
           if grep -qE '[0-9]+ skipped' pytest-db.out; then
             echo "::error::Database tests were skipped — the Postgres service was not reached."
             exit 1
