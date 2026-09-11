@@ -57,7 +57,7 @@ class _Store:
     tool_calls: list[tuple[int, ToolCallRow]] = field(default_factory=list)
     tool_call_keys: dict[tuple[int, int], int] = field(default_factory=dict)
     raw_records: dict[tuple[int, int], int] = field(default_factory=dict)
-    payloads: dict[int, dict[str, Any]] = field(default_factory=dict)
+    payloads: dict[int, dict[str, Any] | None] = field(default_factory=dict)
     import_runs: dict[int, dict[str, Any]] = field(default_factory=dict)
     reports: dict[int, ImportReport] = field(default_factory=dict)
     issues: list[tuple[int, ImportIssue, int | None]] = field(default_factory=list)
@@ -239,7 +239,7 @@ class InMemoryRawRecordRepository:
         self._s = store
 
     async def add_many(
-        self, *, import_run_id: int, records: list[tuple[int, dict[str, Any]]]
+        self, *, import_run_id: int, records: list[tuple[int, dict[str, Any] | None]]
     ) -> dict[int, int]:
         out: dict[int, int] = {}
         for line_number, payload in records:

@@ -21,6 +21,7 @@ from agentlen.application.dto.preview import PreviewEntities, PreviewIssue, Prev
 from agentlen.application.errors import MappingInvalidError, NotFoundError
 from agentlen.application.ports.file_reader import FileReader
 from agentlen.application.ports.unit_of_work import UnitOfWork
+from agentlen.application.use_cases.run_import import split_source_items
 from agentlen.domain.services import mapping_validator
 from agentlen.domain.services.record_normalizer import RecordNormalizer
 
@@ -84,11 +85,15 @@ class PreviewImport:
 
         would_import: dict[str, int] = defaultdict(int)
         rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        issues: list[PreviewIssue] = []
-        rejected_lines: set[int] = set()
+        # Lines that cannot be read or stored: rejected here as at import.
+        readable, rejections = split_source_items(records, start_line=1)
+        issues = [
+            PreviewIssue(r.line_number, r.severity, r.code, r.message, r.field_path)
+            for r in rejections
+        ]
+        rejected_lines = {r.line_number for r in rejections if r.line_number is not None}
 
-        for offset, record in enumerate(records):
-            line_number = offset + 1
+        for line_number, record in readable:
             result = self._normalizer.normalize(
                 mapping,
                 record,
@@ -121,6 +126,7 @@ class PreviewImport:
                 if issue.severity == "rejected":
                     rejected_lines.add(issue.line_number or line_number)
 
+        issues.sort(key=lambda issue: issue.line_number or 0)
         return PreviewResult(
             sampled=len(records),
             would_import=dict(would_import),

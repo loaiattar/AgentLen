@@ -27,6 +27,8 @@ import signal
 import socket
 from typing import Protocol
 
+from agentlen.application.errors import ImportInterruptedError, describe_lines
+
 logger = logging.getLogger("agentlen.worker")
 
 #: How long to wait when the queue is empty. Short enough that a queued import
@@ -41,8 +43,9 @@ MAX_ERROR_BACKOFF_SECONDS = 30.0
 
 #: How far down a `raise ... from` chain the failure summary looks. A SQLAlchemy
 #: error wraps the driver adapter's, which wraps the driver's own: that is
-#: three links, and the last one names what actually went wrong.
-_MAX_CAUSE_DEPTH = 4
+#: three links, and the last one names what actually went wrong. The import's
+#: own `ImportInterruptedError` wraps them all: one more.
+_MAX_CAUSE_DEPTH = 5
 
 
 class _Queue(Protocol):
@@ -76,13 +79,17 @@ def failure_summary(import_run_id: int, exc: BaseException) -> str:
 
     The chain of causes stays, because it is what an operator needs:
     `IntegrityError <- NotNullViolationError` says what kind of failure it was
-    without saying on which values.
+    without saying on which values. So does the position of an interrupted
+    import (`ImportInterruptedError`): line numbers, not what the lines hold.
     """
     names: list[str] = []
+    where = ""
     current: BaseException | None = exc
     for _ in range(_MAX_CAUSE_DEPTH):
         if current is None:
             break
+        if isinstance(current, ImportInterruptedError) and not where:
+            where = f" ({describe_lines(current.first_line, current.last_line)})"
         name = type(current).__name__
         if not names or names[-1] != name:
             names.append(name)
@@ -90,7 +97,7 @@ def failure_summary(import_run_id: int, exc: BaseException) -> str:
             None if current.__suppress_context__ else current.__context__
         )
     return (
-        f"Import {import_run_id} en échec : {' <- '.join(names)} "
+        f"Import {import_run_id} en échec{where} : {' <- '.join(names)} "
         "(détail non conservé : il peut contenir des données de trace)."
     )
 

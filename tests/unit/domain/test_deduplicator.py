@@ -4,6 +4,8 @@ Subject requirement: "réimporter le même fichier ne doit pas doubler les résu
 The Deduplicator is the domain component responsible for this guarantee.
 """
 
+import pytest
+
 from agentlen.domain.services.deduplicator import Deduplicator
 
 
@@ -63,3 +65,33 @@ class TestContentHash:
         h = Deduplicator.content_hash({"x": 1})
         assert len(h) == 64
         assert all(c in "0123456789abcdef" for c in h)
+
+
+class TestStorageIssue:
+    """#189. A record jsonb cannot hold is rejected by path, never altered."""
+
+    def test_a_json_payload_is_storable(self) -> None:
+        payload = {"a": [1, 2.5, None, True], "b": {"c": "é"}, "d": "\\u0000 is only text"}
+        assert Deduplicator.storage_issue(payload, line_number=1) is None
+
+    @pytest.mark.parametrize(
+        ("payload", "path"),
+        [
+            ({"prompt": "TRACE\x00"}, "$.prompt"),
+            ({"a b": {"x": ["ok", "TRACE\ud800"]}}, '$["a b"].x[1]'),
+            ({"score": float("nan")}, "$.score"),
+            ({"blob": b"TRACE"}, "$.blob"),
+            ({"TRACE\x00": 1}, "$"),
+        ],
+    )
+    def test_an_unstorable_value_is_rejected_by_its_path(self, payload: dict, path: str) -> None:
+        issue = Deduplicator.storage_issue(payload, line_number=7)
+
+        assert issue is not None
+        assert (issue.severity, issue.code, issue.line_number) == (
+            "rejected",
+            "UNSTORABLE_VALUE",
+            7,
+        )
+        assert issue.field_path == path
+        assert "TRACE" not in issue.message

@@ -79,6 +79,30 @@ class MappingInvalidError(ApplicationError):
         self.errors = errors
 
 
+class ImportInterruptedError(ApplicationError):
+    """An import stopped on an unexpected failure, at a known place in the file.
+
+    Carries positions only — `first_line` to `last_line`, or from `first_line`
+    on when the end is unknown — never the failure's text, which can hold trace
+    content (#153). The worker writes these numbers into `error_summary`.
+    """
+
+    code = "IMPORT_INTERRUPTED"
+
+    def __init__(self, *, first_line: int, last_line: int | None = None) -> None:
+        self.first_line = first_line
+        self.last_line = last_line
+        super().__init__(f"Import interrompu : {describe_lines(first_line, last_line)}.")
+
+
+def describe_lines(first_line: int, last_line: int | None) -> str:
+    if last_line is None:
+        return f"à partir de la ligne {first_line}"
+    if last_line == first_line:
+        return f"ligne {first_line}"
+    return f"lignes {first_line} à {last_line}"
+
+
 class AnalyzerError(ApplicationError):
     """The AI provider failed or returned a non-conforming response. -> 502
 

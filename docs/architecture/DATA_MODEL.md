@@ -109,7 +109,7 @@ CREATE TABLE import_run (
     records_duplicate INTEGER    NOT NULL DEFAULT 0,
     records_rejected INTEGER     NOT NULL DEFAULT 0,
     fields_missing   JSONB,                        -- {champ_cible: nb_absents}
-    error_summary    TEXT,                         -- classes d'exception, jamais leur message
+    error_summary    TEXT,                         -- classes d'exception et lignes, jamais leur message
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at       TIMESTAMPTZ,
     finished_at      TIMESTAMPTZ,
@@ -123,8 +123,8 @@ CREATE INDEX ON import_run (status, created_at) WHERE status = 'pending';
 CREATE TABLE raw_record (
     id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     import_run_id  BIGINT   NOT NULL REFERENCES import_run(id) ON DELETE CASCADE,
-    line_number    INTEGER  NOT NULL,              -- position dans le fichier source
-    payload        JSONB    NOT NULL,              -- l'enregistrement d'origine, intact
+    line_number    INTEGER  NOT NULL,              -- rang de l'enregistrement dans le fichier
+    payload        JSONB    NOT NULL,              -- l'enregistrement d'origine, intact ; null si illisible
     content_hash   CHAR(64) NOT NULL,              -- hash du payload canonicalisé
     UNIQUE (import_run_id, line_number)
 );
@@ -135,7 +135,7 @@ CREATE TABLE import_issue (
     import_run_id BIGINT NOT NULL REFERENCES import_run(id) ON DELETE CASCADE,
     raw_record_id BIGINT REFERENCES raw_record(id) ON DELETE CASCADE,
     severity      TEXT   NOT NULL CHECK (severity IN ('rejected','duplicate','warning')),
-    code          TEXT   NOT NULL,   -- 'MISSING_REQUIRED_FIELD', 'CAST_FAILED', ...
+    code          TEXT   NOT NULL,   -- 'MISSING_REQUIRED_FIELD', 'CAST_FAILED', 'INVALID_JSON', ...
     field_path    TEXT,              -- '$.usage.input_tokens'
     message       TEXT   NOT NULL,   -- explication lisible par un humain
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -143,7 +143,7 @@ CREATE TABLE import_issue (
 CREATE INDEX ON import_issue (import_run_id, severity);
 ```
 
-**`raw_record` est le pivot de la traçabilité.** Chaque fait normalisé pointe vers le `raw_record` dont il est issu : depuis n'importe quelle ligne du dashboard, on remonte au JSON d'origine et à son numéro de ligne dans le fichier. Un `raw_record` sans enfant normalisé mais avec un `import_issue` est un **rejet expliqué**.
+**`raw_record` est le pivot de la traçabilité.** Chaque fait normalisé pointe vers le `raw_record` dont il est issu : depuis n'importe quelle ligne du dashboard, on remonte au JSON d'origine et à son numéro de ligne dans le fichier. Un `raw_record` sans enfant normalisé mais avec un `import_issue` est un **rejet expliqué**. Une ligne illisible ou non stockable en est un aussi : son `raw_record` a un payload JSON `null`, pour que l'issue garde son numéro de ligne (codes et sens de `line_number` : [MAPPING_CONTRACT.md](MAPPING_CONTRACT.md) §7).
 
 ---
 

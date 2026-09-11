@@ -10,6 +10,7 @@ import pytest
 
 from agentlen.application.errors import MappingInvalidError, NotFoundError
 from agentlen.application.use_cases.preview_import import MAX_SAMPLE_SIZE, PreviewImport
+from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from tests.fakes.file_reader import InMemoryFileReader
 from tests.fakes.repositories import InMemoryUnitOfWork
@@ -242,6 +243,23 @@ async def test_the_sample_size_ceiling_itself_is_accepted() -> None:
     await preview.execute(file_id=file_id, mapping_id=mapping_id, sample_size=MAX_SAMPLE_SIZE)
 
     assert reader.last_limit == MAX_SAMPLE_SIZE
+
+
+async def test_lines_that_cannot_be_read_or_stored_are_rejected_as_at_import() -> None:
+    """#189. The preview rejects what the import would, at the same line numbers."""
+    unreadable = ImportIssue(
+        severity="rejected", code="INVALID_JSON", message="illisible", line_number=2
+    )
+    records = [RECORDS[0], unreadable, {"sid": "c", "prompt": "a\x00b"}]
+    preview, _, _, file_id, mapping_id = await build(valid_mapping(), records)
+
+    result = await preview.execute(file_id=file_id, mapping_id=mapping_id)
+
+    assert [(i.line_number, i.code) for i in result.issues] == [
+        (2, "INVALID_JSON"),
+        (3, "UNSTORABLE_VALUE"),
+    ]
+    assert (result.sampled, result.would_reject, result.would_import["session"]) == (3, 2, 1)
 
 
 async def test_the_file_is_read_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
