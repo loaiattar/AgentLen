@@ -248,3 +248,69 @@ def test_every_supported_operator_has_a_valid_parameter_shape(operator):  # type
     )
 
     assert validate(mapping) == []
+
+
+# ---------------------------------------------------------------------------
+# Path notation (#121): only what TransformationEngine resolves passes
+# ---------------------------------------------------------------------------
+
+UNSUPPORTED_PATHS = [
+    ("$.events[?(@.type=='llm_call')]", "filter"),
+    ("$.events[*]", "wildcard"),
+    ("$.*", "wildcard"),
+    ("$.events[0]", "index"),
+    ("$.events[1:3]", "index"),
+    ("$..model", "recursive descent"),
+    ('$["model', "unterminated"),
+    ('$["model"x', "not followed by ']'"),
+    ("$['model']", "double quotes"),
+    ('$["a\\nb"]', "escape"),
+    ("$.a-b", "unexpected '-'"),
+    ("$.", "cannot end with '.'"),
+    ("llm_calls", "starts with '$'"),
+]
+
+
+@pytest.mark.parametrize("where", ["iterate", "source"])
+@pytest.mark.parametrize(("path", "reason"), UNSUPPORTED_PATHS)
+def test_path_outside_the_supported_notation_is_refused_with_its_field_path(path, reason, where):
+    entity = EntityMapping(
+        target="tool_call",
+        natural_key=["tool_name"],
+        iterate=path if where == "iterate" else "$.tools[]",
+        fields=[FieldRule(target="tool_name", source=path if where == "source" else "$.name")],
+    )
+
+    errors = validate(_make_mapping([entity]))
+
+    location = ".iterate" if where == "iterate" else ".fields[target=tool_name].source"
+    assert [(e.code, e.field_path) for e in errors] == [
+        ("MAPPING_UNSUPPORTED_PATH", f"entities[target=tool_call]{location}")
+    ]
+    assert reason in errors[0].message
+
+
+def test_list_marker_in_a_source_is_only_accepted_as_the_iterate_prefix():
+    entity = EntityMapping(
+        target="tool_call",
+        natural_key=["tool_name"],
+        iterate="$.tools[]",
+        fields=[
+            FieldRule(target="tool_name", source="$.tools[].tool_name"),
+            FieldRule(
+                target="status",
+                source='$["status.code"]',
+                operators=[{"op": "coalesce", "sources": ["$.tools[].ok", "$.results[].ok"]}],
+            ),
+        ],
+    )
+
+    errors = validate(_make_mapping([entity]))
+
+    assert [(e.code, e.field_path) for e in errors] == [
+        (
+            "MAPPING_UNSUPPORTED_PATH",
+            "entities[target=tool_call].fields[target=status].operators[0].sources[1]",
+        )
+    ]
+    assert "iterate" in errors[0].message

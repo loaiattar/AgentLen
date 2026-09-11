@@ -46,6 +46,20 @@ class MissingNaturalKeyError(ValidationError):
         )
 
 
+class UnsupportedPathError(ValidationError):
+    """Raised when a path is outside the notation of domain/services/json_path.py.
+    The parser leaves `field_path` empty; the validator fills in the location."""
+
+    def __init__(self, path: str, reason: str, field_path: str = "") -> None:
+        self.path = path
+        self.reason = reason
+        super().__init__(
+            code="MAPPING_UNSUPPORTED_PATH",
+            field_path=field_path,
+            message=f"Path '{path}' is not supported: {reason}.",
+        )
+
+
 class InvalidOperatorParamError(ValidationError):
     """Raised when an operator's parameters are malformed (e.g. an uncompilable regex)."""
 

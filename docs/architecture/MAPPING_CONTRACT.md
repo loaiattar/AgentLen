@@ -66,7 +66,7 @@ Quatre règles non négociables :
     },
     {
       "target": "model_call",
-      "iterate": "$.events[?(@.type=='llm_call')]",   // 1 enregistrement -> N lignes
+      "iterate": "$.llm_calls[]",        // 1 enregistrement -> N lignes (§2.1)
       "parent": { "entity": "session", "via": "external_id" },
       "natural_key": ["session_external_id", "sequence_index"],
       "fields": [
@@ -87,12 +87,12 @@ Quatre règles non négociables :
     },
     {
       "target": "tool_call",
-      "iterate": "$.events[?(@.type=='tool_use')]",
+      "iterate": "$.tool_uses[]",
       "parent": { "entity": "session", "via": "external_id" },
       "natural_key": ["session_external_id", "sequence_index"],
       "fields": [
         { "target": "sequence_index", "source": "$.index" },
-        { "target": "tool_name",      "source": "$.name", "required": true },
+        { "target": "tool_name",      "source": "$.tool_uses[].name", "required": true },
         { "target": "status",         "source": "$.error",
           "operators": [{ "op": "map_values",
                           "table": { "null": "ok" }, "on_unknown": "constant",
@@ -108,6 +108,22 @@ Quatre règles non négociables :
   "notes": "Le champ 'cache_read_tokens' est absent de cette source : laissé NULL."
 }
 ```
+
+### 2.1 Notation des chemins
+
+`source`, `iterate` et les `sources` de `coalesce`, `concat` et `hash` s'écrivent **dans la notation que le profileur met dans le `FileProfile`** : l'agent recopie ce qu'il lit, le moteur résout ce que l'agent recopie. Elle est implémentée une seule fois (`domain/services/json_path.py`), partagée par le validateur et le moteur.
+
+| Notation | Sens | Exemple |
+|---|---|---|
+| `$` | l'enregistrement (sous `iterate`, l'élément parcouru) | `$` |
+| `.nom` | membre d'un objet ; `nom` est un identifiant simple `[A-Za-z_][A-Za-z0-9_]*` | `$.usage.input_tokens` |
+| `["nom"]` | membre dont le nom n'est pas un identifiant simple ; `\\` et `\"` sont les seuls échappements | `$["a.b"]` |
+| `[]` | chaque élément d'une liste | `$.tools[]`, `$.tools[].tool_name` |
+
+- **Dans `iterate`**, chaque élément atteint est une ligne : `$.llm_calls[]` produit une ligne par appel, et `[]` peut se répéter (`$.turns[].tools[]`). Un `iterate` qui ne finit pas par `[]` est lu comme s'il le faisait : `$.llm_calls` vaut `$.llm_calls[]`.
+- **Dans `source`**, le chemin désigne une valeur de l'élément parcouru, écrite relativement à lui (`$.name`) ou en répétant le chemin d'`iterate`, comme le profil l'écrit (`$.tool_uses[].name` sous `"iterate": "$.tool_uses[]"`). Tout autre `[]` y est refusé, car un champ ne reçoit qu'une valeur ; une liste entière se garde avec `$.tool_uses`.
+- **Refusé à la validation**, avec le code `MAPPING_UNSUPPORTED_PATH`, le `field_path` fautif (`entities[target=model_call].iterate`, `entities[target=session].fields[target=external_id].source`) et la raison : filtre `[?(...)]`, joker `*`, index ou tranche `[0]`, descente récursive `..`, guillemets simples, échappement inconnu, guillemet non fermé, chemin qui ne commence pas par `$`. Aucune expression n'est évaluée.
+- **À l'import**, un chemin absent ou `null` donne une valeur absente, et un `iterate` absent zéro ligne, sans issue. Un `iterate` qui rencontre une valeur d'un autre type, par exemple une chaîne là où la liste est attendue, produit l'issue `ITERATE_NOT_A_LIST` (rejet) au lieu de zéro ligne silencieuse.
 
 ---
 
@@ -141,7 +157,7 @@ Quatre règles non négociables :
 
 | Niveau | Vérifie | Exemple d'erreur |
 |---|---|---|
-| **Syntaxique** | Conformité au JSON Schema du mapping | `entities[1].fields[0].target` manquant |
+| **Syntaxique** | Conformité au JSON Schema du mapping, notation des chemins (§2.1) | `entities[1].fields[0].target` manquant ; `MAPPING_UNSUPPORTED_PATH: Path '$.events[0]' is not supported` |
 | **Sémantique** | Champs cibles existants, types compatibles, opérateurs whitelistés | `MAPPING_UNKNOWN_TARGET: 'session.user_email' n'existe pas dans le schéma` |
 | **Structurel** | `natural_key` complète, `parent` résoluble, pas de cycle | `MAPPING_MISSING_NATURAL_KEY: 'model_call' n'a pas de clé naturelle` |
 | **Exécution à blanc** | Application sur un échantillon réel | `CAST_FAILED ligne 42, $.usage.input_tokens = "n/a"` |
@@ -220,7 +236,7 @@ Pour chaque enregistrement source, le moteur :
 
 1. extrait la racine (`record.root`) ;
 2. persiste le `raw_record` (payload intact + hash) ;
-3. pour chaque entité : résout `iterate` s'il existe, puis pour chaque champ applique les opérateurs **dans l'ordre déclaré** ;
+3. pour chaque entité : résout `iterate` s'il existe (§2.1 ; un `iterate` qui ne désigne pas une liste produit `ITERATE_NOT_A_LIST`), puis pour chaque champ applique les opérateurs **dans l'ordre déclaré** ;
 4. sur échec : produit un `ImportIssue` avec code, chemin et message ; l'entité est rejetée, mais **le reste de l'enregistrement continue d'être traité** (un import partiel expliqué vaut mieux qu'un échec global) ;
 5. calcule la clé naturelle, insère avec `ON CONFLICT DO NOTHING` ;
 6. incrémente les compteurs du bilan.

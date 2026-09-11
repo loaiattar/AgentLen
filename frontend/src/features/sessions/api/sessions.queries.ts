@@ -1,6 +1,7 @@
 import { queryOptions, useQuery } from '@tanstack/react-query'
 
 import { apiClient } from '@/lib/api/client'
+import { resolvePeriod } from '@/features/dashboard/lib/filters'
 import type { DashboardFilters } from '@/features/dashboard/types'
 import { sessionsKeys } from '@/features/sessions/api/sessions.keys'
 import type {
@@ -17,7 +18,7 @@ export function toSessionsQuery(
 ): string {
   const params = new URLSearchParams()
 
-  for (const [key, value] of Object.entries(filters)) {
+  for (const [key, value] of Object.entries(resolvePeriod(filters))) {
     if (value === undefined || value === null || value === '') continue
     params.set(key, String(value))
   }

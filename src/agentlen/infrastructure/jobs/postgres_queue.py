@@ -81,6 +81,7 @@ class PostgresJobQueue:
 
     async def mark_failed(self, import_run_id: int, *, error: str) -> None:
         async with self._engine.begin() as conn:
-            # Truncated: error_summary is for a human scanning a list, and the
-            # full detail is in the worker log.
+            # Truncated: error_summary is for a human scanning a list. The worker
+            # stores exception class names only, never their text, which can
+            # carry trace content (see `failure_summary`).
             await conn.execute(_FAIL, {"import_run_id": import_run_id, "error": error[:2000]})

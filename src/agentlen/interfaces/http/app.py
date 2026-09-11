@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agentlen.infrastructure.config.settings import Settings, load_settings
 from agentlen.interfaces.http.auth import ApiKeyMiddleware
 from agentlen.interfaces.http.errors import register_error_handlers
+from agentlen.interfaces.http.openapi import install_openapi
+from agentlen.interfaces.http.pagination import TOTAL_COUNT_HEADER
 from agentlen.interfaces.http.routers import (
     ai,
     auth,
@@ -41,7 +43,8 @@ Conventions transverses :
   d'un objet `coverage` ;
 * toutes les erreurs partagent une enveloppe unique `{"error": {...}}` ;
 * les listes sont paginées via `?limit=&offset=` et renvoient
-  `{items, total, limit, offset}`.
+  `{items, total, limit, offset}` — sauf `/data-sources` et
+  `/sessions/{id}/timeline`, tableaux nus bornés (en-tête `X-Total-Count`).
 """
 
 
@@ -83,6 +86,7 @@ def create_app(*, engine: AsyncEngine | None = None, settings: Settings | None =
         app.state.engine = engine
 
     register_error_handlers(app)
+    install_openapi(app)
 
     # Last added runs first. CORS must wrap auth so a preflight (no API key)
     # is answered here, and so a 401 still carries Access-Control-* headers.
@@ -92,6 +96,7 @@ def create_app(*, engine: AsyncEngine | None = None, settings: Settings | None =
         allow_origins=resolved.allowed_origins,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["X-API-Key", "Content-Type", "Authorization"],
+        expose_headers=[TOTAL_COUNT_HEADER],
     )
 
     # Service routes stay unprefixed as well as prefixed: orchestrators and

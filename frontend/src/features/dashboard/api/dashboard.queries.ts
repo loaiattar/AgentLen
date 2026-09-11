@@ -2,6 +2,7 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
 
 import { apiClient } from '@/lib/api/client'
 import { dashboardKeys } from '@/features/dashboard/api/dashboard.keys'
+import { resolvePeriod } from '@/features/dashboard/lib/filters'
 import type {
   ActivityPoint,
   DashboardFilters,
@@ -16,7 +17,7 @@ import type {
 export function toMetricsQuery(filters: DashboardFilters = {}): string {
   const params = new URLSearchParams()
 
-  for (const [key, value] of Object.entries(filters)) {
+  for (const [key, value] of Object.entries(resolvePeriod(filters))) {
     if (value === undefined || value === null || value === '') continue
     params.set(key, String(value))
   }
