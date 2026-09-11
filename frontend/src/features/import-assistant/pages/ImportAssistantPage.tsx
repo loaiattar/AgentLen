@@ -173,12 +173,7 @@ export function ImportAssistantPage() {
 
   return (
     <div>
-      <PageHeader
-        kicker="Import assistant"
-        title="Mapping studio"
-        description="The assistant proposes. You validate. The import wizard applies."
-        action={headerAction}
-      />
+      <PageHeader title="Mapping studio" action={headerAction} />
 
       <FilePicker key={fileId ?? 'none'} fileId={fileId} fileName={file.data?.original_name} onSubmit={setFileId} />
       {fileId != null ? (

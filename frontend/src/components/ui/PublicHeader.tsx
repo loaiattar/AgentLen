@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 import { Wordmark } from '@/components/ui/Wordmark'
 import { cn } from '@/lib/utils/cn'
 
@@ -23,7 +24,10 @@ export function PublicHeader({ trailing, className }: PublicHeaderProps) {
       >
         <Wordmark />
       </Link>
-      {trailing}
+      <div className="flex items-center gap-[var(--space-1)]">
+        <ThemeToggle />
+        {trailing}
+      </div>
     </header>
   )
 }

@@ -1,85 +1,67 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createTestQueryClient, withQueryClient } from '@/test/query'
+import { MappingStep } from '@/features/imports/components/MappingStep'
+import type { LoadedList } from '@/lib/api/pagination'
 
-const get = vi.fn()
-vi.mock('@/lib/api/client', () => ({
-  apiClient: {
-    get: (...args: unknown[]) => get(...args),
-    post: vi.fn(),
-    put: vi.fn(),
-    patch: vi.fn(),
-    delete: vi.fn(),
-  },
+const lists = vi.hoisted(() => ({
+  sources: undefined as unknown as LoadedList<unknown>,
+  mappings: undefined as unknown as LoadedList<unknown>,
 }))
 
-const { MappingStep } = await import('@/features/imports/components/MappingStep')
-
-const MAPPING = {
-  id: 3,
-  data_source_id: 2,
-  name: 'tracelab-jsonl',
-  version: 1,
-  status: 'active',
-  created_at: '2026-01-01T00:00:00Z',
-  source_format: 'jsonl',
-  entities: [],
+function loaded(data: unknown) {
+  return { isPending: false, isError: false, error: null, data }
 }
 
-function routeGet(mappings: () => Promise<unknown>) {
-  get.mockImplementation((url: string) => {
-    if (url.startsWith('/data-sources')) return Promise.resolve([{ id: 2, name: 'TraceLab', slug: 'tracelab' }])
-    if (url.startsWith('/mappings?')) return mappings()
-    return Promise.reject(new Error(`unexpected GET ${url}`))
-  })
+vi.mock('@/features/imports/api/imports.queries', () => ({
+  useDataSourcesQuery: () => loaded(lists.sources),
+}))
+
+vi.mock('@/features/mappings/api/mappings.queries', () => ({
+  useMappingsQuery: () => loaded(lists.mappings),
+  useMappingQuery: () => loaded(undefined),
+}))
+
+function source(id: number) {
+  return { id, slug: `source-${id}`, name: `Source ${id}` }
+}
+
+function mapping(id: number) {
+  return { id, name: `Mapping ${id}`, version: 1, status: 'active' }
 }
 
 function renderStep() {
   render(
-    <MappingStep
-      fileId={null}
-      dataSourceId={2}
-      mappingId={null}
-      onDataSourceChange={vi.fn()}
-      onMappingChange={vi.fn()}
-    />,
-    { wrapper: withQueryClient(createTestQueryClient()) },
+    <MappingStep fileId={null} dataSourceId={1} mappingId={null} onDataSourceChange={vi.fn()} onMappingChange={vi.fn()} />,
   )
 }
 
 beforeEach(() => {
-  get.mockReset()
+  lists.sources = { items: [source(1), source(2)], total: 2, truncated: false }
+  lists.mappings = { items: [mapping(1)], total: 1, truncated: false }
 })
 
-describe('MappingStep', () => {
-  it('offers Retry, not a free-text mapping id, when the mappings fail to load', async () => {
-    // The bug this pins: any error — a transient 500 — swapped the select for a
-    // "Mapping id" input, a fallback meant for backends older than #52.
-    let calls = 0
-    routeGet(() =>
-      ++calls === 1
-        ? Promise.reject(new Error('Internal Server Error'))
-        : Promise.resolve({ items: [MAPPING], total: 1, limit: 200, offset: 0 }),
-    )
+describe('MappingStep list truncation', () => {
+  it('says nothing when both lists are complete', () => {
     renderStep()
 
-    const retry = await screen.findByRole('button', { name: 'Retry' })
-    expect(screen.getByRole('alert')).toHaveTextContent('Internal Server Error')
-    expect(screen.queryByLabelText(/mapping id/i)).toBeNull()
-    expect(screen.getByLabelText('Mapping')).toBeDisabled()
-
-    fireEvent.click(retry)
-
-    expect(await screen.findByRole('option', { name: /tracelab-jsonl · v1/ })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
-    expect(screen.getByLabelText('Mapping')).toBeEnabled()
+    expect(screen.getAllByRole('option', { name: /Source \d/ })).toHaveLength(2)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 
-  it('shows a message even when the error has none', async () => {
-    routeGet(() => Promise.reject(new Error('')))
+  it('warns that some data sources are not offered', () => {
+    lists.sources = { items: [source(1), source(2)], total: 2345, truncated: true }
+
     renderStep()
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load mappings.')
+    expect(screen.getByRole('status')).toHaveTextContent('Showing 2 of 2,345 data sources.')
+  })
+
+  it('warns that some mappings are not offered', () => {
+    lists.mappings = { items: [mapping(1)], total: null, truncated: true }
+
+    renderStep()
+
+    expect(screen.getByRole('status')).toHaveTextContent('Showing the first 1 mappings: the API reported no total.')
   })
 })

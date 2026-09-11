@@ -2,6 +2,7 @@ import { ChevronDown } from 'lucide-react'
 
 import { Button } from '@/components/ui/Button'
 import { OverflowMenu, type OverflowMenuItem } from '@/components/ui/OverflowMenu'
+import { ThemeToggle } from '@/components/ui/ThemeToggle'
 
 export interface TopNavProps {
   datasetLabel: string
@@ -17,7 +18,7 @@ export function TopNav({
   periodLabel,
   datasetItems,
   periodItems,
-  accountLabel = 'AS',
+  accountLabel = 'AL',
   accountItems,
 }: TopNavProps) {
   return (
@@ -52,6 +53,8 @@ export function TopNav({
           </Button>
         }
       />
+
+      <ThemeToggle />
 
       {accountItems && accountItems.length > 0 ? (
         <OverflowMenu

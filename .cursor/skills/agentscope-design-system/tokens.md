@@ -1,32 +1,39 @@
-# Tokens AgentScope
+# Tokens AgentLen
 
 Ne jamais recopier un hex hors de `frontend/src/app/styles/globals.css`.
 
+Les surfaces, textes, glass, bordures, ombres et overlays ont une valeur light (`:root`) et une valeur dark (`.dark`). Les accents de marque sont identiques dans les deux thèmes.
+
 ## Surfaces
 
-| Token | Valeur | Usage |
-|---|---|---|
-| `--background` | `#F5F8F9` | Fond applicatif |
-| `--background-alt` | `#F8FAFA` | Alternative |
-| `--background-bright` | `#FBFDFD` | Zones très claires |
-| `--glass` | `rgb(255 255 255 / 0.55)` | Surface glass |
-| `--glass-strong` | `rgb(255 255 255 / 0.70)` | Hover / selected / popover |
-| `--glass-soft` | `rgb(255 255 255 / 0.45)` | Inputs |
-| `--glass-border` | `rgb(255 255 255 / 0.65)` | Bordure glass |
-| `--border` | `rgb(30 45 50 / 0.10)` | Séparateurs contenu |
-| `--glass-blur` | `28px` | backdrop-filter |
+| Token | Light | Dark | Usage |
+|---|---|---|---|
+| `--background` | `#F5F8F9` | `#0D1417` | Fond applicatif |
+| `--background-alt` | `#F8FAFA` | `#11191C` | Alternative |
+| `--background-bright` | `#FBFDFD` | `#182228` | Zones plus denses |
+| `--glass` | `rgb(255 255 255 / 0.55)` | `rgb(24 34 40 / 0.55)` | Surface glass |
+| `--glass-strong` | `rgb(255 255 255 / 0.70)` | `rgb(30 42 48 / 0.72)` | Hover / selected / popover |
+| `--glass-soft` | `rgb(255 255 255 / 0.45)` | `rgb(24 34 40 / 0.40)` | Inputs |
+| `--glass-border` | `rgb(255 255 255 / 0.65)` | `rgb(255 255 255 / 0.12)` | Bordure glass |
+| `--border` | `rgb(16 22 24 / 0.12)` | `rgb(245 248 249 / 0.12)` | Séparateurs contenu |
+| `--overlay` | `rgb(16 22 24 / 0.28)` | `rgb(0 0 0 / 0.55)` | Modal / drawer |
+| `--glass-blur` | `28px` | `28px` | backdrop-filter |
 
 Blanc pur interdit comme fond dominant.
 
 ## Texte
 
-| Token | Valeur | Usage |
-|---|---|---|
-| `--foreground` | `#182228` | Texte primaire |
-| `--foreground-muted` | `#526169` | Secondaire |
-| `--foreground-subtle` | `#7A878D` | Meta, labels |
+Light → texte sombre. Dark → texte clair. Pas de teinte saturée pour le body.
+
+| Token | Light | Dark | Usage |
+|---|---|---|---|
+| `--foreground` | `#101618` | `#F5F8F9` | Texte primaire |
+| `--foreground-muted` | `#3D4A50` | `#C5CED2` | Secondaire |
+| `--foreground-subtle` | `#5C6B72` | `#8B969C` | Meta, labels |
 
 ## Accents
+
+Inchangés entre light et dark.
 
 | Token | Valeur | Usage |
 |---|---|---|
@@ -44,20 +51,19 @@ Blanc pur interdit comme fond dominant.
 
 ## Typographie
 
-- Display : Kanit Italic 300 (parfois 400, rarement 500)
-- UI : Manrope 400 / 500 (600 seulement si indispensable)
+Inter uniquement. `font-sans`, `font-display` et `font-mono` pointent vers Inter.
 
-| Classe | Taille | Police |
+| Classe | Taille | Poids |
 |---|---|---|
-| `text-display` | 56–64px | Kanit 300 italic |
-| `text-hero` | 44–52px | Kanit 300 italic |
-| `text-page` | 36–40px | Kanit 300 italic |
-| `text-section` | 24–28px | Kanit 400 italic |
-| `text-kpi` | 36–44px | Kanit 300 italic |
-| `text-card` | 15–17px | Manrope 500 |
-| `text-body` | 14–15px | Manrope 400 |
-| `text-secondary` | 13px | Manrope 400 |
-| `text-meta` | 11–12px | Manrope 500 |
+| `text-display` | 56–64px | 400 |
+| `text-hero` | 44–52px | 400 |
+| `text-page` | 36–40px | 400 |
+| `text-section` | 24–28px | 500 |
+| `text-kpi` | 36–44px | 400 |
+| `text-card` | 15–17px | 500 |
+| `text-body` | 14–15px | 400 |
+| `text-secondary` | 13px | 400 |
+| `text-meta` | 11–12px | 500 |
 
 ## Espacements
 
@@ -84,6 +90,8 @@ Base 8px. Échelle : 8 / 16 / 24 / 32 / 48 / 64.
 | `--radius-pill` | Chips, dots |
 
 ## Ombres
+
+Tokens `--elevation-*` dans `:root` / `.dark`, exposés en `shadow-glass`, `shadow-glass-hover`, `shadow-pop`.
 
 | Token | Usage |
 |---|---|

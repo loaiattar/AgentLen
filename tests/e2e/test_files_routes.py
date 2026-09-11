@@ -152,6 +152,105 @@ async def test_disallowed_extension_is_a_422_not_a_500(
     assert response.json()["error"]["code"] == "UNSUPPORTED_FILE_FORMAT"
 
 
+#: Upload limit for the refusal tests: small, but above the multipart overhead.
+SMALL_LIMIT = 1024 * 1024
+
+
+@pytest.fixture
+async def client_with_small_limit(tmp_path: Path) -> AsyncIterator[AsyncClient]:
+    app = create_app(engine=create_async_engine(UNREACHABLE_URL))
+    app.dependency_overrides[get_file_storage] = lambda: LocalFileStorage(
+        tmp_path, max_bytes=SMALL_LIMIT
+    )
+    async with asgi_client(app) as c:
+        yield c
+
+
+def _stored_files(root: Path) -> list[Path]:
+    return [p for p in root.rglob("*") if p.is_file()]
+
+
+async def test_a_declared_oversize_body_is_refused_before_it_is_read(
+    client_with_small_limit: AsyncClient, tmp_path: Path
+) -> None:
+    """`Content-Length` already says too much: not one byte is read or written.
+    FastAPI's `UploadFile` used to spool the whole body to disk first."""
+    chunks_read = 0
+
+    async def body() -> AsyncIterator[bytes]:
+        nonlocal chunks_read
+        for _ in range(4):
+            chunks_read += 1
+            yield b"x" * SMALL_LIMIT
+
+    response = await client_with_small_limit.post(
+        "/api/v1/files",
+        content=body(),
+        headers={
+            "Content-Type": "multipart/form-data; boundary=b",
+            "Content-Length": str(4 * SMALL_LIMIT),
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "FILE_TOO_LARGE"
+    assert chunks_read == 0
+    assert _stored_files(tmp_path) == []
+
+
+async def test_an_undeclared_oversize_body_is_refused_as_soon_as_it_crosses_the_limit(
+    client_with_small_limit: AsyncClient, tmp_path: Path
+) -> None:
+    """Chunked, with no `Content-Length`: the stream is cut at the limit, and the
+    partial file is removed."""
+    chunks_read = 0
+
+    async def body() -> AsyncIterator[bytes]:
+        nonlocal chunks_read
+        yield b'--b\r\nContent-Disposition: form-data; name="file"; filename="big.jsonl"\r\n\r\n'
+        for _ in range(64):  # 16 MiB offered
+            chunks_read += 1
+            yield b'{"a":1}\n' * (32 * 1024)  # 256 KiB
+
+    response = await client_with_small_limit.post(
+        "/api/v1/files",
+        content=body(),
+        headers={"Content-Type": "multipart/form-data; boundary=b"},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "FILE_TOO_LARGE"
+    assert chunks_read <= 5
+    assert _stored_files(tmp_path) == []
+
+
+async def test_an_upload_without_a_file_field_is_a_400(
+    client_with_small_limit: AsyncClient,
+) -> None:
+    response = await client_with_small_limit.post(
+        "/api/v1/files",
+        files={"attachment": ("session.jsonl", JSONL_SAMPLE, "application/octet-stream")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "MALFORMED_REQUEST"
+
+
+@requires_postgres
+async def test_the_file_is_found_after_other_fields_and_keeps_its_name(
+    live_client_with_storage: AsyncClient,
+) -> None:
+    response = await live_client_with_storage.post(
+        "/api/v1/files",
+        data={"note": "x" * 100_000},
+        files={"file": ("été.jsonl", JSONL_SAMPLE, "application/octet-stream")},
+    )
+
+    assert response.status_code == 201
+    assert response.json()["original_name"] == "été.jsonl"
+    assert response.json()["size_bytes"] == len(JSONL_SAMPLE)
+
+
 @requires_postgres
 async def test_get_file_returns_the_uploaded_metadata(
     live_client_with_storage: AsyncClient,

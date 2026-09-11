@@ -108,6 +108,12 @@ puis afficher un indicateur de couverture partielle lorsque `ratio` est non
 
 `already_seen: true` signale que **ce dépôt** a réutilisé un fichier déjà stocké (même `content_hash`) ; il ne dit rien des imports. `GET /files/{id}` ne dépose rien et renvoie donc toujours `already_seen: false`, avec la même forme de réponse. Pour savoir si un import créerait des doublons, le front lit `previous_import_run_ids` (les runs qui ont déjà importé ce contenu) et avertit l'utilisateur quand la liste n'est pas vide.
 
+Refus :
+
+- `422 FILE_TOO_LARGE` au-delà de `MAX_UPLOAD_SIZE_MB` (512 Mo par défaut). Le corps est lu au fil de l'envoi : il est refusé avant toute lecture si `Content-Length` annonce plus que la limite, sinon dès que le flux la dépasse. Aucun fichier partiel ne reste sur le disque.
+- `422 UNSUPPORTED_FILE_FORMAT` : extension non autorisée ou contenu qui ne correspond à aucun format reconnu.
+- `400 MALFORMED_REQUEST` : corps qui n'est pas du `multipart/form-data` ou sans champ `file`.
+
 **`POST /files/{id}/profile` → `200`**
 
 ```json
@@ -384,6 +390,8 @@ Couche distincte de `X-API-Key` (§1) : ces routes identifient **une personne**,
 ```
 
 Ni `password` ni son hash n'apparaissent jamais dans une réponse. `409` si l'e-mail est déjà utilisé, `422` (`INVALID_EMAIL` / `WEAK_PASSWORD`) si l'e-mail ou le mot de passe échoue à la validation.
+
+**Longueurs maximales (`/auth/register` et `/auth/login`).** `email` : 254 caractères. `password` : 72 octets en UTF-8, la limite de bcrypt (un caractère accentué en compte deux). Au-delà, la requête est refusée avant tout traitement par `400` `MALFORMED_REQUEST`, avec `field_path` à `body.email` ou `body.password`, et non par `422` : ces routes répondent sans session, et une valeur non bornée permettrait à n'importe qui d'occuper le serveur.
 
 **`POST /auth/login` → `200`**
 

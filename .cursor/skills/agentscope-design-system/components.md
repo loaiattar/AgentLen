@@ -66,7 +66,7 @@ Barre compacte, pas de gros boutons filtres.
 
 ## EmptyState / Skeleton / GlassSkeleton
 
-Empty : titre Kanit + une phrase + un CTA.
+Empty : titre Inter + une phrase + un CTA.
 
 Loading : skeletons glass + shimmer. Messages IA courts (Inspecting schema, Profiling fields…).
 
@@ -88,6 +88,8 @@ AiPanel : insights courts, confidence optionnelle, pas un chat générique.
 
 ## Shell
 
-`AtmosphericBackground`, `AppSidebar`, `TopNav`, `MobileNav`, `PageHeader`, `Wordmark`, `PublicHeader`.
+`AtmosphericBackground`, `AppSidebar`, `TopNav`, `MobileNav`, `PageHeader`, `Wordmark`, `PublicHeader`, `ThemeToggle`.
 
-Sidebar active : fond `primary-soft` + filet cyan + texte dark. Pas de gros bloc coloré.
+`PageHeader` : titre principal seulement, pas de kicker ni de sous-titre.
+
+Sidebar active : fond `primary-soft` + filet cyan + texte `foreground`. Pas de gros bloc coloré.
