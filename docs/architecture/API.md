@@ -226,6 +226,21 @@ Le front interroge ensuite `GET /imports/{id}` (intervalle suggéré : 1 s).
 
 `fields_missing` alimente directement la vue « qualité des données » du dashboard.
 
+**`GET /imports/{id}/issues?severity=rejected` → `200`**
+
+```json
+{
+  "items": [
+    { "line_number": 42, "raw_record_id": 51234, "severity": "rejected",
+      "code": "CAST_FAILED", "field_path": "$.usage.input_tokens",
+      "message": "Impossible de convertir \"n/a\" en entier." }
+  ],
+  "total": 23, "limit": 50, "offset": 0
+}
+```
+
+`line_number` est lu sur le `raw_record` auquel l'issue est reliée ; `raw_record_id` ouvre l'enregistrement source brut sur `GET /records/{raw_record_id}` (§6). Les deux valent `null` pour une issue qui ne concerne aucune ligne précise (ex. `ALREADY_IMPORTED`, émise par lot).
+
 ---
 
 ## 6. Exploration

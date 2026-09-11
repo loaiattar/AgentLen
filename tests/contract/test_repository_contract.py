@@ -481,7 +481,33 @@ async def test_issues_are_listed_and_filterable_by_severity(uow: Any) -> None:
         assert len(await uow.import_issues.list(import_run_id=p["run"])) == 2
         rejected = await uow.import_issues.list(import_run_id=p["run"], severity="rejected")
         assert len(rejected) == 1
-        assert rejected[0].code == "CAST_FAILED"
+        assert rejected[0].issue.code == "CAST_FAILED"
+
+
+async def test_issues_read_their_line_number_from_the_linked_raw_record(uow: Any) -> None:
+    """`import_issue` stores no line: it comes back from the raw_record the
+    issue points at. An issue with no raw_record keeps a null line, never 0."""
+    from agentlen.domain.model.import_run import ImportIssue
+
+    async with uow:
+        p = await _provenance(uow)
+        raw = await uow.raw_records.add_many(import_run_id=p["run"], records=[(7, {"sid": "b"})])
+        await uow.import_issues.add_many(
+            import_run_id=p["run"],
+            issues=[
+                (ImportIssue(severity="rejected", code="CAST_FAILED", message="nope"), raw[7]),
+                (ImportIssue(severity="duplicate", code="ALREADY_IMPORTED", message="seen"), None),
+            ],
+        )
+        await uow.commit()
+
+    async with uow:
+        listed = await uow.import_issues.list(import_run_id=p["run"])
+
+    assert [(r.issue.line_number, r.raw_record_id) for r in listed] == [
+        (7, raw[7]),
+        (None, None),
+    ]
 
 
 async def test_import_run_list_returns_most_recent_first_and_count_matches(uow: Any) -> None:

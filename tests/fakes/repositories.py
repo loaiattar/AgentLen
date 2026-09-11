@@ -21,6 +21,7 @@ from uuid import UUID
 from agentlen.application.dto.persistence import (
     DataSourceRecord,
     FileUploadRecord,
+    ImportIssueRecord,
     InsertOutcome,
     ModelCallRow,
     SessionRow,
@@ -322,10 +323,22 @@ class InMemoryImportIssueRepository:
 
     async def list(
         self, *, import_run_id: int, severity: str | None = None, limit: int = 50, offset: int = 0
-    ) -> list[ImportIssue]:
+    ) -> list[ImportIssueRecord]:
+        # Mirrors the SQL outer join: the line number is the linked raw_record's,
+        # never the one the issue was built with, and null without a raw_record.
+        lines = {raw_id: line for (_, line), raw_id in self._s.raw_records.items()}
         found = [
-            issue
-            for run_id, issue, _ in self._s.issues
+            ImportIssueRecord(
+                issue=ImportIssue(
+                    severity=issue.severity,
+                    code=issue.code,
+                    message=issue.message,
+                    field_path=issue.field_path,
+                    line_number=None if raw_record_id is None else lines.get(raw_record_id),
+                ),
+                raw_record_id=raw_record_id,
+            )
+            for run_id, issue, raw_record_id in self._s.issues
             if run_id == import_run_id and (severity is None or issue.severity == severity)
         ]
         return found[offset : offset + limit]

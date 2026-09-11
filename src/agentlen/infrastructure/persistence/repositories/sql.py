@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from agentlen.application.dto.persistence import (
     DataSourceRecord,
     FileUploadRecord,
+    ImportIssueRecord,
     InsertOutcome,
     ModelCallRow,
     SessionRow,
@@ -454,17 +455,32 @@ class SqlAlchemyImportIssueRepository(_Base):
 
     async def list(
         self, *, import_run_id: int, severity: str | None = None, limit: int = 50, offset: int = 0
-    ) -> list[ImportIssue]:
-        query = select(t.import_issue).where(t.import_issue.c.import_run_id == import_run_id)
+    ) -> list[ImportIssueRecord]:
+        # `import_issue` stores no line number: it is read from the raw_record
+        # the issue points at. Outer join, so run-level issues with no
+        # raw_record are still listed, with a null line.
+        query = (
+            select(t.import_issue, t.raw_record.c.line_number)
+            .select_from(
+                t.import_issue.outerjoin(
+                    t.raw_record, t.raw_record.c.id == t.import_issue.c.raw_record_id
+                )
+            )
+            .where(t.import_issue.c.import_run_id == import_run_id)
+        )
         if severity is not None:
             query = query.where(t.import_issue.c.severity == severity)
         query = query.order_by(t.import_issue.c.id).limit(limit).offset(offset)
         return [
-            ImportIssue(
-                severity=r["severity"],
-                code=r["code"],
-                message=r["message"],
-                field_path=r["field_path"],
+            ImportIssueRecord(
+                issue=ImportIssue(
+                    severity=r["severity"],
+                    code=r["code"],
+                    message=r["message"],
+                    field_path=r["field_path"],
+                    line_number=r["line_number"],
+                ),
+                raw_record_id=r["raw_record_id"],
             )
             for r in (await self._conn.execute(query)).mappings()
         ]
