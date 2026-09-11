@@ -40,6 +40,7 @@ export default defineConfig(({ command, mode }) => {
       // chunk is ~370 kB once the routes are split; 400 leaves room to breathe
       // and trips again well before the old size comes back.
       chunkSizeWarningLimit: 400,
+    },
     test: {
       // jsdom rather than the default node environment: every hook under test
       // renders, and Testing Library needs a DOM to render into.
