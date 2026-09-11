@@ -7,13 +7,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Connection, func, insert, select, update
+from sqlalchemy import Connection, event, func, insert, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.use_cases.run_import import RunImport
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.infrastructure.persistence import tables as t
 from agentlen.infrastructure.persistence.engine import to_async_url
+from agentlen.infrastructure.persistence.repositories import sql as sql_repositories
 from agentlen.infrastructure.persistence.repositories.mapping_codec import mapping_to_document
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tests.fakes.file_reader import InMemoryFileReader
@@ -446,3 +447,78 @@ async def test_a_large_file_is_imported_in_batches(seeded: dict[str, Any], impor
     assert report.records_read == 1200
     assert reader.batch_sizes, "the reader was never asked for batches"
     assert all(size <= 500 for size in reader.batch_sizes)
+
+
+# ---------------------------------------------------------------------------
+# Batches larger than one statement can bind (#136)
+# ---------------------------------------------------------------------------
+
+
+def _sent_statements(uow: SqlAlchemyUnitOfWork) -> list[tuple[str, int]]:
+    """Every statement the unit of work sends, with its number of bind parameters."""
+    sent: list[tuple[str, int]] = []
+
+    def record(_conn: Any, _cursor: Any, statement: str, parameters: Any, *_: Any) -> None:
+        sent.append((statement, len(parameters or ())))
+
+    event.listen(uow._engine.sync_engine, "before_cursor_execute", record)
+    return sent
+
+
+def _tool_call_inserts(sent: list[tuple[str, int]]) -> int:
+    return sum(1 for statement, _ in sent if statement.startswith("INSERT INTO tool_call "))
+
+
+def _lines(count: int, tools: int) -> list[dict[str, Any]]:
+    return [
+        {"sid": f"s{i}", "tools": [{"name": "Bash"} for _ in range(tools)]} for i in range(count)
+    ]
+
+
+async def test_a_batch_binding_more_parameters_than_a_statement_accepts_is_imported(
+    seeded: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    """500 lines of eight tool calls are one batch of 4 000 calls: 36 000 bind
+    parameters as a single INSERT, which asyncpg refuses — the whole import failed."""
+    run_import, uow = importer(_lines(500, tools=8))
+    sent = _sent_statements(uow)
+
+    first = await run_import.execute(await _new_run(uow, seeded))
+    second = await run_import.execute(await _new_run(uow, seeded))
+
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 500
+        assert _count(conn, t.tool_call) == 4000
+    assert (first.records_imported, first.records_duplicate) == (4500, 0)
+    assert (second.records_imported, second.records_duplicate) == (0, 4500)
+    assert max(count for _, count in sent) <= sql_repositories.MAX_BIND_PARAMETERS
+    assert _tool_call_inserts(sent) == 4  # two statements per import
+
+
+@pytest.mark.parametrize("case", [(32_767, 2), (60, 60)], ids=["one-statement", "split"])
+async def test_a_split_batch_imports_like_a_single_statement(
+    seeded: dict[str, Any],
+    importer: Any,
+    engine: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    case: tuple[int, int],
+) -> None:
+    """Same file, same rows, same report whether a batch is one INSERT per table
+    or thirty: the limit only decides how many statements carry it."""
+    bind_limit, tool_call_inserts = case
+    monkeypatch.setattr(sql_repositories, "MAX_BIND_PARAMETERS", bind_limit)
+    run_import, uow = importer(_lines(40, tools=3))
+    sent = _sent_statements(uow)
+
+    first = await run_import.execute(await _new_run(uow, seeded))
+    second = await run_import.execute(await _new_run(uow, seeded))
+
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 40
+        assert _count(conn, t.tool_call) == 120
+        attached = conn.execute(select(func.count(func.distinct(t.tool_call.c.session_id))))
+        assert attached.scalar_one() == 40
+    assert (first.records_imported, first.records_duplicate) == (160, 0)
+    assert (second.records_imported, second.records_duplicate) == (0, 160)
+    assert max(count for _, count in sent) <= bind_limit
+    assert _tool_call_inserts(sent) == tool_call_inserts  # 120 calls, 4 per statement when split
