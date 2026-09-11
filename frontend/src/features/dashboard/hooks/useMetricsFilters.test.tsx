@@ -7,7 +7,12 @@ import { useMetricsFilters } from '@/features/dashboard/hooks/useMetricsFilters'
 import { renderInAppLayout } from '@/test/app-router'
 
 const sources = vi.hoisted(() => ({
-  current: { data: undefined as { id: number; name: string }[] | undefined, isPending: false, isError: false },
+  // The real shape since #192: every page of `GET /data-sources`, as a loaded list.
+  current: {
+    data: undefined as { items: { id: number; name: string }[]; total: number | null; truncated: boolean } | undefined,
+    isPending: false,
+    isError: false,
+  },
 }))
 
 vi.mock('@/features/imports/api/imports.queries', () => ({
@@ -35,7 +40,11 @@ function Probe() {
 }
 
 beforeEach(() => {
-  sources.current = { data: [{ id: 1, name: 'TraceLab' }, { id: 7, name: 'Upload from the UI' }], isPending: false, isError: false }
+  sources.current = {
+    data: { items: [{ id: 1, name: 'TraceLab' }, { id: 7, name: 'Upload from the UI' }], total: 2, truncated: false },
+    isPending: false,
+    isError: false,
+  }
 })
 
 describe('useMetricsFilters', () => {
