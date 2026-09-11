@@ -10,7 +10,12 @@ from __future__ import annotations
 from typing import Any
 
 from agentlen.infrastructure.ai.agent_tools import to_anthropic
-from agentlen.infrastructure.ai.base import BaseAnalyzerAdapter, ModelTurn, ToolCall
+from agentlen.infrastructure.ai.base import (
+    BaseAnalyzerAdapter,
+    ModelTurn,
+    ToolCall,
+    tool_result_content,
+)
 
 DEFAULT_BASE_URL = "https://api.anthropic.com"
 API_VERSION = "2023-06-01"
@@ -42,7 +47,7 @@ class AnthropicAnalyzer(BaseAnalyzerAdapter):
         blocks = payload.get("content", [])
         text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         calls = tuple(
-            ToolCall(id=b["id"], name=b["name"], arguments=b.get("input", {}))
+            ToolCall.from_model(b["id"], b["name"], b.get("input"))
             for b in blocks
             if b.get("type") == "tool_use"
         )
@@ -63,8 +68,6 @@ class AnthropicAnalyzer(BaseAnalyzerAdapter):
     ) -> list[dict[str, Any]]:
         # One message holding every result — the opposite of OpenAI. It is
         # still returned in a list because the loop extends with it.
-        import json
-
         return [
             {
                 "role": "user",
@@ -72,7 +75,7 @@ class AnthropicAnalyzer(BaseAnalyzerAdapter):
                     {
                         "type": "tool_result",
                         "tool_use_id": call.id,
-                        "content": json.dumps(result, ensure_ascii=False),
+                        "content": tool_result_content(result),
                     }
                     for call, result in results
                 ],

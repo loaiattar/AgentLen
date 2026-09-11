@@ -58,7 +58,8 @@ class OperatorSpec:
 def _choice(parameter: str, allowed: frozenset[str]) -> OperatorCheck:
     def check(operator: dict[str, Any]) -> list[tuple[str, str]]:
         value = operator.get(parameter)
-        if value is None or value in allowed:
+        # `isinstance` first: a list or an object is unhashable, and `in` raised.
+        if value is None or (isinstance(value, str) and value in allowed):
             return []
         return [(parameter, f"must be one of {sorted(allowed)}, got {value!r}")]
 
@@ -122,7 +123,7 @@ def _map_values(operator: dict[str, Any]) -> list[tuple[str, str]]:
         errors.append(("table", "must be an object"))
     mode = operator.get("on_unknown")
     allowed = {"passthrough", "null", "reject", "constant"}
-    if mode is not None and mode not in allowed:
+    if mode is not None and (not isinstance(mode, str) or mode not in allowed):
         errors.append(("on_unknown", f"must be one of {sorted(allowed)}"))
     if mode == "constant" and "constant" not in operator:
         errors.append(("constant", "is required when on_unknown is 'constant'"))
@@ -314,11 +315,21 @@ def _validate_field(
 
     # Semantic: all operators must be whitelisted
     for i, op in enumerate(rule.operators):
+        # Operators can come from a model's JSON: not necessarily objects, and
+        # `op` not necessarily a string. Either used to raise, a 500 (#152).
+        if not isinstance(op, dict):
+            errors.append(
+                InvalidOperatorParamError(
+                    field_path=f"{field_path}.operators[{i}]",
+                    message="An operator must be an object with an 'op' key.",
+                )
+            )
+            continue
         op_name = op.get("op", "")
-        if op_name not in OPERATOR_WHITELIST:
+        if not isinstance(op_name, str) or op_name not in OPERATOR_WHITELIST:
             errors.append(
                 UnsupportedOperatorError(
-                    operator=op_name,
+                    operator=str(op_name),
                     field_path=f"{field_path}.operators[{i}]",
                 )
             )

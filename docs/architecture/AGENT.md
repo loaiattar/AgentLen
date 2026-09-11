@@ -94,9 +94,11 @@ sequenceDiagram
 **Invariants :**
 
 1. Le LLM ne voit jamais la base de données — il reçoit uniquement des profils,
-   des échantillons sanitisés et des résultats de validation.
+   des échantillons sanitisés et des résultats de validation. Les résultats de tools
+   lui reviennent clôturés comme données (`wrap_as_data`), comme le profil.
 2. Chaque appel de tool passe par `ToolExecutor` : le modèle ne peut pas invoquer
-   autre chose que les tools déclarés.
+   autre chose que les tools déclarés. Des arguments malformés lui reviennent en
+   `{"error": ...}` ; une réponse finale ou un corps de réponse mal formé donne un `502`.
 3. Le `MappingProposal` produit par le LLM est **toujours** revalidé par
    `MappingValidator` avant d'être retourné au use case — même si `validate_mapping`
    a déjà été appelé pendant la boucle.

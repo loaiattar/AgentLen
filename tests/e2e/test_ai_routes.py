@@ -136,6 +136,86 @@ async def test_provider_failure_is_502(ai_client):
     assert response.json()["error"]["code"] == "ANALYZER_FAILED"
 
 
+def _openai_reply(message: dict) -> dict:
+    return {"choices": [{"message": {"role": "assistant", **message}}]}
+
+
+def _tool_call(call_id: str, name: str, arguments: str) -> dict:
+    return {"id": call_id, "function": {"name": name, "arguments": arguments}}
+
+
+BAD_OPERATOR_PROPOSAL = json.dumps(
+    {
+        "mapping": {
+            "source_format": "jsonl",
+            "entities": [
+                {
+                    "target": "session",
+                    "natural_key": ["external_id"],
+                    "fields": [
+                        {"target": "external_id", "source": "$.session_id", "operators": ["trim"]}
+                    ],
+                }
+            ],
+        },
+        "ambiguities": [],
+        "unmapped_fields": [],
+    }
+)
+
+
+@pytest.mark.parametrize(
+    "turns",
+    [
+        [_openai_reply({"content": "[1, 2, 3]"})],
+        [{"choices": ["pas un objet"]}],
+        [
+            _openai_reply(
+                {
+                    "tool_calls": [
+                        _tool_call(
+                            "t1", "get_sample_values", '{"path": "$.agent", "limit": "dix"}'
+                        ),
+                        _tool_call("t2", "validate_mapping", '{"mapping": "x"}'),
+                        _tool_call("t3", "validate_mapping", "[]"),
+                    ]
+                }
+            ),
+            _openai_reply({"content": BAD_OPERATOR_PROPOSAL}),
+        ],
+    ],
+    ids=["final-reply-not-an-object", "malformed-body", "bad-tool-calls-then-bad-operator"],
+)
+@requires_postgres
+async def test_garbage_from_the_model_is_a_502_not_a_500(ai_client, turns):
+    """#152, through the real OpenAI adapter with only its transport stubbed.
+
+    Each of these used to escape as `TypeError`, `AttributeError` or
+    `ValueError` and reach the catch-all 500. Malformed tool calls now go back to
+    the model; what is left of the garbage is the provider's failure, a 502.
+    """
+    from agentlen.infrastructure.ai.openai_adapter import OpenAIAnalyzer
+
+    client, _, file_id, _, app = ai_client
+    replies = list(turns)
+
+    class GarbageAnalyzer(OpenAIAnalyzer):
+        async def _post(self, body):
+            return replies.pop(0)
+
+    app.dependency_overrides[get_analyzer_factory] = lambda: (
+        lambda provider, model: GarbageAnalyzer(AISettings(provider="openai", model="m"), "k")
+    )
+    response = await client.post("mappings/proposals", json={"file_id": file_id})
+
+    assert response.status_code == 502
+    body = response.json()
+    assert set(body) == {"error"}
+    assert set(body["error"]) == {"code", "message", "field_path", "details"}
+    assert body["error"]["code"] == "ANALYZER_FAILED"
+    assert replies == [], "every scripted reply should have been consumed"
+
+
 @requires_postgres
 async def test_invalid_analyzer_proposal_is_an_editable_200(ai_client):
     client, _, file_id, _, app = ai_client
