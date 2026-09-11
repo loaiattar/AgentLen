@@ -25,17 +25,20 @@ class ImportIssue:
 
 @dataclass(frozen=True)
 class ImportReport:
-    """Summary produced at the end of an import run.
+    """Summary of an import run, saved after each committed batch and at the end.
 
     Frozen as a historical record: even if raw_records are purged later,
-    the report remains accurate.
+    the report remains accurate. The counters do not share one unit
+    (DATA_MODEL.md §6): lines for `read` and `rejected`, entities for the rest.
     """
 
-    records_read: int
-    records_imported: int
-    records_duplicate: int
-    records_rejected: int
+    records_read: int  # source lines read, rejected ones included
+    records_imported: int  # entities inserted: sessions and calls added together
+    records_duplicate: int  # entities already stored: a session once per run
+    records_rejected: int  # source lines with at least one `rejected` issue
     issues: tuple[ImportIssue, ...] = field(default_factory=tuple)
+    # "entity.field" -> how many normalised entities lacked it (data-quality view).
+    fields_missing: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "issues", tuple(self.issues))

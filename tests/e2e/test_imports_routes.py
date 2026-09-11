@@ -320,6 +320,43 @@ async def test_get_import_returns_full_status_with_joined_refs(
 
 
 @requires_postgres
+async def test_get_import_returns_the_fields_missing_of_the_saved_report(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    """#140. `save_report` never wrote the column, so the route always said null.
+
+    The report is saved through the repository rather than by importing: an
+    imported session would break the metrics tests sharing this database.
+    """
+    seed = await _seed(live_engine)
+    created = await live_client.post(
+        "/api/v1/imports",
+        json={
+            "data_source_id": seed["source_id"],
+            "file_upload_id": seed["file_id"],
+            "mapping_id": seed["mapping_id"],
+        },
+    )
+    run_id = created.json()["import_run_id"]
+    report = ImportReport(
+        records_read=2,
+        records_imported=2,
+        records_duplicate=0,
+        records_rejected=0,
+        fields_missing={"session.duration_ms": 2},
+    )
+    async with SqlAlchemyUnitOfWork(live_engine) as uow:
+        await uow.import_runs.save_report(run_id, report, status="succeeded")
+        await uow.commit()
+
+    response = await live_client.get(f"/api/v1/imports/{run_id}")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "succeeded"
+    assert response.json()["report"]["fields_missing"] == {"session.duration_ms": 2}
+
+
+@requires_postgres
 async def test_get_unknown_import_is_404(live_client: AsyncClient) -> None:
     response = await live_client.get("/api/v1/imports/999999")
 

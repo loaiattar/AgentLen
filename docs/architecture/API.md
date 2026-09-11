@@ -278,6 +278,8 @@ une paire fichier + mapping déjà importée.
 
 `fields_missing` alimente directement la vue « qualité des données » du dashboard.
 
+Unités ([DATA_MODEL.md](DATA_MODEL.md) §6) : `records_read` et `records_rejected` comptent des **lignes source** ; `records_imported` et `records_duplicate` comptent des **entités**, sessions et appels additionnés ; `fields_missing` associe `entité.champ` au nombre d'entités normalisées sans ce champ (`null` tant qu'aucun lot n'est validé). Le bilan est écrit à chaque lot validé : pendant l'import il montre la progression, et un import `failed` garde les compteurs des lots validés avant l'échec.
+
 **`GET /imports/{id}/issues?severity=rejected` → `200`**
 
 ```json

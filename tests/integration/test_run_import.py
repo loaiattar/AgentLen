@@ -338,6 +338,69 @@ async def test_every_row_points_at_the_raw_record_it_came_from(
 
 
 # ---------------------------------------------------------------------------
+# The stored report is what was committed (#140)
+# ---------------------------------------------------------------------------
+
+
+async def test_the_run_saves_fields_missing_for_the_data_quality_view(
+    seeded: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    from sqlalchemy import text
+
+    run_import, uow = importer(GOOD)
+    run_id = await _new_run(uow, seeded)
+
+    report = await run_import.execute(run_id)
+
+    with engine.connect() as conn:
+        stored = conn.execute(
+            text("SELECT fields_missing FROM v_import_quality WHERE import_run_id = :id"),
+            {"id": run_id},
+        ).scalar_one()
+    # The mapping reads no duration: both sessions and all three tool calls lack it.
+    assert stored["session.duration_ms"] == 2
+    assert stored["tool_call.duration_ms"] == 3
+    assert stored == report.fields_missing
+
+
+async def test_a_run_failing_after_a_committed_batch_keeps_that_batch_counters(
+    seeded: dict[str, Any], engine: Any, database_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Batch 1 is committed, batch 2 fails midway: the failed run shows batch 1's
+    counters, where it used to show zeros, and nothing of batch 2."""
+    from agentlen.domain.services.record_normalizer import RecordNormalizer
+    from agentlen.infrastructure.jobs.postgres_queue import PostgresJobQueue
+    from agentlen.infrastructure.jobs.worker import ImportWorker
+
+    class FailingNormalizer(RecordNormalizer):
+        def normalize(self, mapping: Any, raw: dict[str, Any], **kwargs: Any) -> Any:
+            if raw["sid"] == "boom":
+                raise RuntimeError("unexpected failure")
+            return super().normalize(mapping, raw, **kwargs)
+
+    monkeypatch.setenv("IMPORT_BATCH_SIZE", "2")
+    records = [*GOOD, {"sid": "s3", "tools": []}, {"sid": "boom", "tools": []}]
+    async_engine = create_async_engine(to_async_url(database_url))
+    uow = SqlAlchemyUnitOfWork(async_engine)
+    run_import = RunImport(uow, InMemoryFileReader({PATH: records}), FailingNormalizer())
+    run_id = await _new_run(uow, seeded)
+    worker = ImportWorker(PostgresJobQueue(async_engine), run_import, worker_id="w1")
+    try:
+        await worker.run_once()
+    finally:
+        await async_engine.dispose()
+
+    with engine.connect() as conn:
+        run = conn.execute(select(t.import_run).where(t.import_run.c.id == run_id)).mappings().one()
+        assert _count(conn, t.session) == 2
+        assert _count(conn, t.raw_record) == 2
+    assert run["status"] == "failed"
+    counters = ("records_read", "records_imported", "records_duplicate", "records_rejected")
+    assert tuple(run[c] for c in counters) == (2, 5, 0, 0)  # two lines; 2 sessions + 3 calls
+    assert run["fields_missing"]["session.duration_ms"] == 2
+
+
+# ---------------------------------------------------------------------------
 # A session that other lines, batches or files come back to (#123)
 # ---------------------------------------------------------------------------
 

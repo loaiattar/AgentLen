@@ -435,20 +435,30 @@ class SqlAlchemyImportRunRepository(_Base):
             (await self._conn.execute(select(func.count()).select_from(t.import_run))).scalar_one()
         )
 
+    @staticmethod
+    def _report_columns(report: ImportReport) -> dict[str, Any]:
+        return {
+            "records_read": report.records_read,
+            "records_imported": report.records_imported,
+            "records_duplicate": report.records_duplicate,
+            "records_rejected": report.records_rejected,
+            "fields_missing": dict(report.fields_missing),
+        }
+
+    async def save_progress(self, import_run_id: int, report: ImportReport) -> None:
+        await self._conn.execute(
+            t.import_run.update()
+            .where(t.import_run.c.id == import_run_id)
+            .values(**self._report_columns(report))
+        )
+
     async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
         from sqlalchemy import func
 
         await self._conn.execute(
             t.import_run.update()
             .where(t.import_run.c.id == import_run_id)
-            .values(
-                status=status,
-                records_read=report.records_read,
-                records_imported=report.records_imported,
-                records_duplicate=report.records_duplicate,
-                records_rejected=report.records_rejected,
-                finished_at=func.now(),
-            )
+            .values(status=status, finished_at=func.now(), **self._report_columns(report))
         )
 
     async def get_report(self, import_run_id: int) -> ImportReport | None:
@@ -468,6 +478,7 @@ class SqlAlchemyImportRunRepository(_Base):
             records_imported=row["records_imported"],
             records_duplicate=row["records_duplicate"],
             records_rejected=row["records_rejected"],
+            fields_missing=dict(row["fields_missing"] or {}),
         )
 
 

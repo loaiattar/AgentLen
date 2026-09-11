@@ -554,6 +554,62 @@ async def test_the_import_report_round_trips(uow: Any) -> None:
         assert stored.records_rejected == 3
 
 
+async def test_the_import_report_keeps_the_fields_the_source_never_provided(uow: Any) -> None:
+    """#140. Counted by the import but never written: the data-quality view stayed empty."""
+    from agentlen.domain.model.import_run import ImportReport
+
+    missing = {"session.duration_ms": 2, "tool_call.duration_ms": 5}
+    async with uow:
+        p = await _provenance(uow)
+        report = ImportReport(
+            records_read=2,
+            records_imported=7,
+            records_duplicate=0,
+            records_rejected=0,
+            fields_missing=missing,
+        )
+        await uow.import_runs.save_report(p["run"], report, status="succeeded")
+        await uow.commit()
+
+    async with uow:
+        stored = await uow.import_runs.get_report(p["run"])
+        run = await uow.import_runs.get(p["run"])
+
+    assert stored is not None
+    assert stored.fields_missing == missing
+    assert run is not None
+    assert run["fields_missing"] == missing  # the row GET /imports/{id} reads
+
+
+async def test_saved_progress_is_the_last_committed_and_leaves_the_run_open(uow: Any) -> None:
+    """#140. Progress is saved in each batch's transaction: a batch that rolls back
+    leaves the counters of the batch before it, and never sets status or finish."""
+    from agentlen.domain.model.import_run import ImportReport
+
+    def counters(lines: int) -> ImportReport:
+        return ImportReport(
+            records_read=lines,
+            records_imported=lines,
+            records_duplicate=0,
+            records_rejected=0,
+            fields_missing={"session.duration_ms": lines},
+        )
+
+    async with uow:
+        p = await _provenance(uow)
+        await uow.import_runs.save_progress(p["run"], counters(2))
+        await uow.commit()
+    async with uow:
+        await uow.import_runs.save_progress(p["run"], counters(4))  # the batch fails: no commit
+
+    async with uow:
+        run = await uow.import_runs.get(p["run"])
+
+    assert run is not None
+    assert (run["records_read"], run["fields_missing"]) == (2, {"session.duration_ms": 2})
+    assert (run["status"], run["finished_at"]) == ("pending", None)
+
+
 async def test_issues_are_listed_and_filterable_by_severity(uow: Any) -> None:
     from agentlen.domain.model.import_run import ImportIssue
 
