@@ -49,6 +49,20 @@ MAPPING = Mapping(
 AGENT_MAPPING = Mapping(
     id=uuid4(),
     name="tracelab",
+    version=1,
+    source_format="jsonl",
+    entities=(
+        EntityMapping(
+            target="session",
+            natural_key=("external_id",),
+            fields=(
+                FieldRule(target="external_id", source="$.sid", required=True),
+                FieldRule(target="agent_name", source="$.agent"),
+            ),
+        ),
+    ),
+)
+
 # Tool calls carry their own index, so several lines of one session do not all
 # fall back to position 0 in their `tools` list.
 INDEXED = Mapping(
@@ -60,9 +74,6 @@ INDEXED = Mapping(
         EntityMapping(
             target="session",
             natural_key=("external_id",),
-            fields=(
-                FieldRule(target="external_id", source="$.sid", required=True),
-                FieldRule(target="agent_name", source="$.agent"),
             fields=(FieldRule(target="external_id", source="$.sid", required=True),),
         ),
         EntityMapping(
