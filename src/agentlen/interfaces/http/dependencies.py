@@ -27,10 +27,12 @@ from agentlen.application.ports.file_storage import FileStorage
 from agentlen.application.ports.password_hasher import PasswordHasher
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
 from agentlen.application.ports.unit_of_work import UnitOfWork
+from agentlen.application.use_cases.analysis_deadline import DeadlineBoundAnalyzer
 from agentlen.application.use_cases.authenticate_user import AuthenticateUser
 from agentlen.infrastructure.ai.factory import (
     build_structure_analyzer,
     provider_status,
+    settings_for_request,
 )
 from agentlen.infrastructure.ai.sanitizer import ProfileExampleSanitizer
 from agentlen.infrastructure.config.settings import load_ai_settings
@@ -81,25 +83,29 @@ def get_engine(request: Request) -> AsyncEngine:
 
 def get_structure_analyzer() -> StructureAnalyzer:
     """Resolved from AI_PROVIDER. The only place a provider is chosen."""
-    return build_structure_analyzer()
+    configured = load_ai_settings()
+    return DeadlineBoundAnalyzer(
+        build_structure_analyzer(configured), configured.total_timeout_seconds
+    )
 
 
 def get_analyzer_factory() -> Callable[[str | None, str | None], StructureAnalyzer]:
+    """Builds the analyzer of one request, bounded by AI_TOTAL_TIMEOUT_SECONDS.
+
+    The request body has already rejected an unknown provider (400,
+    `schemas/ai.py`). `settings_for_request` keeps AI_BASE_URL for the
+    configured provider only.
+    """
+
     def build(
         provider: str | None,
         model: str | None,
     ) -> StructureAnalyzer:
         configured = load_ai_settings()
-        if provider is None and model is None:
-            return build_structure_analyzer(configured)
-
-        selected = configured.model_copy(
-            update={
-                "provider": provider or configured.provider,
-                "model": model if model is not None else configured.model,
-            }
+        selected = settings_for_request(configured, provider, model)
+        return DeadlineBoundAnalyzer(
+            build_structure_analyzer(selected), configured.total_timeout_seconds
         )
-        return build_structure_analyzer(selected)
 
     return build
 

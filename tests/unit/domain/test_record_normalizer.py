@@ -1,7 +1,9 @@
 from uuid import uuid4
 
+import pytest
+
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
-from agentlen.domain.services.record_normalizer import RecordNormalizer
+from agentlen.domain.services.record_normalizer import RecordNormalizer, reference_name
 
 DATA_SOURCE_ID = 1
 EXPECTED_MODEL_CALL_COUNT = 3
@@ -442,6 +444,82 @@ def test_a_derived_sequence_index_beyond_the_integer_column_is_rejected():
         "entities[target=model_call].fields[target=sequence_index]",
         "entities[target=tool_call].fields[target=sequence_index]",
     }
+
+
+def test_numeric_names_are_text_before_resolution():
+    # A number handed to SQL as a name used to fail the whole import (#141).
+    raw = {
+        "id": "sess-1",
+        "agent": 42,
+        "llm_calls": [{"model": 7, "provider": 3, "tokens_in": 1, "tokens_out": 1}],
+        "tool_uses": [{"name": 123}],
+    }
+
+    result = RecordNormalizer().normalize(_full_mapping(), raw, data_source_id=DATA_SOURCE_ID)
+
+    assert result.issues == ()
+    assert {(r.kind, r.name, r.context) for r in result.reference_requests} == {
+        ("agent", "42", ()),
+        ("provider", "3", ()),
+        ("model", "7", (("provider_name", "3"),)),
+        ("tool", "123", ()),
+    }
+    assert result.tool_calls[0].tool_name == "123"
+
+
+def test_a_blank_tool_name_rejects_that_call_with_an_explained_issue():
+    raw = {"id": "sess-1", "tool_uses": [{"name": "Bash"}, {"name": ""}, {"name": "  "}]}
+
+    result = RecordNormalizer().normalize(
+        _full_mapping(), raw, data_source_id=DATA_SOURCE_ID, line_number=4
+    )
+
+    assert [call.tool_name for call in result.tool_calls] == ["Bash"]
+    field_path = "entities[target=tool_call].fields[target=tool_name]"
+    assert [(i.code, i.severity, i.field_path, i.line_number) for i in result.issues] == [
+        ("REFERENCE_NAME_INVALID", "rejected", field_path, 4),
+        ("REFERENCE_NAME_INVALID", "rejected", field_path, 4),
+    ]
+    assert [r.name for r in result.reference_requests if r.kind == "tool"] == ["Bash"]
+
+
+def test_a_blank_agent_or_model_name_is_an_absent_name_not_an_issue():
+    raw = {
+        "id": "sess-1",
+        "agent": " ",
+        "llm_calls": [{"model": "", "provider": "anthropic", "tokens_in": 1, "tokens_out": 1}],
+    }
+
+    result = RecordNormalizer().normalize(_full_mapping(), raw, data_source_id=DATA_SOURCE_ID)
+
+    assert result.issues == ()
+    assert result.sessions[0].agent_name is None
+    assert result.model_calls[0].model_name is None
+    assert {(r.kind, r.name) for r in result.reference_requests} == {("provider", "anthropic")}
+
+
+def test_a_boolean_name_is_rejected_not_stored_as_text():
+    raw = {"id": "sess-1", "tool_uses": [{"name": True}]}
+
+    result = RecordNormalizer().normalize(_full_mapping(), raw, data_source_id=DATA_SOURCE_ID)
+
+    assert result.tool_calls == ()
+    assert [(i.code, i.severity) for i in result.issues] == [("TYPE_MISMATCH", "rejected")]
+    assert [r for r in result.reference_requests if r.kind == "tool"] == []
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(123, "123"), (7.5, "7.5"), ("Bash", "Bash"), ("   ", None), ("", None), (None, None)],
+)
+def test_reference_name_turns_numbers_into_text_and_blanks_into_no_name(value, expected):
+    assert reference_name(value) == expected
+
+
+@pytest.mark.parametrize("value", [True, False, {"name": "Bash"}, ["Bash"]])
+def test_reference_name_refuses_what_is_not_a_name(value):
+    with pytest.raises(ValueError, match="expected text or a number"):
+        reference_name(value)
 
 
 def test_sequence_index_string_without_cast_is_rejected_as_type_mismatch():

@@ -40,6 +40,15 @@ class AISettings(BaseSettings):
         ),
     )
     timeout_seconds: float = Field(default=60.0, gt=0)
+    total_timeout_seconds: float = Field(
+        default=540.0,
+        gt=0,
+        description=(
+            "Deadline for a whole proposal or refinement, every iteration and "
+            "retry included (AI_TOTAL_TIMEOUT_SECONDS). Below the 600 s "
+            "proxy_read_timeout of docker/nginx.conf.template."
+        ),
+    )
     max_output_tokens: int = Field(default=8000, ge=1)
     max_tokens_parameter: Literal["max_tokens", "max_completion_tokens"] = Field(
         default="max_tokens",

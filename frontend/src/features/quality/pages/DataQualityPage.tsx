@@ -28,7 +28,7 @@ export function DataQualityPage() {
   if (quality.isPending) {
     return (
       <div>
-        <PageHeader kicker="Data quality" title="Integrity" />
+        <PageHeader title="Data quality" />
         <BentoGrid>
           {Array.from({ length: 6 }, (_, index) => (
             <BentoModule key={index} cols={index < 2 ? 2 : 1} padding="none">
@@ -43,7 +43,7 @@ export function DataQualityPage() {
   if (quality.isError) {
     return (
       <div>
-        <PageHeader kicker="Data quality" title="Integrity" />
+        <PageHeader title="Data quality" />
         <EmptyState
           title="Quality metrics unavailable"
           description={quality.error?.message ?? 'Unable to load import quality.'}
@@ -65,11 +65,7 @@ export function DataQualityPage() {
   if (points.length === 0) {
     return (
       <div>
-        <PageHeader
-          kicker="Data quality"
-          title="Integrity"
-          description="Imperfect data is acceptable when it is explained. Missing values stay missing."
-        />
+        <PageHeader title="Data quality" />
         {warnings.length > 0 ? (
           <ul
             role="status"
@@ -90,11 +86,7 @@ export function DataQualityPage() {
 
   return (
     <div>
-      <PageHeader
-        kicker="Data quality"
-        title="Integrity"
-        description="Imperfect data is acceptable when it is explained. Missing values stay missing."
-      />
+      <PageHeader title="Data quality" />
       {warnings.length > 0 ? (
         <ul
           role="status"

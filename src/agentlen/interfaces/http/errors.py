@@ -24,6 +24,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from agentlen.application.errors import (
     AnalyzerError,
+    AnalyzerTimeoutError,
     ApplicationError,
     ConflictError,
     InvalidCredentialsError,
@@ -42,6 +43,7 @@ logger = logging.getLogger("agentlen.http")
 _APPLICATION_STATUS: tuple[tuple[type[ApplicationError], int], ...] = (
     (NotFoundError, status.HTTP_404_NOT_FOUND),
     (ConflictError, status.HTTP_409_CONFLICT),
+    (AnalyzerTimeoutError, status.HTTP_504_GATEWAY_TIMEOUT),
     (AnalyzerError, status.HTTP_502_BAD_GATEWAY),
     (InvalidCredentialsError, status.HTTP_401_UNAUTHORIZED),
     (UnauthenticatedError, status.HTTP_401_UNAUTHORIZED),

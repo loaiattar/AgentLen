@@ -6,5 +6,5 @@ export function initialsFromEmail(email: string): string {
     const second = parts[1]?.[0] ?? ''
     return `${first}${second}`.toUpperCase()
   }
-  return local.slice(0, 2).toUpperCase() || 'AS'
+  return local.slice(0, 2).toUpperCase() || 'AL'
 }

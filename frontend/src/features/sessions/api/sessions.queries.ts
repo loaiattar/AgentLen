@@ -1,6 +1,7 @@
 import { queryOptions, useQuery } from '@tanstack/react-query'
 
 import { apiClient } from '@/lib/api/client'
+import { loadAllPages, withWindow } from '@/lib/api/pagination'
 import { resolvePeriod } from '@/features/dashboard/lib/filters'
 import type { DashboardFilters } from '@/features/dashboard/types'
 import { sessionsKeys } from '@/features/sessions/api/sessions.keys'
@@ -39,10 +40,21 @@ export const sessionsQueries = {
       queryKey: sessionsKeys.detail(id),
       queryFn: () => apiClient.get<SessionWithCalls>(`/sessions/${id}`),
     }),
+  /**
+   * Every page of the timeline, up to `MAX_LOADED_ITEMS`. The route answers
+   * 200 events at most; the KPIs above it count every call of the session, so
+   * one page alone showed 200 events under "350 model calls".
+   */
   timeline: (id: number) =>
     queryOptions({
       queryKey: sessionsKeys.timeline(id),
-      queryFn: () => apiClient.get<TimelineEvent[]>(`/sessions/${id}/timeline`),
+      queryFn: () =>
+        loadAllPages(async (limit, offset) => {
+          const { data, total } = await apiClient.getWithTotal<TimelineEvent[]>(
+            withWindow(`/sessions/${id}/timeline`, limit, offset),
+          )
+          return { items: data, total }
+        }),
     }),
   record: (id: number) =>
     queryOptions({

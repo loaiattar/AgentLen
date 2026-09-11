@@ -54,6 +54,7 @@ ENVELOPE_DESCRIPTIONS = {
     422: "Business validation failed.",
     500: "Unexpected server error (`INTERNAL_ERROR`). Leaks nothing.",
     502: "The AI provider failed or answered out of contract.",
+    504: "The analysis ran past AI_TOTAL_TIMEOUT_SECONDS (`ANALYZER_TIMEOUT`).",
 }
 
 _ERROR_REF = {"$ref": "#/components/schemas/ErrorResponse"}
@@ -116,7 +117,7 @@ def _document_operation(route: Any, method: str, operation: dict[str, Any]) -> N
     if method in {"post", "put", "patch"} and "requestBody" in operation:
         statuses.add(422)
     if calls & {get_structure_analyzer, get_analyzer_factory}:
-        statuses.add(502)
+        statuses |= {502, 504}
     for status_code in sorted(statuses):
         _envelope(responses, status_code)
 

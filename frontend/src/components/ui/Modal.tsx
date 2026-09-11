@@ -16,7 +16,7 @@ export function Modal({ open, onOpenChange, title, description, children, footer
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-foreground/20 backdrop-blur-sm" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay backdrop-blur-sm" />
         <Dialog.Content
           className={cn(
             'glass-surface fixed top-1/2 left-1/2 z-50 w-[min(32rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl p-6 shadow-pop',
