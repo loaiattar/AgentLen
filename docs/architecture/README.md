@@ -26,7 +26,7 @@
 
 ## Encore à produire (livrables du sujet)
 
-- [ ] `docs/verification/ai-models-report.md` — compte rendu du parcours d'identification et d'import avec les **deux** modèles IA
+- [~] [`docs/verification/ai-models-report.md`](../verification/ai-models-report.md) — parcours complet tracé pour `qwen2.5:7b` ; la seconde configuration reste à produire, faute d'un second modèle capable de tenir la boucle d'outils sur le matériel de test (voir §6 du rapport)
 - [ ] `docs/datasets.md` — provenance, versions, dates de récupération et méthode de sélection des extraits
 - [ ] `docs/observations.md` — **trois observations chiffrées** avec sources et filtres permettant de les retrouver
 - [ ] Mappings documentés pour **au moins deux sources distinctes**
