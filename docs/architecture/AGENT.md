@@ -30,6 +30,13 @@ interfaces/      ← routes FastAPI /mappings/proposals et /mappings/proposals/{
 Le modèle (Claude, GPT-4, local…) est un détail d'infrastructure.
 Ni le domaine ni les use cases n'y font référence.
 
+Une requête peut choisir son fournisseur et son modèle (API.md §3). `AI_BASE_URL`
+ne vaut que pour le fournisseur configuré (`settings_for_request`,
+`infrastructure/ai/factory.py`) : un autre fournisseur utilise le point d'accès par
+défaut de son adaptateur, pour qu'une clé ne parte jamais vers l'hôte d'un autre
+fournisseur. Un fournisseur hors du registre est refusé en `400` par le schéma de la
+requête, avant toute construction d'adaptateur.
+
 ---
 
 ## 3. Les deux phases d'une session d'import
@@ -244,12 +251,22 @@ execute(tool_name, tool_input) -> dict
 |---|---|---|
 | `MAX_ITERATIONS` | `10` | Évite une boucle infinie si le modèle ne converge pas |
 | `MAX_CONVERSATION_TURNS` | `10` | Limite la taille du contexte en phase de raffinement |
+| `AI_TOTAL_TIMEOUT_SECONDS` | `540` | Délai total d'une proposition ou d'un raffinement, toutes itérations et tentatives comprises ; sous les 600 s du proxy nginx |
 | Fenêtre glissante | 5 derniers tours | Au-delà, le contexte déborde sur les modèles à petite fenêtre |
 | Taille max de l'échantillon envoyé au LLM | `50 lignes` | Défini dans `SampleSanitizer`, jamais le fichier entier |
 
 Si `MAX_ITERATIONS` est atteint sans `end_turn`, le use case lève
 `AgentMaxIterationsError`. L'API retourne `502` avec un message explicatif ;
 l'utilisateur peut relancer avec un `hint` plus précis.
+
+`AI_TIMEOUT_SECONDS` borne un appel, `MAX_ITERATIONS` une boucle, mais leur produit
+avec les tentatives atteint une quarantaine de minutes. `AI_TOTAL_TIMEOUT_SECONDS`
+borne l'ensemble. `DeadlineBoundAnalyzer` (`application/use_cases/analysis_deadline.py`)
+enveloppe l'unique appel à l'analyseur de `ProposeMapping` et de `RefineMapping`, et
+`interfaces/http/dependencies.py` l'applique à chaque analyseur construit. À
+l'échéance, l'appel est annulé, rien n'est enregistré, et l'API retourne `504`
+`ANALYZER_TIMEOUT`. Sans ce délai, le proxy répondait `504` pendant que l'analyse
+continuait à consommer des jetons.
 
 ---
 
