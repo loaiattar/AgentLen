@@ -22,6 +22,8 @@ export function useMetricsFilters() {
   const search = appRoute.useSearch()
   const navigate = useNavigate()
   const sources = useDataSourcesQuery()
+  // Every page of `GET /data-sources` is loaded (#192): the names are its `items`.
+  const sourceList = sources.data?.items
   const filters = searchToDashboardFilters(search)
 
   const patchSearch = (patch: (prev: MetricsSearch) => MetricsSearch) => {
@@ -31,8 +33,8 @@ export function useMetricsFilters() {
   return {
     search,
     filters,
-    sources: sources.data ?? [],
-    datasetLabel: datasetLabel(search.data_source_id, sources.data),
+    sources: sourceList ?? [],
+    datasetLabel: datasetLabel(search.data_source_id, sourceList),
     periodLabel: periodLabel(search),
     // Dates stay raw in `search` (see `parseMetricsSearch`), so the page can say what it ignores.
     ignoredDates: readDateRange(search).ignored,
@@ -60,7 +62,7 @@ export function useMetricsFilters() {
     removeFilter: (key: ExplorationKey) => patchSearch((prev) => withoutSearchKeys(prev, [key])),
     clearExploration: () => patchSearch((prev) => withoutSearchKeys(prev, EXPLORATION_KEYS)),
     dropIgnoredDates: () => patchSearch(withoutIgnoredDates),
-    datasetOptions: datasetOptions(sources),
+    datasetOptions: datasetOptions({ data: sourceList, isPending: sources.isPending, isError: sources.isError }),
     periodOptions: PERIOD_OPTIONS,
   }
 }
