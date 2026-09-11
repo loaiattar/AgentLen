@@ -52,7 +52,26 @@ function codeFromErrorBody(body: unknown): string | null {
   return null
 }
 
-async function request<TResponse>(path: string, options: RequestOptions = {}): Promise<TResponse> {
+/** Name of the count header sent by the bounded bare-array routes (API.md §1). */
+export const TOTAL_COUNT_HEADER = 'X-Total-Count'
+
+/** A response body with the row count its route reported, `null` when it reported none. */
+export interface WithTotal<TResponse> {
+  data: TResponse
+  total: number | null
+}
+
+/** An absent or malformed header is an unknown total, never `0`. */
+export function parseTotalCount(headers: Headers): number | null {
+  const raw = headers.get(TOTAL_COUNT_HEADER)
+  if (raw === null || !/^\d+$/.test(raw.trim())) return null
+  return Number(raw)
+}
+
+async function send<TResponse>(
+  path: string,
+  options: RequestOptions = {},
+): Promise<{ data: TResponse; headers: Headers }> {
   const { body, headers, ...rest } = options
   const isFormData = body instanceof FormData
   const sessionToken = getSessionToken()
@@ -78,15 +97,24 @@ async function request<TResponse>(path: string, options: RequestOptions = {}): P
   }
 
   if (response.status === 204) {
-    return undefined as TResponse
+    return { data: undefined as TResponse, headers: response.headers }
   }
 
-  return (await response.json()) as TResponse
+  return { data: (await response.json()) as TResponse, headers: response.headers }
+}
+
+async function request<TResponse>(path: string, options: RequestOptions = {}): Promise<TResponse> {
+  return (await send<TResponse>(path, options)).data
 }
 
 export const apiClient = {
   get: <TResponse>(path: string, options?: RequestOptions) =>
     request<TResponse>(path, { ...options, method: 'GET' }),
+  /** `get`, plus `X-Total-Count`: how a bounded bare array tells it was cut short. */
+  getWithTotal: async <TResponse>(path: string, options?: RequestOptions): Promise<WithTotal<TResponse>> => {
+    const { data, headers } = await send<TResponse>(path, { ...options, method: 'GET' })
+    return { data, total: parseTotalCount(headers) }
+  },
   post: <TResponse>(path: string, body?: unknown, options?: RequestOptions) =>
     request<TResponse>(path, { ...options, method: 'POST', body }),
   patch: <TResponse>(path: string, body?: unknown, options?: RequestOptions) =>

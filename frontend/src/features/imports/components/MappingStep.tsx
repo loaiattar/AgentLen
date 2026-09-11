@@ -5,6 +5,17 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/features/imports/components/SelectField'
 import { useDataSourcesQuery } from '@/features/imports/api/imports.queries'
 import { useMappingQuery, useMappingsQuery } from '@/features/mappings/api/mappings.queries'
+import { truncationNotice, type LoadedList } from '@/lib/api/pagination'
+
+/** Said under a select whose list stopped before the end, so a missing option is explained. */
+function ListNotice({ list, noun }: { list: LoadedList<unknown> | undefined; noun: string }) {
+  const notice = list === undefined ? null : truncationNotice(list, noun)
+  return notice === null ? null : (
+    <p role="status" className="text-secondary text-warning">
+      {notice}
+    </p>
+  )
+}
 
 export interface MappingStepProps {
   fileId: number | null
@@ -41,7 +52,7 @@ export function MappingStep({
   const selectedMapping = useMappingQuery(mappingId)
 
   const mappingsUnavailable = mappings.isError
-  const mappingOptions = mappings.data ?? []
+  const mappingOptions = mappings.data?.items ?? []
   const options =
     selectedMapping.data != null && !mappingOptions.some((item) => item.id === selectedMapping.data.id)
       ? [selectedMapping.data, ...mappingOptions]
@@ -86,12 +97,13 @@ export function MappingStep({
           <option value="">
             {dataSources.isPending ? 'Loading…' : 'Select a data source'}
           </option>
-          {(dataSources.data ?? []).map((source) => (
+          {(dataSources.data?.items ?? []).map((source) => (
             <option key={source.id} value={source.id}>
               {source.name} ({source.slug})
             </option>
           ))}
         </Select>
+        <ListNotice list={dataSources.data} noun="data sources" />
       </Field>
 
       {mappingsUnavailable ? (
@@ -143,6 +155,7 @@ export function MappingStep({
               </option>
             ))}
           </Select>
+          <ListNotice list={mappings.data} noun="mappings" />
         </Field>
       )}
     </div>
