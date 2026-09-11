@@ -440,6 +440,29 @@ async def test_a_model_name_is_keyed_by_its_provider(uow: Any) -> None:
         await uow.commit()
 
 
+async def test_an_agent_without_version_resolves_to_one_row_across_transactions(
+    uow: Any,
+) -> None:
+    """No mapping provides an agent version, so the key is (name, NULL).
+
+    Each import run resolves it in its own transaction with a fresh cache: the
+    second run must find the first run's row, not create another (issue #137).
+    A known version is still a different agent.
+    """
+    async with uow:
+        first = await uow.referentials.resolve("agent", "claude-code")
+        await uow.commit()
+    async with uow:
+        second = await uow.referentials.resolve("agent", "claude-code")
+        versioned = await uow.referentials.resolve(
+            "agent", "claude-code", context={"version": "1.0"}
+        )
+        await uow.commit()
+
+    assert second == first
+    assert versioned != first
+
+
 # ---------------------------------------------------------------------------
 # Import report and issues
 # ---------------------------------------------------------------------------

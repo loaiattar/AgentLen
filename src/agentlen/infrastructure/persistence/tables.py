@@ -244,8 +244,17 @@ agent = Table(
     metadata,
     _pk(),
     Column("name", Text, nullable=False),
+    # NULL = the source gave no version. No mapping provides one today.
     Column("version", Text),
-    UniqueConstraint("name", "version", name="uq_agent_name_version"),
+    # NULLS NOT DISTINCT: with the default, ('claude-code', NULL) never
+    # conflicts with itself, the referential upsert never matches, and every
+    # import creates the same agent again (issue #137, migration 0004).
+    UniqueConstraint(
+        "name",
+        "version",
+        name="uq_agent_name_version",
+        postgresql_nulls_not_distinct=True,
+    ),
     comment="One observed coding agent: claude-code, codex.",
 )
 

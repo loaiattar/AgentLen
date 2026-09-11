@@ -44,6 +44,25 @@ MAPPING = Mapping(
     ),
 )
 
+# The same source with the agent named on each session and, like every mapping
+# today, no agent version.
+AGENT_MAPPING = Mapping(
+    id=uuid4(),
+    name="tracelab",
+    version=1,
+    source_format="jsonl",
+    entities=(
+        EntityMapping(
+            target="session",
+            natural_key=("external_id",),
+            fields=(
+                FieldRule(target="external_id", source="$.sid", required=True),
+                FieldRule(target="agent_name", source="$.agent"),
+            ),
+        ),
+    ),
+)
+
 # Tool calls carry their own index, so several lines of one session do not all
 # fall back to position 0 in their `tools` list.
 INDEXED = Mapping(
@@ -168,6 +187,34 @@ async def test_importing_the_same_file_twice_creates_no_duplicate(
     assert first.records_duplicate == 0
     assert second.records_imported == 0
     assert second.records_duplicate == 5
+
+
+async def test_two_imports_of_the_same_agent_share_one_agent_row(
+    seeded: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    """Each run resolves ('claude-code', NULL) with a fresh reference cache.
+
+    The key must still match the first run's row; otherwise the dashboard
+    splits one agent into as many agents as there were imports (issue #137).
+    """
+    with engine.begin() as conn:
+        conn.execute(
+            t.mapping.update()
+            .where(t.mapping.c.id == seeded["mapping_id"])
+            .values(document=mapping_to_document(AGENT_MAPPING))
+        )
+
+    for sid in ("s1", "s2"):
+        run_import, uow = importer([{"sid": sid, "agent": "claude-code"}])
+        report = await run_import.execute(await _new_run(uow, seeded))
+        assert report.records_imported > 0
+
+    with engine.connect() as conn:
+        assert _count(conn, t.agent) == 1
+        agent_ids = conn.execute(select(t.session.c.agent_id)).scalars().all()
+    assert len(agent_ids) == 2
+    assert agent_ids[0] is not None
+    assert agent_ids[0] == agent_ids[1]
 
 
 async def test_children_stay_attached_to_their_session(
