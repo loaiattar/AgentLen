@@ -578,6 +578,12 @@ class SqlAlchemyMappingProposalRepository(_Base):
         )
 
     async def list_messages(self, proposal_id: int, *, limit: int) -> list[dict[str, str | int]]:
+        # Postgres refuses a negative LIMIT outright — it does not read it as
+        # "no limit" — and `LIMIT 0` costs a round trip to learn nothing. The
+        # in-memory double already answered `[]` for both; this is the contract,
+        # now pinned in tests/contract.
+        if limit <= 0:
+            return []
         recent = (
             select(t.mapping_proposal_message)
             .where(t.mapping_proposal_message.c.mapping_proposal_id == proposal_id)
