@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.dto.persistence import ModelCallRow, SessionRow
-from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
+from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
 from agentlen.domain.model.model_call import ModelCall, TokenUsage
 from agentlen.domain.model.session import Session
 from agentlen.infrastructure.persistence.engine import to_async_url
@@ -535,3 +535,153 @@ async def test_supersede_changes_the_status_and_leaves_the_document_untouched(uo
     assert record is not None
     assert record["status"] == "superseded"
     assert record["document"]["entities"][0]["target"] == "session"
+
+
+# ---------------------------------------------------------------------------
+# Mapping proposals — the conversation the AI and the operator have
+# ---------------------------------------------------------------------------
+
+
+def _proposal(mapping: Mapping | None = None) -> MappingProposal:
+    return MappingProposal(
+        mapping=mapping or _mapping(name="proposed"),
+        rationale=("sid ressemble à un identifiant de session",),
+        ambiguities=("duration_ms vient peut-être de latency",),
+        unmapped_fields=("$.debug",),
+        analyzer_descriptor={"provider": "fake", "model": "test", "prompt_version": "test"},
+    )
+
+
+async def _file_upload_id(uow: Any) -> int:
+    """A file row to hang a proposal on. SQL enforces the foreign key."""
+    if not hasattr(uow, "_engine"):
+        return 1
+    from sqlalchemy import insert
+
+    from agentlen.infrastructure.persistence import tables as t
+
+    return int(
+        (
+            await uow._conn.execute(
+                insert(t.file_upload)
+                .values(
+                    original_name="p.jsonl",
+                    storage_path="/srv/p.jsonl",
+                    format="jsonl",
+                    size_bytes=1,
+                    content_hash=uuid4().hex * 2,
+                )
+                .returning(t.file_upload.c.id)
+            )
+        ).scalar_one()
+    )
+
+
+async def test_a_proposal_round_trips_with_its_rationale_and_ambiguities(uow: Any) -> None:
+    async with uow:
+        file_id = await _file_upload_id(uow)
+        proposal_id = await uow.mapping_proposals.save(_proposal(), file_upload_id=file_id)
+        await uow.commit()
+
+    async with uow:
+        stored = await uow.mapping_proposals.get(proposal_id)
+
+    assert stored is not None
+    assert stored.mapping.entities[0].fields[0].source == "$.sid"
+    assert stored.rationale == ("sid ressemble à un identifiant de session",)
+    assert stored.ambiguities == ("duration_ms vient peut-être de latency",)
+    assert stored.unmapped_fields == ("$.debug",)
+
+
+async def test_an_unknown_proposal_is_none_not_an_error(uow: Any) -> None:
+    async with uow:
+        assert await uow.mapping_proposals.get(999999) is None
+
+
+async def test_update_replaces_the_document_and_keeps_the_id(uow: Any) -> None:
+    async with uow:
+        file_id = await _file_upload_id(uow)
+        proposal_id = await uow.mapping_proposals.save(_proposal(), file_upload_id=file_id)
+        await uow.commit()
+
+    refined = _proposal(_mapping(name="refined"))
+    async with uow:
+        await uow.mapping_proposals.update(proposal_id, refined)
+        await uow.commit()
+
+    async with uow:
+        stored = await uow.mapping_proposals.get(proposal_id)
+
+    assert stored is not None
+    assert stored.mapping.name == "refined"
+
+
+async def test_the_message_window_returns_the_last_turns_in_reading_order(uow: Any) -> None:
+    """`RefineMapping` replays the tail of the conversation into the next prompt.
+
+    Two things have to hold whatever the implementation: the window is the
+    *last* N turns, and they come back oldest-first — a transcript read
+    backwards would tell the model the opposite of what happened.
+    """
+    async with uow:
+        file_id = await _file_upload_id(uow)
+        proposal_id = await uow.mapping_proposals.save(_proposal(), file_upload_id=file_id)
+        for index in range(7):
+            await uow.mapping_proposals.add_message(
+                proposal_id,
+                role="user" if index % 2 == 0 else "assistant",
+                content=f"turn-{index}",
+            )
+        await uow.commit()
+
+    async with uow:
+        window = await uow.mapping_proposals.list_messages(proposal_id, limit=3)
+        everything = await uow.mapping_proposals.list_messages(proposal_id, limit=50)
+
+    assert [m["content"] for m in window] == ["turn-4", "turn-5", "turn-6"]
+    assert [m["turn_index"] for m in window] == [4, 5, 6]
+    assert [m["role"] for m in window] == ["user", "assistant", "user"]
+    assert len(everything) == 7
+
+
+async def test_a_non_positive_message_limit_returns_nothing(uow: Any) -> None:
+    """The two implementations used to disagree here.
+
+    The fake returned `[]`; the SQL one passed the value straight to `.limit()`,
+    so `limit=0` and `limit=-1` reached Postgres as written. `RefineMapping`
+    refuses a limit below 1, so nothing triggered it — which is exactly how a
+    contract gap waits for its next caller.
+    """
+    async with uow:
+        file_id = await _file_upload_id(uow)
+        proposal_id = await uow.mapping_proposals.save(_proposal(), file_upload_id=file_id)
+        for index in range(3):
+            await uow.mapping_proposals.add_message(
+                proposal_id, role="user", content=f"turn-{index}"
+            )
+        await uow.commit()
+
+    async with uow:
+        zero = await uow.mapping_proposals.list_messages(proposal_id, limit=0)
+        negative = await uow.mapping_proposals.list_messages(proposal_id, limit=-1)
+
+    assert zero == []
+    assert negative == []
+
+
+async def test_messages_of_one_proposal_do_not_leak_into_another(uow: Any) -> None:
+    async with uow:
+        file_id = await _file_upload_id(uow)
+        first = await uow.mapping_proposals.save(_proposal(), file_upload_id=file_id)
+        second = await uow.mapping_proposals.save(_proposal(), file_upload_id=file_id)
+        await uow.mapping_proposals.add_message(first, role="user", content="pour la première")
+        await uow.mapping_proposals.add_message(second, role="user", content="pour la seconde")
+        await uow.commit()
+
+    async with uow:
+        for_first = await uow.mapping_proposals.list_messages(first, limit=10)
+        for_second = await uow.mapping_proposals.list_messages(second, limit=10)
+
+    assert [m["content"] for m in for_first] == ["pour la première"]
+    assert [m["content"] for m in for_second] == ["pour la seconde"]
+    assert [m["turn_index"] for m in for_second] == [0], "turn_index is per proposal"

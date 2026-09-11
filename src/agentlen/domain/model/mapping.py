@@ -33,15 +33,6 @@ class EntityMapping:
         object.__setattr__(self, "natural_key", tuple(self.natural_key))
         object.__setattr__(self, "fields", tuple(self.fields))
 
-    VALID_TARGETS = frozenset({"session", "model_call", "tool_call"})
-
-    def validate_target(self) -> None:
-        if self.target not in self.VALID_TARGETS:
-            raise ValueError(
-                f"Unknown entity target '{self.target}'. "
-                f"Must be one of {sorted(self.VALID_TARGETS)}."
-            )
-
 
 @dataclass(frozen=True)
 class Mapping:

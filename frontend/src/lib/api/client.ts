@@ -2,7 +2,8 @@ import { clearSessionToken, getSessionToken } from '@/lib/auth/session'
 
 /** Backend prefix from API.md. Paths passed to apiClient are relative to this (e.g. `/metrics/overview`). */
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
-const API_KEY = import.meta.env.VITE_API_KEY ?? ''
+// No `X-API-Key` here: anything this code can read ships in the bundle. The
+// proxy in front of the API (nginx in Docker, Vite in dev) adds it (#149).
 
 export class ApiError extends Error {
   status: number
@@ -60,7 +61,6 @@ async function request<TResponse>(path: string, options: RequestOptions = {}): P
     ...rest,
     headers: {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
       ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
       ...headers,
     },
