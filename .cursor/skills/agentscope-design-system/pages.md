@@ -1,4 +1,4 @@
-# Pages AgentScope
+# Pages AgentLen
 
 Chaque écran a un focus primaire et au plus une action primaire visible.
 
@@ -48,4 +48,4 @@ Table + View + overflow.
 
 Sidebar : Overview, Sessions, Imports, Data Sources, Mappings, Data Quality. Bas : provider, model, status, workspace.
 
-Top : search, dataset, période, notifications, profil.
+Top : search, dataset, période, `ThemeToggle`, profil.

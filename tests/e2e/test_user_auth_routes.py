@@ -8,11 +8,18 @@ top of it.
 
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime, timedelta
+
+import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from agentlen.infrastructure.security.bcrypt_hasher import BcryptPasswordHasher
 from agentlen.interfaces.http.app import create_app
+from agentlen.interfaces.http.dependencies import get_clock, get_password_hasher
+from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 from tests.integration.conftest import requires_postgres
 
 
@@ -51,6 +58,7 @@ async def test_register_rejects_a_duplicate_email(live_client: AsyncClient) -> N
 
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "CONFLICT"
+    assert "dup@example.com" not in second.text, "the error must not echo the address"
 
 
 @requires_postgres
@@ -156,6 +164,76 @@ async def test_logout_invalidates_the_token(live_client: AsyncClient) -> None:
     assert after_logout.status_code == 401
 
 
+@requires_postgres
+async def test_session_token_is_stored_only_as_its_sha256(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    credentials = {"email": "digest@example.com", "password": "a-strong-passphrase"}
+    await _register(live_client, **credentials)
+    token = (await live_client.post("/api/v1/auth/login", json=credentials)).json()["token"]
+
+    async with live_engine.connect() as conn:
+        stored = (await conn.execute(text("SELECT token_hash FROM user_session"))).scalars().all()
+
+    assert stored == [hashlib.sha256(token.encode("utf-8")).hexdigest()]
+
+
+class _MovableClock:
+    def __init__(self, now: datetime) -> None:
+        self.current = now
+
+    def now(self) -> datetime:
+        return self.current
+
+
+@requires_postgres
+async def test_expired_session_is_refused_then_purged_by_the_next_login(
+    live_engine: AsyncEngine,
+) -> None:
+    clock = _MovableClock(datetime(2026, 9, 11, 12, 0, tzinfo=UTC))
+    app = create_app(engine=live_engine)
+    app.dependency_overrides[get_clock] = lambda: clock
+    credentials = {"email": "expiry@example.com", "password": "a-strong-passphrase"}
+
+    async with asgi_client(app) as client:
+        await _register(client, **credentials)
+        old = (await client.post("/api/v1/auth/login", json=credentials)).json()["token"]
+        clock.current += timedelta(days=31)
+        refused = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old}"})
+        await client.post("/api/v1/auth/login", json=credentials)
+
+    async with live_engine.connect() as conn:
+        sessions = (await conn.execute(text("SELECT count(*) FROM user_session"))).scalar_one()
+
+    assert refused.status_code == 401
+    assert sessions == 1, "the expired session must be purged, only the new one left"
+
+
+class _SpyHasher(BcryptPasswordHasher):
+    def __init__(self) -> None:
+        self.verified: list[str | None] = []
+
+    async def verify(self, password: str, password_hash: str | None) -> bool:
+        self.verified.append(password_hash)
+        return await super().verify(password, password_hash)
+
+
+@requires_postgres
+async def test_login_for_an_unknown_account_still_runs_bcrypt(live_engine: AsyncEngine) -> None:
+    spy = _SpyHasher()
+    app = create_app(engine=live_engine)
+    app.dependency_overrides[get_password_hasher] = lambda: spy
+
+    async with asgi_client(app) as client:
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "ghost@example.com", "password": "whatever-password"},
+        )
+
+    assert response.status_code == 401
+    assert spy.verified == [None], "the dummy-hash verification must run"
+
+
 async def test_register_missing_password_is_a_400_not_a_500(client: AsyncClient) -> None:
     """422 is reserved for business validation (API.md §1); a malformed body
     is remapped to 400, same as everywhere else in the API — checked before
@@ -163,6 +241,48 @@ async def test_register_missing_password_is_a_400_not_a_500(client: AsyncClient)
     response = await client.post("/api/v1/auth/register", json={"email": "alice@example.com"})
 
     assert response.status_code == 400
+
+
+#: 255 characters: one past the schema limit, otherwise a well-formed address.
+TOO_LONG_EMAIL = "a" * 64 + "@" + "b" * 186 + ".com"
+#: 37 characters but 74 bytes: passes a character count, not bcrypt's byte limit.
+TOO_LONG_PASSWORD = "é" * 37
+
+
+@pytest.mark.parametrize("path", ["/api/v1/auth/register", "/api/v1/auth/login"])
+@pytest.mark.parametrize(
+    ("body", "field_path"),
+    [
+        ({"email": TOO_LONG_EMAIL, "password": "a-strong-passphrase"}, "body.email"),
+        ({"email": "a@" + "a." * 25_000 + "@", "password": "a-strong-passphrase"}, "body.email"),
+        ({"email": "alice@example.com", "password": TOO_LONG_PASSWORD}, "body.password"),
+        ({"email": "alice@example.com", "password": "x" * 50_000}, "body.password"),
+    ],
+)
+async def test_over_long_credentials_are_a_400_before_any_use_case(
+    client: AsyncClient, path: str, body: dict[str, str], field_path: str
+) -> None:
+    """Issue #190: unauthenticated routes bound their input in the schema.
+
+    `client` has no reachable database, so a 400 here proves the request was
+    refused before the use case — and the e-mail pattern — ever ran.
+    """
+    response = await client.post(path, json=body)
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "MALFORMED_REQUEST"
+    assert error["field_path"] == field_path
+
+
+def test_credential_limits_are_published_in_the_contract() -> None:
+    spec = create_app(engine=create_async_engine(UNREACHABLE_URL)).openapi()
+    schemas = spec["components"]["schemas"]
+
+    for name in ("RegisterIn", "LoginIn"):
+        properties = schemas[name]["properties"]
+        assert properties["email"]["maxLength"] == 254
+        assert properties["password"]["maxLength"] == 72
 
 
 async def test_protected_route_still_needs_the_app_api_key() -> None:

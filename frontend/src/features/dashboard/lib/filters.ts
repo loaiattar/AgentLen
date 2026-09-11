@@ -26,13 +26,22 @@ export interface MetricsSearch {
   mapping_id?: number
 }
 
-/** Seed source from `make seed`. No `GET /data-sources` yet — do not invent others. */
-export const TRACELAB_SOURCE_ID = 1
+/** Filters a drill-down adds on top of the header's dataset and period. */
+export const DRILL_DOWN_KEYS = ['agent_id', 'model_id', 'tool_id', 'import_run_id', 'date_from', 'date_to'] as const
+export const EXPLORATION_KEYS = ['status', ...DRILL_DOWN_KEYS] as const
+export type ExplorationKey = (typeof EXPLORATION_KEYS)[number]
 
-export const DATASET_OPTIONS = [
-  { id: undefined, label: 'All datasets' },
-  { id: TRACELAB_SOURCE_ID, label: 'TraceLab' },
-] as const
+/** The part of `GET /data-sources` the filters need. */
+export interface SourceName {
+  id: number
+  name: string
+}
+
+export interface DatasetOption {
+  id: number | undefined
+  label: string
+  disabled?: boolean
+}
 
 export const PERIOD_OPTIONS = [
   { id: undefined, label: 'All time' },
@@ -52,6 +61,52 @@ function parseIntParam(value: unknown, { min, max }: { min: number; max?: number
   if (!Number.isInteger(parsed) || parsed < min) return undefined
   if (max != null && parsed > max) return undefined
   return parsed
+}
+
+const INSTANT_PATTERN = /^\d{4}-\d{2}-\d{2}(T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,6})?)?(Z|[+-]\d{2}:\d{2})?)?$/
+
+/**
+ * Epoch milliseconds of an instant the API reads, else `undefined`.
+ *
+ * `Date.parse` alone is too lenient: it reads "September 1, 2026" and rolls
+ * 2026-02-30 over to March, and the API answers 400 to both. A value without
+ * offset is read as UTC, the calendar the API groups days by.
+ */
+export function parseInstant(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined
+  const match = INSTANT_PATTERN.exec(value)
+  if (!match) return undefined
+  const day = value.slice(0, 10)
+  const calendar = Date.parse(`${day}T00:00:00Z`)
+  if (Number.isNaN(calendar) || new Date(calendar).toISOString().slice(0, 10) !== day) return undefined
+  const time = Date.parse(match[1] == null ? `${day}T00:00:00Z` : match[5] == null ? `${value}Z` : value)
+  return Number.isNaN(time) ? undefined : time
+}
+
+const DATE_NAMES = { date_from: 'start date', date_to: 'end date' } as const
+
+/**
+ * The URL's dates the API can use, and why the others are ignored — an
+ * unreadable date, or a range that ends before it starts.
+ */
+export function readDateRange(search: { date_from?: unknown; date_to?: unknown }): {
+  dates: Pick<MetricsSearch, 'date_from' | 'date_to'>
+  ignored: string[]
+} {
+  const dates: Pick<MetricsSearch, 'date_from' | 'date_to'> = {}
+  const ignored: string[] = []
+  for (const key of ['date_from', 'date_to'] as const) {
+    const value = search[key]
+    if (value == null || value === '') continue
+    if (parseInstant(value) == null) ignored.push(`The ${DATE_NAMES[key]} “${String(value)}” is not a date: it is ignored.`)
+    else dates[key] = value as string
+  }
+  const from = parseInstant(dates.date_from)
+  const to = parseInstant(dates.date_to)
+  if (from != null && to != null && from > to) {
+    return { dates: {}, ignored: [...ignored, 'The date range ends before it starts: both dates are ignored.'] }
+  }
+  return { dates, ignored }
 }
 
 export function parseMetricsSearch(search: Record<string, unknown>): MetricsSearch {
@@ -75,8 +130,7 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   if (fileId != null) parsed.file_id = fileId
   if (proposalId != null) parsed.proposal_id = proposalId
   if (mappingId != null) parsed.mapping_id = mappingId
-  if (typeof search.date_from === 'string' && search.date_from.length > 0) parsed.date_from = search.date_from
-  if (typeof search.date_to === 'string' && search.date_to.length > 0) parsed.date_to = search.date_to
+  Object.assign(parsed, readDateRange(search).dates)
   if (typeof search.status === 'string' && SESSION_STATUSES.includes(search.status as SessionStatus)) {
     parsed.status = search.status as SessionStatus
   }
@@ -85,23 +139,107 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   }
   if (limit != null) parsed.limit = limit
   if (offset != null && offset > 0) parsed.offset = offset
+  // The router spreads the raw URL under what `validateSearch` returns, so a
+  // key left out keeps its raw value in `useSearch()`: reset it. Dates are the
+  // exception — kept in the link so the page can say why it ignores them, and
+  // read only through `readDateRange`.
+  for (const key of METRICS_SEARCH_KEYS) {
+    if (!(key in parsed) && key in search) parsed[key] = undefined
+  }
   return parsed
 }
+
+const METRICS_SEARCH_KEYS: readonly (keyof MetricsSearch)[] = [
+  'data_source_id',
+  'agent_id',
+  'model_id',
+  'tool_id',
+  'import_run_id',
+  'status',
+  'period',
+  'limit',
+  'offset',
+  'file_id',
+  'proposal_id',
+  'mapping_id',
+]
 
 /** Replay a chart point's `filters` onto `/sessions` with no translation. */
 export function toSessionSearch(filters: Record<string, unknown>): MetricsSearch {
   return parseMetricsSearch(filters)
 }
 
-export function datasetLabel(dataSourceId: number | undefined): string {
-  const match = DATASET_OPTIONS.find((option) => option.id === dataSourceId)
-  if (match) return match.label
-  if (dataSourceId == null) return 'All datasets'
-  return `Source ${dataSourceId}`
+/**
+ * Drop filters and go back to the first page. A dropped date takes the period
+ * with it: hidden while dates override it, it would otherwise come back unseen.
+ */
+export function withoutSearchKeys(prev: MetricsSearch, keys: readonly (keyof MetricsSearch)[]): MetricsSearch {
+  const next: MetricsSearch = { ...prev }
+  for (const key of keys) {
+    if ((key === 'date_from' || key === 'date_to') && prev[key] != null) delete next.period
+    delete next[key]
+  }
+  delete next.offset
+  return next
 }
 
-export function periodLabel(period: MetricsPeriod | undefined): string {
-  return PERIOD_OPTIONS.find((option) => option.id === period)?.label ?? 'All time'
+/** Take the dates validation ignored out of the link, and keep the valid ones. */
+export function withoutIgnoredDates(prev: MetricsSearch): MetricsSearch {
+  const next: MetricsSearch = { ...prev }
+  delete next.date_from
+  delete next.date_to
+  return { ...next, ...readDateRange(prev).dates }
+}
+
+/** The dataset menu: every declared source, and a disabled line saying why there are none. */
+export function datasetOptions(sources: {
+  data?: readonly SourceName[]
+  isPending: boolean
+  isError: boolean
+}): DatasetOption[] {
+  return [
+    { id: undefined, label: 'All datasets' },
+    ...(sources.data ?? []).map((source) => ({ id: source.id, label: source.name })),
+    ...(sources.isPending ? [{ id: undefined, label: 'Loading sources…', disabled: true }] : []),
+    ...(sources.isError ? [{ id: undefined, label: 'Sources unavailable', disabled: true }] : []),
+  ]
+}
+
+export function datasetLabel(dataSourceId: number | undefined, sources: readonly SourceName[] = []): string {
+  if (dataSourceId == null) return 'All datasets'
+  return sources.find((source) => source.id === dataSourceId)?.name ?? `Source ${dataSourceId}`
+}
+
+export function periodLabel(search: Pick<MetricsSearch, 'period' | 'date_from' | 'date_to'>): string {
+  // Dates override the period (`searchToDashboardFilters`): naming the period would be untrue.
+  const { dates } = readDateRange(search)
+  if (dates.date_from || dates.date_to) return 'Custom range'
+  return PERIOD_OPTIONS.find((option) => option.id === search.period)?.label ?? 'All time'
+}
+
+const FILTER_LABELS: Record<ExplorationKey, string> = {
+  status: 'Status',
+  agent_id: 'Agent',
+  model_id: 'Model',
+  tool_id: 'Tool',
+  import_run_id: 'Import',
+  date_from: 'From',
+  date_to: 'To',
+}
+
+// UTC, like the day buckets a date drill-down comes from.
+const chipInstantFormat = new Intl.DateTimeFormat('en-GB', {
+  day: '2-digit',
+  month: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+  timeZone: 'UTC',
+})
+
+export function filterChipLabel(key: ExplorationKey, value: string | number): string {
+  const time = key === 'date_from' || key === 'date_to' ? parseInstant(value) : undefined
+  return `${FILTER_LABELS[key]} ${time == null ? String(value) : `${chipInstantFormat.format(time)} UTC`}`
 }
 
 export function periodToRange(
@@ -127,12 +265,10 @@ export function periodToRange(
  * re-rendered, and the dashboard refetched in a loop (#122).
  */
 export function searchToDashboardFilters(search: MetricsSearch): DashboardFilters {
-  const hasDates = Boolean(search.date_from || search.date_to)
+  const valid = readDateRange(search).dates
+  const hasDates = Boolean(valid.date_from || valid.date_to)
   const dates = hasDates
-    ? {
-        ...(search.date_from ? { date_from: search.date_from } : {}),
-        ...(search.date_to ? { date_to: search.date_to } : {}),
-      }
+    ? valid
     : search.period
       ? { period: search.period }
       : {}

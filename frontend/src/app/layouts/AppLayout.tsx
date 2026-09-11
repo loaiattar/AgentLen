@@ -15,7 +15,7 @@ export function AppLayout() {
   const logout = useLogoutMutation()
   const aiProviders = useAiProvidersQuery()
   const readiness = useReadinessQuery()
-  const accountLabel = me.data?.email ? initialsFromEmail(me.data.email) : 'AS'
+  const accountLabel = me.data?.email ? initialsFromEmail(me.data.email) : 'AL'
 
   return (
     <Shell
@@ -24,6 +24,7 @@ export function AppLayout() {
       periodLabel={periodLabel}
       datasetItems={datasetOptions.map((option) => ({
         label: option.label,
+        disabled: option.disabled,
         onSelect: () => setDataSourceId(option.id),
       }))}
       periodItems={periodOptions.map((option) => ({

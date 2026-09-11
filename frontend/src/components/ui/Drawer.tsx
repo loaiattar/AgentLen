@@ -16,7 +16,7 @@ export function Drawer({ open, onOpenChange, title, description, children, foote
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-foreground/15 backdrop-blur-sm" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay backdrop-blur-sm" />
         <Dialog.Content
           className={cn(
             'glass-surface fixed inset-y-0 right-0 z-50 flex w-[min(28rem,100vw)] flex-col border-y-0 border-r-0 p-6 shadow-pop',

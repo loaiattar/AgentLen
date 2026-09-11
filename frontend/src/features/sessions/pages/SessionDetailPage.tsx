@@ -24,6 +24,7 @@ import {
   outcomeTone,
 } from '@/features/sessions/lib/format'
 import type { ModelCallDetail, ToolCallDetail } from '@/features/sessions/types'
+import { truncationNotice } from '@/lib/api/pagination'
 
 const routeApi = getRouteApi('/_app/sessions/$sessionId')
 
@@ -91,7 +92,7 @@ export function SessionDetailPage() {
   if (!Number.isInteger(id) || id <= 0) {
     return (
       <div>
-        <PageHeader kicker="Session" title={sessionId} action={<BackButton />} />
+        <PageHeader title={sessionId} action={<BackButton />} />
         <EmptyState title="Invalid session id" description="This session id isn't a valid number." />
       </div>
     )
@@ -100,7 +101,7 @@ export function SessionDetailPage() {
   if (session.isPending || timeline.isPending) {
     return (
       <div>
-        <PageHeader kicker="Session" title={sessionId} action={<BackButton />} />
+        <PageHeader title={sessionId} action={<BackButton />} />
         <BentoGrid>
           {Array.from({ length: 4 }, (_, index) => (
             <BentoModule key={index} cols={index < 2 ? 2 : 1} padding="none">
@@ -115,7 +116,7 @@ export function SessionDetailPage() {
   if (session.isError || timeline.isError) {
     return (
       <div>
-        <PageHeader kicker="Session" title={sessionId} action={<BackButton />} />
+        <PageHeader title={sessionId} action={<BackButton />} />
         <EmptyState
           title="Session unavailable"
           description={
@@ -138,7 +139,8 @@ export function SessionDetailPage() {
   }
 
   const { session: info, model_calls: modelCalls, tool_calls: toolCalls } = session.data
-  const events = timeline.data ?? []
+  const events = timeline.data.items
+  const timelineNotice = truncationNotice(timeline.data, 'events')
   // null isn't 0 (same rule as the dashboard): a call with no token counts at
   // all must not silently sum into a confident-looking 0. Only calls that
   // report *something* feed the total; "—" means truly nothing is known, not
@@ -153,12 +155,7 @@ export function SessionDetailPage() {
 
   return (
     <div>
-      <PageHeader
-        kicker="Session"
-        title={info.external_id || String(info.id)}
-        description={`Sourced from raw record #${info.raw_record_id}`}
-        action={<BackButton />}
-      />
+      <PageHeader title={info.external_id || String(info.id)} action={<BackButton />} />
 
       <BentoGrid className="mb-8">
         <BentoModule cols={1} padding="none">
@@ -195,6 +192,11 @@ export function SessionDetailPage() {
         <h2 className="mb-6 text-meta font-medium tracking-[0.14em] text-foreground-subtle uppercase">
           Timeline
         </h2>
+        {timelineNotice === null ? null : (
+          <p role="status" className="mb-6 text-secondary text-warning">
+            {timelineNotice}
+          </p>
+        )}
         {events.length === 0 ? (
           <p className="text-body text-foreground-muted">
             No model or tool calls recorded for this session.

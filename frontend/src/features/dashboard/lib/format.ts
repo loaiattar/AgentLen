@@ -1,4 +1,4 @@
-import { datasetLabel } from '@/features/dashboard/lib/filters'
+import { datasetLabel, type SourceName } from '@/features/dashboard/lib/filters'
 import type {
   ActivityPoint,
   DashboardFilters,
@@ -17,11 +17,15 @@ const compactFormat = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 1,
 })
 
+// The API groups activity by UTC day. Formatted in the browser's zone instead,
+// 1 September at 00:00 UTC reads "31 Aug" anywhere west of Greenwich.
+const dayFormat = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' })
+
 export function formatDay(value: string | null | undefined): string {
   if (!value) return MISSING_VALUE
   const date = new Date(`${value}T00:00:00Z`)
   if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short' }).format(date)
+  return dayFormat.format(date)
 }
 
 export function getMetric(metrics: Metric[] | undefined, key: string): Metric | undefined {
@@ -181,29 +185,31 @@ export function hasKnownTokens(points: ActivityPoint[]): boolean {
 interface AggregateOptions {
   /** Name the source in each label: without a source filter, one name can appear once per source. */
   showSource?: boolean
+  /** Names from `GET /data-sources`; a source missing from it reads "Source <id>". */
+  sources?: readonly SourceName[]
 }
 
-function withSource(label: string, dataSourceId: number, showSource: boolean): string {
-  return showSource ? `${label} · ${datasetLabel(dataSourceId)}` : label
+function withSource(label: string, dataSourceId: number, { showSource = false, sources }: AggregateOptions): string {
+  return showSource ? `${label} · ${datasetLabel(dataSourceId, sources)}` : label
 }
 
-export function aggregateTools(points: ToolPoint[], { showSource = false, limit = 6 }: AggregateOptions & { limit?: number } = {}) {
+export function aggregateTools(points: ToolPoint[], { limit = 6, ...options }: AggregateOptions & { limit?: number } = {}) {
   return [...points]
     .sort((left, right) => right.call_count - left.call_count)
     .slice(0, limit)
     .map((point, index) => ({
-      label: withSource(point.label, point.data_source_id, showSource),
+      label: withSource(point.label, point.data_source_id, options),
       value: point.call_count,
       tone: CHART_TONES[index % CHART_TONES.length],
       filters: point.filters,
     }))
 }
 
-export function aggregateModels(points: ModelPoint[], { showSource = false }: AggregateOptions = {}) {
+export function aggregateModels(points: ModelPoint[], options: AggregateOptions = {}) {
   return [...points]
     .sort((left, right) => right.call_count - left.call_count)
     .map((point, index) => ({
-      label: withSource(point.label, point.data_source_id, showSource),
+      label: withSource(point.label, point.data_source_id, options),
       value: point.call_count,
       tone: CHART_TONES[index % CHART_TONES.length],
       // `GET /sessions` has no "no model" filter: the point's filters, missing

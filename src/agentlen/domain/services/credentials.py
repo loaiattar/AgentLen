@@ -16,7 +16,18 @@ from agentlen.domain.errors import InvalidEmailError, WeakPasswordError
 # Deliberately simple: one "@", a local part, a domain with at least one dot.
 # Exhaustively validating RFC 5322 buys nothing here — the only consequence of
 # a false positive is a bounced login later, not a stored bad value.
-_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+#
+# The domain is written as dot-separated labels whose characters exclude the
+# dot itself, so no two quantifiers can claim the same character: matching is
+# linear in the input. The previous `[^@\s]+\.[^@\s]+` let both sides of the
+# dot compete for every dot in the domain, and backtracked quadratically on an
+# input like "a@a.a.a.…@" (issue #190).
+_EMAIL_PATTERN = re.compile(r"[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+")
+
+# RFC 5321 caps a forward path at 256 octets, brackets included: 254 is the
+# longest address that can actually receive mail. Checked before the pattern
+# runs, so no caller can hand the regex an unbounded input.
+MAX_EMAIL_LENGTH = 254
 
 MIN_PASSWORD_LENGTH = 8
 # bcrypt silently ignores bytes past 72 and raises outright on some builds;
@@ -31,8 +42,11 @@ def normalize_email(email: str) -> str:
     "Alice@Example.com" and "alice@example.com" collide as the same account
     instead of two, which is what a user actually expects.
     """
+    if len(email) > MAX_EMAIL_LENGTH:
+        # Echo a bounded prefix: the error message must not carry the whole input.
+        raise InvalidEmailError(email[:MAX_EMAIL_LENGTH] + "…")
     normalized = email.strip().lower()
-    if not normalized or not _EMAIL_PATTERN.match(normalized):
+    if not _EMAIL_PATTERN.fullmatch(normalized):
         raise InvalidEmailError(email)
     return normalized
 

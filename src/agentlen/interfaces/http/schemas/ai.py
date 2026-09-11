@@ -1,18 +1,74 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
+from pydantic_core import PydanticCustomError
 
+from agentlen.infrastructure.ai.factory import supported_providers
 from agentlen.interfaces.http.schemas.mappings import EntityMappingIn, SourceFormat
+
+#: Free text, but one token: no whitespace, no control character (Postgres
+#: refuses NUL in the `text` column that stores it with the proposal).
+_MODEL_ID = re.compile(r"[^\x00-\x20\x7f]+")
 
 
 class ProposalRequest(BaseModel):
     file_id: int
     data_source_id: int | None = None
-    provider: str | None = None
-    model: str | None = None
+    provider: str | None = Field(
+        default=None,
+        max_length=64,
+        description=(
+            "`null` uses the configured provider. Otherwise one of: "
+            f"{', '.join(supported_providers())}. AI_BASE_URL applies to the "
+            "configured provider only; any other one uses its default endpoint."
+        ),
+    )
+    model: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        validate_default=True,
+        description=(
+            "`null` uses the configured model. Required when `provider` is set. "
+            "Free text: each host publishes its own model ids."
+        ),
+    )
     hint: str | None = Field(default=None, max_length=10_000)
+
+    @field_validator("provider")
+    @classmethod
+    def _registered_provider(cls, value: str | None) -> str | None:
+        """Refused before any analyzer is built; the factory answered 502."""
+        supported = supported_providers()
+        if value is not None and value not in supported:
+            raise PydanticCustomError(
+                "unsupported_provider",
+                "Fournisseur '{provider}' inconnu. Valeurs acceptées : {supported}.",
+                {"provider": value, "supported": ", ".join(supported)},
+            )
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def _model_goes_with_provider(cls, value: str | None, info: ValidationInfo) -> str | None:
+        """A model id belongs to one provider: the configured one is no use to another."""
+        if value is None:
+            if info.data.get("provider") is not None:
+                raise PydanticCustomError(
+                    "model_required",
+                    "Préciser `model` avec `provider` : un identifiant de modèle "
+                    "appartient à un seul fournisseur.",
+                )
+            return value
+        if not _MODEL_ID.fullmatch(value):
+            raise PydanticCustomError(
+                "invalid_model",
+                "`model` ne peut contenir ni espace ni caractère de contrôle.",
+            )
+        return value
 
 
 class ProposalMessageRequest(BaseModel):

@@ -606,7 +606,8 @@ class InMemoryUserRepository:
     async def create(self, *, email: str, password_hash: str) -> UserRecord:
         if email in self._s.users_by_email:
             raise ConflictError(
-                f"Un compte existe déjà pour l'adresse '{email}'.", details={"email": email}
+                "Impossible de créer un compte avec cette adresse e-mail. "
+                "Si elle vous appartient, connectez-vous."
             )
         record = UserRecord(
             id=self._s.ids.take(),
@@ -624,19 +625,35 @@ class InMemoryUserSessionRepository:
         self._s = store
 
     async def create(
-        self, *, user_id: int, token: str, expires_at: datetime | None
+        self, *, user_id: int, token_hash: str, expires_at: datetime | None
     ) -> UserSessionRecord:
         record = UserSessionRecord(
-            token=token, user_id=user_id, created_at=datetime.now(UTC), expires_at=expires_at
+            token_hash=token_hash,
+            user_id=user_id,
+            created_at=datetime.now(UTC),
+            expires_at=expires_at,
         )
-        self._s.user_sessions[token] = record
+        self._s.user_sessions[token_hash] = record
         return record
 
-    async def get_by_token(self, token: str) -> UserSessionRecord | None:
-        return self._s.user_sessions.get(token)
+    async def get_active_by_token_hash(
+        self, token_hash: str, *, now: datetime
+    ) -> UserSessionRecord | None:
+        record = self._s.user_sessions.get(token_hash)
+        return None if record is None or _session_expired(record, now) else record
 
-    async def delete_by_token(self, token: str) -> None:
-        self._s.user_sessions.pop(token, None)
+    async def delete_by_token_hash(self, token_hash: str) -> None:
+        self._s.user_sessions.pop(token_hash, None)
+
+    async def delete_expired(self, *, now: datetime) -> int:
+        expired = [k for k, r in self._s.user_sessions.items() if _session_expired(r, now)]
+        for key in expired:
+            del self._s.user_sessions[key]
+        return len(expired)
+
+
+def _session_expired(record: UserSessionRecord, now: datetime) -> bool:
+    return record.expires_at is not None and record.expires_at <= now
 
 
 class InMemoryUnitOfWork:

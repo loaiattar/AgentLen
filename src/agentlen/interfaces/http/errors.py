@@ -24,6 +24,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from agentlen.application.errors import (
     AnalyzerError,
+    AnalyzerTimeoutError,
     ApplicationError,
     ConflictError,
     InvalidCredentialsError,
@@ -42,6 +43,7 @@ logger = logging.getLogger("agentlen.http")
 _APPLICATION_STATUS: tuple[tuple[type[ApplicationError], int], ...] = (
     (NotFoundError, status.HTTP_404_NOT_FOUND),
     (ConflictError, status.HTTP_409_CONFLICT),
+    (AnalyzerTimeoutError, status.HTTP_504_GATEWAY_TIMEOUT),
     (AnalyzerError, status.HTTP_502_BAD_GATEWAY),
     (InvalidCredentialsError, status.HTTP_401_UNAUTHORIZED),
     (UnauthenticatedError, status.HTTP_401_UNAUTHORIZED),
@@ -133,9 +135,18 @@ async def _request_validation(request: Request, exc: Exception) -> JSONResponse:
     """
     assert isinstance(exc, RequestValidationError)
     first = exc.errors()[0] if exc.errors() else {}
-    location = ".".join(str(part) for part in first.get("loc", ()))
-    mapping_body = "body" in first.get("loc", ()) and request.url.path.startswith(
-        "/api/v1/mappings"
+    parts = first.get("loc", ())
+    location = ".".join(str(part) for part in parts)
+    path = request.url.path
+    is_proposal_route = "/mappings/proposals" in path
+    mapping_body = (
+        "body" in parts
+        and path.startswith("/api/v1/mappings")
+        and (
+            not is_proposal_route
+            or request.method == "PATCH"
+            or (len(parts) > 1 and parts[1] == "hint")
+        )
     )
     return error_response(
         HTTP_422_UNPROCESSABLE if mapping_body else status.HTTP_400_BAD_REQUEST,
