@@ -124,6 +124,33 @@ class SqlAlchemySessionRepository(_Base):
             for r in (await self._conn.execute(query)).all()
         }
 
+    # Before `list`: past it, a bare `list[...]` annotation names the method.
+    async def fill_missing_started_at(self, session_ids: list[int]) -> int:
+        """One `UPDATE ... FROM`: the earliest dated call of each listed session."""
+        from sqlalchemy import func, union_all, update
+
+        if not session_ids:
+            return 0
+        dated = union_all(
+            *(
+                select(table.c.session_id, table.c.started_at).where(
+                    table.c.session_id.in_(session_ids), table.c.started_at.is_not(None)
+                )
+                for table in (t.model_call, t.tool_call)
+            )
+        ).subquery()
+        first = (
+            select(dated.c.session_id, func.min(dated.c.started_at).label("started_at"))
+            .group_by(dated.c.session_id)
+            .subquery()
+        )
+        statement = (
+            update(t.session)
+            .where(t.session.c.id == first.c.session_id, t.session.c.started_at.is_(None))
+            .values(started_at=first.c.started_at)
+        )
+        return int((await self._conn.execute(statement)).rowcount)
+
     async def get(self, session_id: int) -> Session | None:
         row = (
             (await self._conn.execute(select(t.session).where(t.session.c.id == session_id)))

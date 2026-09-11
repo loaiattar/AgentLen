@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 from httpx import AsyncClient
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from agentlen.application.dto.dashboard import DashboardFilters
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.dependencies import get_dashboard_queries
+from agentlen.interfaces.http.routers.metrics import UNDATED_SESSIONS_WARNING
 from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 from tests.fakes.dashboard_queries import InMemoryDashboardQueries
 
@@ -185,6 +187,54 @@ async def test_cache_across_sources_produces_a_warning(charts: AsyncClient) -> N
 async def test_no_warning_once_a_single_source_is_selected(charts: AsyncClient) -> None:
     body = (await charts.get("/api/v1/metrics/models?data_source_id=1")).json()
 
+    assert body["warnings"] == []
+
+
+# ---------------------------------------------------------------------------
+# Sessions the activity series cannot place (#200)
+# ---------------------------------------------------------------------------
+
+
+async def _activity(sessions: list[dict[str, Any]]) -> dict[str, Any]:
+    app = create_app(engine=create_async_engine(UNREACHABLE_URL))
+    app.dependency_overrides[get_dashboard_queries] = lambda: InMemoryDashboardQueries(
+        sessions=sessions
+    )
+    async with asgi_client(app) as c:
+        body: dict[str, Any] = (await c.get("/api/v1/metrics/activity")).json()
+    return body
+
+
+def _session_started(session_id: int, started_at: datetime | None) -> dict[str, Any]:
+    return {"id": session_id, "data_source_id": 1, "import_run_id": 10, "started_at": started_at}
+
+
+async def test_activity_says_so_when_no_session_has_a_date() -> None:
+    """An empty series over undated sessions is not "no activity"."""
+    body = await _activity([_session_started(1, None), _session_started(2, None)])
+
+    assert body["points"] == []
+    assert body["warnings"] == [UNDATED_SESSIONS_WARNING.format(undated=2, total=2)]
+
+
+async def test_activity_counts_the_undated_sessions_it_leaves_out() -> None:
+    body = await _activity([_session_started(1, DAY_1), _session_started(2, None)])
+
+    assert [p["session_count"] for p in body["points"]] == [1]
+    assert body["warnings"] == [UNDATED_SESSIONS_WARNING.format(undated=1, total=2)]
+
+
+async def test_activity_has_no_warning_when_every_session_is_dated(charts: AsyncClient) -> None:
+    body = (await charts.get("/api/v1/metrics/activity")).json()
+
+    assert body["points"]
+    assert body["warnings"] == []
+
+
+async def test_activity_has_no_warning_when_there_is_nothing_to_date() -> None:
+    body = await _activity([])
+
+    assert body["points"] == []
     assert body["warnings"] == []
 
 

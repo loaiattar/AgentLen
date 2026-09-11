@@ -7,7 +7,7 @@ import { DashboardPage } from '@/features/dashboard/pages/DashboardPage'
 import type { ActivityPoint, DashboardFilters, ModelPoint } from '@/features/dashboard/types'
 import { renderWithRouter } from '@/test/router'
 
-const state = vi.hoisted(() => ({ filters: {} as DashboardFilters }))
+const state = vi.hoisted(() => ({ filters: {} as DashboardFilters, activityWarnings: [] as string[] }))
 
 function loaded<T>(data: T) {
   return { isPending: false, isError: false, error: null, data, refetch: vi.fn() }
@@ -52,12 +52,16 @@ vi.mock('@/features/dashboard/api/dashboard.queries', () => {
   return {
     useDashboardOverviewQuery: () => loaded({ metrics: [], filters_applied: {} }),
     useDashboardActivityQuery: () =>
-      points([
-        activity('2026-09-01', 1, 2, 120),
-        activity('2026-09-02', 1, 1, null),
-        activity('2026-09-04', 1, 1, 10),
-        activity('2026-09-04', 2, 3, 10),
-      ]),
+      loaded({
+        points: [
+          activity('2026-09-01', 1, 2, 120),
+          activity('2026-09-02', 1, 1, null),
+          activity('2026-09-04', 1, 1, 10),
+          activity('2026-09-04', 2, 3, 10),
+        ],
+        filters_applied: {},
+        warnings: state.activityWarnings,
+      }),
     useDashboardToolsQuery: () => points([]),
     useDashboardModelsQuery: () => points([model('model-a', 5, 8), model('unknown', null, 2)]),
     useDashboardQualityQuery: () => points([]),
@@ -69,6 +73,15 @@ vi.mock('@/features/dashboard/api/dashboard.queries', () => {
 describe('DashboardPage drill-down', () => {
   beforeEach(() => {
     state.filters = {}
+    state.activityWarnings = []
+  })
+
+  it('says why sessions are missing from the activity chart', async () => {
+    const warning = "1 session(s) sur 8 sans date de début, absente(s) de cette série : ni la source ni les appels de ces sessions ne portent d'horodatage mappé."
+    state.activityWarnings = [warning]
+    renderWithRouter(DashboardPage)
+
+    expect(await screen.findByText(warning)).toBeInTheDocument()
   })
 
   it('opens the sessions of a day from the activity chart', async () => {

@@ -92,6 +92,15 @@ CACHE_CROSS_SOURCE_WARNING = (
 )
 
 
+#: Emitted when sessions in scope have no `started_at`. The series places a
+#: session by its start day, so those sessions are missing from it, and an
+#: empty series must not read as "no activity".
+UNDATED_SESSIONS_WARNING = (
+    "{undated} session(s) sur {total} sans date de début, absente(s) de cette série : "
+    "ni la source ni les appels de ces sessions ne portent d'horodatage mappé."
+)
+
+
 def _coverage(coverage: Coverage) -> CoverageOut:
     return CoverageOut(present=coverage.present, total=coverage.total, ratio=coverage.ratio)
 
@@ -105,8 +114,14 @@ async def activity(
     queries: DashboardQueriesDep, filters: FiltersDep
 ) -> PointsOut[ActivityPointOut]:
     points = await queries.activity(filters)
+    # Same filters, so the only sessions of the overview missing from the
+    # series are the undated ones.
+    total = (await queries.overview(filters)).session_count
+    undated = total - sum(p.session_count for p in points)
+    warnings = [UNDATED_SESSIONS_WARNING.format(undated=undated, total=total)] if undated else []
     return PointsOut[ActivityPointOut](
         filters_applied=filters.as_drill_down(),
+        warnings=warnings,
         points=[
             ActivityPointOut(
                 day=p.day.isoformat(),

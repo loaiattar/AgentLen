@@ -238,7 +238,7 @@ Pour chaque enregistrement source, le moteur :
 2. persiste le `raw_record` (payload intact + hash) ;
 3. pour chaque entité : résout `iterate` s'il existe (§2.1 ; un `iterate` qui ne désigne pas une liste produit `ITERATE_NOT_A_LIST`), puis pour chaque champ applique les opérateurs **dans l'ordre déclaré** ;
 4. sur échec : produit un `ImportIssue` avec code, chemin et message ; l'entité est rejetée, mais **le reste de l'enregistrement continue d'être traité** (un import partiel expliqué vaut mieux qu'un échec global) ;
-5. calcule la clé naturelle, insère avec `ON CONFLICT DO NOTHING` ;
+5. calcule la clé naturelle, insère avec `ON CONFLICT DO NOTHING`, puis donne à chaque session du lot restée sans `started_at` le `started_at` le plus ancien de ses appels stockés. Une date mappée n'est jamais remplacée, et une session sans appel daté reste sans date. Une source qui ne date que ses appels (le seed mappe `$.emitted_at` des outils TraceLab) se date donc en mappant le `started_at` des appels. La date déduite est fixée au premier lot qui en fournit une : un appel plus ancien arrivé ensuite ne la recule pas ;
 6. incrémente les compteurs du bilan.
 
 Le moteur est **pur** : il prend un mapping et un dictionnaire, il rend des entités ou des issues. Aucune I/O, aucune base, aucun réseau — donc entièrement testable unitairement, comme l'exige le sujet.
