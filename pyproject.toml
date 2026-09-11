@@ -76,10 +76,6 @@ strict = true
 exclude = ["tests/", "alembic/"]
 
 [[tool.mypy.overrides]]
-module = "agentlen.infrastructure.files.*"
-ignore_errors = true
-
-[[tool.mypy.overrides]]
 # RE2 ships no py.typed marker. The wrapper functions in the sanitizer are
 # annotated, so the untyped surface stops at the import.
 module = "re2"
