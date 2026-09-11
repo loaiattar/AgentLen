@@ -13,7 +13,7 @@ enforced wherever a database exists.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
@@ -24,6 +24,7 @@ from agentlen.application.dto.persistence import ModelCallRow, SessionRow
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
 from agentlen.domain.model.model_call import ModelCall, TokenUsage
 from agentlen.domain.model.session import Session
+from agentlen.domain.services.session_tokens import session_token_digest
 from agentlen.infrastructure.persistence.engine import to_async_url
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tests.fakes.repositories import InMemoryUnitOfWork
@@ -942,3 +943,68 @@ async def test_messages_of_one_proposal_do_not_leak_into_another(uow: Any) -> No
     assert [m["content"] for m in for_first] == ["pour la première"]
     assert [m["content"] for m in for_second] == ["pour la seconde"]
     assert [m["turn_index"] for m in for_second] == [0], "turn_index is per proposal"
+
+
+# ---------------------------------------------------------------------------
+# User sessions (#151): looked up by digest, expired ones invisible and purged
+# ---------------------------------------------------------------------------
+
+NOW = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+
+
+async def test_a_session_is_found_by_its_digest_until_it_expires(uow: Any) -> None:
+    digest = session_token_digest("the-token")
+    async with uow:
+        user = await uow.users.create(email="alice@example.com", password_hash="h")
+        await uow.user_sessions.create(
+            user_id=user.id, token_hash=digest, expires_at=NOW + timedelta(hours=1)
+        )
+        await uow.commit()
+
+    async with uow:
+        active = await uow.user_sessions.get_active_by_token_hash(digest, now=NOW)
+        at_expiry = await uow.user_sessions.get_active_by_token_hash(
+            digest, now=NOW + timedelta(hours=1)
+        )
+        unknown = await uow.user_sessions.get_active_by_token_hash(
+            session_token_digest("never-issued"), now=NOW
+        )
+        await uow.user_sessions.delete_by_token_hash(session_token_digest("never-issued"))
+
+    assert active is not None
+    assert (active.user_id, active.token_hash) == (user.id, digest)
+    assert at_expiry is None
+    assert unknown is None
+
+
+async def test_purging_removes_only_expired_sessions(uow: Any) -> None:
+    expiries = {
+        "expired": NOW - timedelta(seconds=1),
+        "expires-now": NOW,
+        "active": NOW + timedelta(days=1),
+        "never-expires": None,
+    }
+    async with uow:
+        user = await uow.users.create(email="alice@example.com", password_hash="h")
+        for name, expires_at in expiries.items():
+            await uow.user_sessions.create(
+                user_id=user.id, token_hash=session_token_digest(name), expires_at=expires_at
+            )
+        await uow.commit()
+
+    async with uow:
+        removed = await uow.user_sessions.delete_expired(now=NOW)
+        await uow.commit()
+
+    long_ago = NOW - timedelta(days=365)
+    async with uow:
+        remaining = {
+            name
+            for name in expiries
+            if await uow.user_sessions.get_active_by_token_hash(
+                session_token_digest(name), now=long_ago
+            )
+        }
+
+    assert removed == 2
+    assert remaining == {"active", "never-expires"}

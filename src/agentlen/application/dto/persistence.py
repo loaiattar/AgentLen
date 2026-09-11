@@ -146,9 +146,10 @@ class UserRecord:
 
 @dataclass(frozen=True)
 class UserSessionRecord:
-    """One active login — the bearer token a client presents after `/auth/login`."""
+    """One active login, keyed by the SHA-256 of the bearer token a client
+    presents after `/auth/login`. The token itself is never stored."""
 
-    token: str
+    token_hash: str
     user_id: int
     created_at: datetime | None = None
     expires_at: datetime | None = None

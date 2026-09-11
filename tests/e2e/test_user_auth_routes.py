@@ -8,13 +8,18 @@ top of it.
 
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from agentlen.infrastructure.security.bcrypt_hasher import BcryptPasswordHasher
 from agentlen.interfaces.http.app import create_app
-from tests.e2e.conftest import UNREACHABLE_URL
+from agentlen.interfaces.http.dependencies import get_clock, get_password_hasher
+from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 from tests.integration.conftest import requires_postgres
 
 
@@ -53,6 +58,7 @@ async def test_register_rejects_a_duplicate_email(live_client: AsyncClient) -> N
 
     assert second.status_code == 409
     assert second.json()["error"]["code"] == "CONFLICT"
+    assert "dup@example.com" not in second.text, "the error must not echo the address"
 
 
 @requires_postgres
@@ -156,6 +162,76 @@ async def test_logout_invalidates_the_token(live_client: AsyncClient) -> None:
 
     after_logout = await live_client.get("/api/v1/auth/me", headers=auth_header)
     assert after_logout.status_code == 401
+
+
+@requires_postgres
+async def test_session_token_is_stored_only_as_its_sha256(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    credentials = {"email": "digest@example.com", "password": "a-strong-passphrase"}
+    await _register(live_client, **credentials)
+    token = (await live_client.post("/api/v1/auth/login", json=credentials)).json()["token"]
+
+    async with live_engine.connect() as conn:
+        stored = (await conn.execute(text("SELECT token_hash FROM user_session"))).scalars().all()
+
+    assert stored == [hashlib.sha256(token.encode("utf-8")).hexdigest()]
+
+
+class _MovableClock:
+    def __init__(self, now: datetime) -> None:
+        self.current = now
+
+    def now(self) -> datetime:
+        return self.current
+
+
+@requires_postgres
+async def test_expired_session_is_refused_then_purged_by_the_next_login(
+    live_engine: AsyncEngine,
+) -> None:
+    clock = _MovableClock(datetime(2026, 9, 11, 12, 0, tzinfo=UTC))
+    app = create_app(engine=live_engine)
+    app.dependency_overrides[get_clock] = lambda: clock
+    credentials = {"email": "expiry@example.com", "password": "a-strong-passphrase"}
+
+    async with asgi_client(app) as client:
+        await _register(client, **credentials)
+        old = (await client.post("/api/v1/auth/login", json=credentials)).json()["token"]
+        clock.current += timedelta(days=31)
+        refused = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {old}"})
+        await client.post("/api/v1/auth/login", json=credentials)
+
+    async with live_engine.connect() as conn:
+        sessions = (await conn.execute(text("SELECT count(*) FROM user_session"))).scalar_one()
+
+    assert refused.status_code == 401
+    assert sessions == 1, "the expired session must be purged, only the new one left"
+
+
+class _SpyHasher(BcryptPasswordHasher):
+    def __init__(self) -> None:
+        self.verified: list[str | None] = []
+
+    async def verify(self, password: str, password_hash: str | None) -> bool:
+        self.verified.append(password_hash)
+        return await super().verify(password, password_hash)
+
+
+@requires_postgres
+async def test_login_for_an_unknown_account_still_runs_bcrypt(live_engine: AsyncEngine) -> None:
+    spy = _SpyHasher()
+    app = create_app(engine=live_engine)
+    app.dependency_overrides[get_password_hasher] = lambda: spy
+
+    async with asgi_client(app) as client:
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "ghost@example.com", "password": "whatever-password"},
+        )
+
+    assert response.status_code == 401
+    assert spy.verified == [None], "the dummy-hash verification must run"
 
 
 async def test_register_missing_password_is_a_400_not_a_500(client: AsyncClient) -> None:
