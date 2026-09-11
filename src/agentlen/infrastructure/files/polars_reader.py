@@ -13,6 +13,11 @@ import polars as pl
 # scan_parquet has no such parameter: Parquet carries its real schema.
 INFER_SCHEMA_LENGTH: int | None = None
 
+#: Rows a preview infers its schema from. A preview reads a few hundred records
+#: at most, and whole-file inference made even a one-row preview of a large CSV
+#: scan every line, synchronously, before showing anything.
+PREVIEW_INFER_SCHEMA_LENGTH = 1_000
+
 
 def read_jsonl(
     path: str | Path, *, infer_schema_length: int | None = INFER_SCHEMA_LENGTH
@@ -41,6 +46,23 @@ def scan_file(
     if format == "parquet":
         return read_parquet(path)
     raise ValueError(f"Unsupported format: {format!r}. Expected one of csv, jsonl, parquet.")
+
+
+def read_head(path: str | Path, format: str, limit: int) -> pl.LazyFrame:
+    """The first `limit` records, with the schema inferred from the first rows.
+
+    For previews only. The import keeps whole-file inference, so a column whose
+    type changes further down may be read wider there than the preview shows.
+    Polars parses past `limit` in blocks, so a type change just beyond the
+    window can still fail the read; whole-file inference is then used instead,
+    which reads the file once more but never fails where the import succeeds.
+    """
+    window = max(limit, PREVIEW_INFER_SCHEMA_LENGTH)
+    try:
+        frame = scan_file(path, format=format, infer_schema_length=window).head(limit).collect()
+    except pl.exceptions.ComputeError:
+        frame = scan_file(path, format=format).head(limit).collect()
+    return frame.lazy()
 
 
 def infer_format(path: str | Path) -> str:

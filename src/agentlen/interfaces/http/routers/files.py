@@ -6,10 +6,9 @@ profile the mapping agent can read — on top of `/data-sources`.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from typing import Any
 
-from fastapi import APIRouter, status
-from fastapi import UploadFile as HttpUploadFile
+from fastapi import APIRouter, Request, status
 
 from agentlen.application.errors import NotFoundError
 from agentlen.application.use_cases.profile_file import ProfileFile, ProfileFileCommand
@@ -19,17 +18,26 @@ from agentlen.domain.model.profile import FileProfile
 from agentlen.interfaces.http.dependencies import FileProfilerDep, FileStorageDep, UnitOfWorkDep
 from agentlen.interfaces.http.ids import EntityId
 from agentlen.interfaces.http.schemas.files import FieldProfileOut, FileProfileOut, FileUploadOut
+from agentlen.interfaces.http.upload_stream import read_file_part
 
 router = APIRouter(prefix="/files", tags=["files"])
 
-#: Matches LocalFileStorage's own read granularity — no reason for the two
-#: layers to disagree on how much of the upload sits in memory at once.
-_CHUNK_SIZE = 1024 * 1024
-
-
-async def _chunks(upload: HttpUploadFile) -> AsyncIterator[bytes]:
-    while chunk := await upload.read(_CHUNK_SIZE):
-        yield chunk
+#: The body is read by hand (see `create_file`), so FastAPI no longer derives
+#: it from a parameter: it is declared here for the OpenAPI document.
+_UPLOAD_BODY: dict[str, Any] = {
+    "requestBody": {
+        "required": True,
+        "content": {
+            "multipart/form-data": {
+                "schema": {
+                    "type": "object",
+                    "required": ["file"],
+                    "properties": {"file": {"type": "string", "format": "binary"}},
+                }
+            }
+        },
+    }
+}
 
 
 def _to_upload_out(result: UploadResult) -> FileUploadOut:
@@ -69,12 +77,17 @@ def _to_profile_out(profile: FileProfile) -> FileProfileOut:
     response_model=FileUploadOut,
     status_code=status.HTTP_201_CREATED,
     summary="Deposit a file (multipart/form-data)",
+    openapi_extra=_UPLOAD_BODY,
 )
 async def create_file(
-    file: HttpUploadFile, storage: FileStorageDep, uow: UnitOfWorkDep
+    request: Request, storage: FileStorageDep, uow: UnitOfWorkDep
 ) -> FileUploadOut:
+    # Not an `UploadFile` parameter: FastAPI only calls the route once the whole
+    # body sits in a temporary file, so an oversized upload would already be on
+    # disk when refused. The body is streamed straight into the storage instead.
+    original_name, chunks = await read_file_part(request, max_bytes=storage.max_bytes)
     use_case = UploadFileUseCase(storage, uow)
-    result = await use_case.execute(_chunks(file), original_name=file.filename or "upload")
+    result = await use_case.execute(chunks, original_name=original_name or "upload")
     return _to_upload_out(result)
 
 

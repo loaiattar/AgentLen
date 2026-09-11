@@ -108,6 +108,12 @@ puis afficher un indicateur de couverture partielle lorsque `ratio` est non
 
 `already_seen: true` signale que le même contenu a déjà été déposé — le front doit avertir l'utilisateur avant de relancer un import.
 
+Refus :
+
+- `422 FILE_TOO_LARGE` au-delà de `MAX_UPLOAD_SIZE_MB` (512 Mo par défaut). Le corps est lu au fil de l'envoi : il est refusé avant toute lecture si `Content-Length` annonce plus que la limite, sinon dès que le flux la dépasse. Aucun fichier partiel ne reste sur le disque.
+- `422 UNSUPPORTED_FILE_FORMAT` : extension non autorisée ou contenu qui ne correspond à aucun format reconnu.
+- `400 MALFORMED_REQUEST` : corps qui n'est pas du `multipart/form-data` ou sans champ `file`.
+
 **`POST /files/{id}/profile` → `200`**
 
 ```json

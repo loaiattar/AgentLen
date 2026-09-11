@@ -42,6 +42,15 @@ class FileTooLargeError(FileStorageError):
 
 
 class FileStorage(Protocol):
+    @property
+    def max_bytes(self) -> int:
+        """The largest file `store` accepts.
+
+        Exposed so a caller holding a declared size (an HTTP `Content-Length`)
+        can refuse the upload before reading a single byte of it.
+        """
+        ...
+
     async def store(self, chunks: AsyncIterator[bytes], *, original_name: str) -> StoredFile:
         """Consume the stream, write it, and describe what was written.
 
