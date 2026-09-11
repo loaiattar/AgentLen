@@ -181,3 +181,28 @@ async def test_unknown_proposal_is_404(ai_client):
     response = await client.get("mappings/proposals/999999")
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+@requires_postgres
+async def test_malformed_proposal_patch_is_422(ai_client):
+    client, _, file_id, _, _ = ai_client
+    created = await client.post("mappings/proposals", json={"file_id": file_id})
+
+    response = await client.patch(
+        f"mappings/proposals/{created.json()['proposal_id']}",
+        json={"name": "bad", "source_format": "jsonl", "entities": [{}]},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "MAPPING_INVALID"
+
+
+@requires_postgres
+async def test_proposal_hint_is_bounded(ai_client):
+    client, _, file_id, _, _ = ai_client
+
+    response = await client.post(
+        "mappings/proposals", json={"file_id": file_id, "hint": "x" * 10_001}
+    )
+
+    assert response.status_code == 422

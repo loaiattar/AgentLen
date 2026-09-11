@@ -21,6 +21,7 @@ import pytest
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.dto.persistence import ModelCallRow, SessionRow
+from agentlen.application.errors import ConflictError
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping, MappingProposal
 from agentlen.domain.model.model_call import ModelCall, TokenUsage
 from agentlen.domain.model.session import Session
@@ -668,6 +669,14 @@ async def test_get_by_id_returns_none_for_an_unknown_mapping(uow: Any) -> None:
         record = await uow.mappings.get_by_id(999999)
 
     assert record is None
+
+
+async def test_mapping_name_and_version_are_unique_per_data_source(uow: Any) -> None:
+    async with uow:
+        source_id = await uow.data_sources.create(slug="unique-mapping", name="Unique mapping")
+        await uow.mappings.save(_mapping(), data_source_id=source_id)
+        with pytest.raises(ConflictError):
+            await uow.mappings.save(_mapping(), data_source_id=source_id)
 
 
 async def test_list_records_is_filterable_by_data_source_and_paginated(uow: Any) -> None:

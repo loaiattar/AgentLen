@@ -97,6 +97,10 @@ class ProposeMapping:
     ) -> StoredProposal:
         async with self._uow as uow:
             stored_file = await uow.file_uploads.get_by_id(file_id)
+            if data_source_id is not None:
+                stored_source = await uow.data_sources.get_by_id(data_source_id)
+                if stored_source is None:
+                    raise NotFoundError("DataSource", data_source_id)
         if stored_file is None:
             raise NotFoundError("File", file_id)
         profile = await ProfileFile(self._profiler).execute(
@@ -121,6 +125,11 @@ class ProposeMapping:
             # 500 where the caller should see a 404.
             if await uow.file_uploads.get_by_id(file_id) is None:
                 raise NotFoundError("File", file_id)
+            if (
+                data_source_id is not None
+                and await uow.data_sources.get_by_id(data_source_id) is None
+            ):
+                raise NotFoundError("DataSource", data_source_id)
             proposal_id = await uow.mapping_proposals.save(
                 proposal, file_upload_id=file_id, data_source_id=data_source_id
             )

@@ -360,6 +360,20 @@ class InMemoryMappingRepository:
         return found[0] if found else None
 
     async def save(self, mapping: Mapping, *, data_source_id: int) -> int:
+        if any(
+            stored_source == data_source_id
+            and stored_mapping.name == mapping.name
+            and stored_mapping.version == mapping.version
+            for stored_mapping, stored_source, _status, _created_at in self._s.mappings.values()
+        ):
+            raise ConflictError(
+                "Un mapping avec ce nom et cette version existe déjà.",
+                details={
+                    "data_source_id": data_source_id,
+                    "name": mapping.name,
+                    "version": mapping.version,
+                },
+            )
         new_id = self._s.ids.take()
         self._s.mappings[new_id] = (mapping, data_source_id, "active", datetime.now(UTC))
         return new_id
@@ -376,6 +390,15 @@ class InMemoryMappingRepository:
         if found is None:
             return None
         return self._to_row(mapping_id, found)
+
+    async def get_by_id_for_update(self, mapping_id: int) -> dict[str, Any] | None:
+        return await self.get_by_id(mapping_id)
+
+    async def name_exists(self, *, data_source_id: int, name: str) -> bool:
+        return any(
+            source == data_source_id and mapping.name == name
+            for mapping, source, _status, _created_at in self._s.mappings.values()
+        )
 
     async def list_records(
         self,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 
 from httpx import AsyncClient
@@ -46,6 +47,16 @@ async def test_validate_accepts_a_correct_document(client: AsyncClient) -> None:
     body = response.json()
     assert body["valid"] is True
     assert body["errors"] == []
+
+
+async def test_unknown_source_format_is_422(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/mappings/validate", json={**VALID_DOCUMENT, "source_format": "xml"}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "MAPPING_INVALID"
+    assert response.json()["error"]["field_path"] == "body.source_format"
 
 
 async def test_validate_flags_an_operator_outside_the_whitelist(client: AsyncClient) -> None:
@@ -299,6 +310,30 @@ async def test_a_second_put_on_the_same_version_is_409_not_500(live_client: Asyn
     assert again.status_code == 409
     assert again.json()["error"]["code"] == "CONFLICT"
     assert again.json()["error"]["details"]["latest_version"] == 2
+
+
+@requires_postgres
+async def test_two_concurrent_puts_create_only_one_next_version(
+    live_client: AsyncClient,
+) -> None:
+    source_id = await _seed_data_source(live_client, slug="concurrent-put")
+    created = await live_client.post(
+        "/api/v1/mappings",
+        json={"data_source_id": source_id, "name": "concurrent-put", **VALID_DOCUMENT},
+    )
+    first_id = created.json()["id"]
+
+    responses = await asyncio.gather(
+        live_client.put(f"/api/v1/mappings/{first_id}", json=VALID_DOCUMENT),
+        live_client.put(f"/api/v1/mappings/{first_id}", json=VALID_DOCUMENT),
+    )
+
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    listed = await live_client.get(f"/api/v1/mappings?data_source_id={source_id}&limit=50&offset=0")
+    assert [(item["version"], item["status"]) for item in listed.json()["items"]] == [
+        (2, "active"),
+        (1, "superseded"),
+    ]
 
 
 @requires_postgres

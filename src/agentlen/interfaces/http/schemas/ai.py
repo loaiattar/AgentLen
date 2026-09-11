@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, Field
+
+from agentlen.interfaces.http.schemas.mappings import EntityMappingIn, SourceFormat
 
 
 class ProposalRequest(BaseModel):
@@ -10,7 +12,7 @@ class ProposalRequest(BaseModel):
     data_source_id: int | None = None
     provider: str | None = None
     model: str | None = None
-    hint: str | None = None
+    hint: str | None = Field(default=None, max_length=10_000)
 
 
 class ProposalMessageRequest(BaseModel):
@@ -19,8 +21,8 @@ class ProposalMessageRequest(BaseModel):
 
 class ProposalPatchRequest(BaseModel):
     name: str
-    source_format: Literal["jsonl", "csv", "parquet"]
-    entities: list[dict[str, Any]]
+    source_format: SourceFormat
+    entities: list[EntityMappingIn]
     mapping_version: str = "1.0"
 
 

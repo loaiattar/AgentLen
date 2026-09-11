@@ -46,19 +46,30 @@ class SaveMapping:
                     or await uow.data_sources.get_by_id(data_source_id) is None
                 ):
                     raise NotFoundError("DataSource", data_source_id)
-                existing = await uow.mappings.list_records(
-                    data_source_id=data_source_id, limit=1000, offset=0
-                )
-                if any(row["name"] == mapping.name for row in existing):
+                if await uow.mappings.name_exists(data_source_id=data_source_id, name=mapping.name):
                     raise ConflictError(
                         f"Un mapping nommé '{mapping.name}' existe déjà pour cette source.",
                         details={"name": mapping.name, "data_source_id": data_source_id},
                     )
                 mapping_id = await uow.mappings.save(mapping, data_source_id=data_source_id)
             else:
-                current = await uow.mappings.get_by_id(previous_mapping_id)
+                current = await uow.mappings.get_by_id_for_update(previous_mapping_id)
                 if current is None:
                     raise NotFoundError("Mapping", previous_mapping_id)
+                if current["status"] != "active":
+                    latest = await uow.mappings.latest_version(
+                        data_source_id=int(current["data_source_id"]), name=str(current["name"])
+                    )
+                    raise ConflictError(
+                        "Seul un mapping actif peut être versionné.",
+                        details={
+                            "mapping_id": previous_mapping_id,
+                            "status": current["status"],
+                            "name": current["name"],
+                            "version": current["version"],
+                            "latest_version": latest,
+                        },
+                    )
                 current_data_source_id = int(current["data_source_id"])
                 if data_source_id is not None and data_source_id != current_data_source_id:
                     raise ConflictError(
@@ -80,19 +91,6 @@ class SaveMapping:
                 # rebased onto the newest one: the caller was editing a document
                 # that someone has since replaced, and silently versioning it
                 # would overwrite that work without anyone noticing.
-                latest = await uow.mappings.latest_version(
-                    data_source_id=current_data_source_id, name=name
-                )
-                if latest is not None and latest != current_version:
-                    raise ConflictError(
-                        f"La version {current_version} de '{name}' a déjà été remplacée "
-                        f"par la version {latest}.",
-                        details={
-                            "name": name,
-                            "version": current_version,
-                            "latest_version": latest,
-                        },
-                    )
                 next_mapping = replace(
                     mapping,
                     name=name,

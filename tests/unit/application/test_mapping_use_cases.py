@@ -65,8 +65,10 @@ class RecordingFakeAnalyzer(FakeAnalyzer):
         self.proposal = proposal
         self.profile_seen: FileProfile | None = None
         self.history_seen: tuple[dict[str, str | int], ...] = ()
+        self.calls = 0
 
     async def run_agent_loop(self, profile, tool_executor, hint=None):
+        self.calls += 1
         self.profile_seen = profile
         if self.proposal is not None:
             return self.proposal
@@ -116,6 +118,20 @@ async def test_fake_analyzer_profile_is_sanitized_and_descriptor_persisted() -> 
     mapping_id = await SaveMapping(uow).execute(result.proposal.mapping, data_source_id=source_id)
     async with uow as transaction:
         assert await transaction.mappings.get(mapping_id) == result.proposal.mapping
+
+
+async def test_unknown_data_source_is_rejected_before_the_analyzer_call() -> None:
+    uow = InMemoryUnitOfWork()
+    file_id = await stored_file(uow)
+    analyzer = RecordingFakeAnalyzer()
+
+    with pytest.raises(NotFoundError) as caught:
+        await ProposeMapping(uow, analyzer, FakeProfiler(), ProfileExampleSanitizer()).execute(
+            file_id=file_id, data_source_id=999999
+        )
+
+    assert caught.value.details == {"resource": "DataSource", "id": "999999"}
+    assert analyzer.calls == 0
 
 
 async def test_invalid_proposal_is_returned_with_localized_errors() -> None:

@@ -134,6 +134,14 @@ class MappingRepository(Protocol):
         `Mapping` carries."""
         ...
 
+    async def get_by_id_for_update(self, mapping_id: int) -> dict[str, Any] | None:
+        """Fetch and lock one version until the current transaction ends."""
+        ...
+
+    async def name_exists(self, *, data_source_id: int, name: str) -> bool:
+        """Whether any version already uses this source-local name."""
+        ...
+
     async def list_records(
         self,
         *,

@@ -510,6 +510,18 @@ class SqlAlchemyMappingRepository(_Base):
         )
         return dict(row) if row else None
 
+    async def get_by_id_for_update(self, mapping_id: int) -> dict[str, Any] | None:
+        query = select(t.mapping).where(t.mapping.c.id == mapping_id).with_for_update()
+        row = (await self._conn.execute(query)).mappings().one_or_none()
+        return dict(row) if row else None
+
+    async def name_exists(self, *, data_source_id: int, name: str) -> bool:
+        query = select(t.mapping.c.id).where(
+            t.mapping.c.data_source_id == data_source_id,
+            t.mapping.c.name == name,
+        )
+        return (await self._conn.execute(query.limit(1))).scalar_one_or_none() is not None
+
     async def list_records(
         self,
         *,
@@ -586,7 +598,17 @@ class SqlAlchemyMappingRepository(_Base):
             )
             .returning(t.mapping.c.id)
         )
-        return int((await self._conn.execute(statement)).scalar_one())
+        try:
+            return int((await self._conn.execute(statement)).scalar_one())
+        except IntegrityError as exc:
+            raise ConflictError(
+                "Un mapping avec ce nom et cette version existe déjà.",
+                details={
+                    "data_source_id": data_source_id,
+                    "name": mapping.name,
+                    "version": mapping.version,
+                },
+            ) from exc
 
     async def list(self, *, data_source_id: int | None = None) -> list[Mapping]:
         from agentlen.infrastructure.persistence.repositories.mapping_codec import (

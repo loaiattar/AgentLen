@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -23,11 +23,14 @@ class EntityMappingIn(BaseModel):
     parent: dict[str, Any] | None = None
 
 
+SourceFormat = Literal["jsonl", "csv", "parquet"]
+
+
 class MappingDocumentIn(BaseModel):
     """The document itself, MAPPING_CONTRACT.md §2 — minus the storage metadata
     (id, version, status) the repository owns."""
 
-    source_format: str = Field(examples=["jsonl"])
+    source_format: SourceFormat = Field(examples=["jsonl"])
     entities: list[EntityMappingIn]
 
 

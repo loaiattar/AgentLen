@@ -124,18 +124,22 @@ async def _file_storage(_: Request, exc: Exception) -> JSONResponse:
     return error_response(HTTP_422_UNPROCESSABLE, exc.code, str(exc))
 
 
-async def _request_validation(_: Request, exc: Exception) -> JSONResponse:
-    """FastAPI rejected the request before it reached a use case. -> 400
+async def _request_validation(request: Request, exc: Exception) -> JSONResponse:
+    """FastAPI rejected the request before it reached a use case. -> 400/422
 
-    422 is FastAPI's default here, but API.md reserves 422 for *business*
-    validation. A malformed query string is a malformed request: 400.
+    Mapping documents are user-editable business documents, so their typed
+    body errors are 422 as required by the mapping API. Other malformed input,
+    including query strings, remains 400.
     """
     assert isinstance(exc, RequestValidationError)
     first = exc.errors()[0] if exc.errors() else {}
     location = ".".join(str(part) for part in first.get("loc", ()))
+    mapping_body = "body" in first.get("loc", ()) and request.url.path.startswith(
+        "/api/v1/mappings"
+    )
     return error_response(
-        status.HTTP_400_BAD_REQUEST,
-        "MALFORMED_REQUEST",
+        HTTP_422_UNPROCESSABLE if mapping_body else status.HTTP_400_BAD_REQUEST,
+        "MAPPING_INVALID" if mapping_body else "MALFORMED_REQUEST",
         first.get("msg", "La requête est malformée."),
         field_path=location or None,
         details={"errors": len(exc.errors())},
