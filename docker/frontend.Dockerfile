@@ -2,12 +2,13 @@
 #
 # The web interface, compiled once and served as static files.
 #
-# `build` compiles the SPA with the same Node major as CI. `runtime` ships only
+# `build` compiles the SPA with the Node major of frontend/.nvmrc, as CI does
+# (its `images` job fails if the two differ). `runtime` ships only
 # the compiled assets behind an unprivileged nginx, which also proxies `/api`
 # to the `api` service: the browser talks to a single origin, so no CORS
 # configuration is involved.
 
-FROM node:20-alpine AS build
+FROM node:22-alpine AS build
 
 WORKDIR /app
 

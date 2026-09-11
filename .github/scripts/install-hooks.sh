@@ -2,18 +2,18 @@
 # =============================================================================
 # install-hooks.sh
 #
-# One-time setup for every collaborator.
-# Registers git-push.sh as the local git `push` alias so that
-# `git push` automatically streams CI after every push.
+# One-time setup for every collaborator: checks the GitHub CLI that
+# `make push`, `make ci` and `make ci-watch` rely on.
+#
+# It used to register git-push.sh as a local `push` alias. Git never runs an
+# alias that has the name of a built-in command, so that alias did nothing;
+# it is removed here where an earlier `make setup` left it.
 #
 # Usage (run once after cloning):
-#   bash .github/scripts/install-hooks.sh
+#   make setup
 # =============================================================================
 
 set -euo pipefail
-
-REPO_ROOT=$(git rev-parse --show-toplevel)
-WRAPPER="${REPO_ROOT}/.github/scripts/git-push.sh"
 
 # ── Sanity checks ─────────────────────────────────────────────────────────────
 if ! command -v gh &>/dev/null; then
@@ -30,17 +30,13 @@ if ! gh auth status &>/dev/null; then
   exit 1
 fi
 
-# ── Make the wrapper executable ───────────────────────────────────────────────
-chmod +x "$WRAPPER"
-
-# ── Register as the local git push alias ─────────────────────────────────────
-# Uses --local so it only affects this repo, not the user's global git config.
-git config --local alias.push "!bash ${WRAPPER}"
+# ── Remove the alias git always ignored ──────────────────────────────────────
+if git config --local --get alias.push &>/dev/null; then
+  git config --local --unset alias.push
+  echo "  Removed the old \`push\` alias (git never used it)."
+fi
 
 echo ""
-echo "  ✅ Done. From now on, \`git push\` in this repo will:"
-echo "     1. Push your branch to GitHub"
-echo "     2. Automatically stream the CI pipeline in your terminal"
-echo ""
-echo "  To uninstall: git config --local --unset alias.push"
+echo "  ✅ Done. Push with \`make push\` to push your branch and stream its CI run"
+echo "     in your terminal. \`git push\` stays plain git."
 echo ""
