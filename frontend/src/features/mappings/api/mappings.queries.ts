@@ -53,6 +53,11 @@ export function useCreateMappingMutation() {
     mutationFn: (body: MappingCreateRequest) => apiClient.post<Mapping>('/mappings', body),
     onSuccess: (mapping) => {
       queryClient.setQueryData(mappingKeys.detail(mapping.id), mapping)
+      queryClient.setQueryData(mappingKeys.list(mapping.data_source_id), (current: Mapping[] | undefined) => {
+        if (current == null) return [mapping]
+        if (current.some((item) => item.id === mapping.id)) return current
+        return [mapping, ...current]
+      })
       void queryClient.invalidateQueries({ queryKey: mappingKeys.all })
     },
   })

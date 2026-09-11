@@ -1,10 +1,10 @@
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { describeOperators, fieldConfidence } from '@/features/import-assistant/lib/mapping'
-import type { MappingDocument, ProposalRationale } from '@/features/import-assistant/types'
+import type { MappingProposalDocument, ProposalRationale } from '@/features/import-assistant/types'
 
 export interface MappingColumnProps {
-  mapping: MappingDocument
+  mapping: MappingProposalDocument
   rationale: ProposalRationale[]
   dirty: boolean
   saving: boolean

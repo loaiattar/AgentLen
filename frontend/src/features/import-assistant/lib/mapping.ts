@@ -37,12 +37,12 @@ export function fieldConfidence(
   return confidencePercent(match?.confidence)
 }
 
-export function updateFieldSource(
-  mapping: MappingDocument,
+export function updateFieldSource<T extends MappingDocument>(
+  mapping: T,
   entityTarget: string,
   fieldTarget: string,
   source: string,
-): MappingDocument {
+): T {
   return {
     ...mapping,
     entities: mapping.entities.map((entity) =>

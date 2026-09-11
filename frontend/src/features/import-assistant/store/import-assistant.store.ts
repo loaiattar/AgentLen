@@ -1,16 +1,16 @@
 import { create } from 'zustand'
 
-import type { ChatTurn, MappingDocument } from '@/features/import-assistant/types'
+import type { ChatTurn, MappingProposalDocument } from '@/features/import-assistant/types'
 
 interface AssistantDraftState {
   composer: string
   turns: ChatTurn[]
-  mappingDraft: MappingDocument | null
+  mappingDraft: MappingProposalDocument | null
   draftProposalId: number | null
   acceptedMappingId: number | null
   setComposer: (value: string) => void
   pushTurn: (turn: ChatTurn) => void
-  setMappingDraft: (proposalId: number, mapping: MappingDocument) => void
+  setMappingDraft: (proposalId: number, mapping: MappingProposalDocument) => void
   clearMappingDraft: () => void
   setAcceptedMappingId: (id: number | null) => void
   syncProposal: (proposalId: number | undefined) => void

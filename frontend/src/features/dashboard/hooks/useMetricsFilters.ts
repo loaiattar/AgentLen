@@ -18,7 +18,7 @@ export function useMetricsFilters() {
   const filters = searchToDashboardFilters(search)
 
   const patchSearch = (patch: (prev: MetricsSearch) => MetricsSearch) => {
-    void navigate({ search: patch })
+    void navigate({ to: '.', search: patch })
   }
 
   return {
@@ -30,6 +30,7 @@ export function useMetricsFilters() {
       patchSearch((prev) => {
         const next: MetricsSearch = { ...prev }
         delete next.offset
+        delete next.mapping_id
         if (dataSourceId == null) delete next.data_source_id
         else next.data_source_id = dataSourceId
         return next

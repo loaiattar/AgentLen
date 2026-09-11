@@ -23,6 +23,7 @@ export interface MetricsSearch {
   offset?: number
   file_id?: number
   proposal_id?: number
+  mapping_id?: number
 }
 
 /** Seed source from `make seed`. No `GET /data-sources` yet — do not invent others. */
@@ -62,6 +63,7 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   const importRunId = parseIntParam(search.import_run_id, { min: 1 })
   const fileId = parseIntParam(search.file_id, { min: 1 })
   const proposalId = parseIntParam(search.proposal_id, { min: 1 })
+  const mappingId = parseIntParam(search.mapping_id, { min: 1 })
   const limit = parseIntParam(search.limit, { min: 1, max: SESSION_PAGE_SIZE_MAX })
   const offset = parseIntParam(search.offset, { min: 0 })
 
@@ -72,6 +74,7 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   if (importRunId != null) parsed.import_run_id = importRunId
   if (fileId != null) parsed.file_id = fileId
   if (proposalId != null) parsed.proposal_id = proposalId
+  if (mappingId != null) parsed.mapping_id = mappingId
   if (typeof search.date_from === 'string' && search.date_from.length > 0) parsed.date_from = search.date_from
   if (typeof search.date_to === 'string' && search.date_to.length > 0) parsed.date_to = search.date_to
   if (typeof search.status === 'string' && SESSION_STATUSES.includes(search.status as SessionStatus)) {

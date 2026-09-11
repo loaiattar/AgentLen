@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react'
 import { useEffect } from 'react'
+import { Link } from '@tanstack/react-router'
 
 import { AiPanel } from '@/components/ui/AiPanel'
 import { Button } from '@/components/ui/Button'
@@ -9,32 +10,27 @@ import { GlassSkeleton } from '@/components/ui/Skeleton'
 import { Textarea } from '@/components/ui/Textarea'
 import {
   usePatchProposalMutation,
-  usePreviewImportMutation,
   useProposeMappingMutation,
   useRefineProposalMutation,
 } from '@/features/import-assistant/api/assistant.mutations'
-import {
-  useAiProvidersQuery,
-  useFileProfileQuery,
-  useFileQuery,
-  useProposalQuery,
-} from '@/features/import-assistant/api/assistant.queries'
+import { useAiProvidersQuery, useProposalQuery } from '@/features/import-assistant/api/assistant.queries'
 import { DatasetColumn } from '@/features/import-assistant/components/DatasetColumn'
 import { FilePicker } from '@/features/import-assistant/components/FilePicker'
 import { MappingColumn } from '@/features/import-assistant/components/MappingColumn'
-import { PreviewPanel } from '@/features/import-assistant/components/PreviewPanel'
 import { useAssistantSearch } from '@/features/import-assistant/hooks/useAssistantSearch'
 import { proposalInsights } from '@/features/import-assistant/lib/insights'
 import { describeProposalChange, updateFieldSource } from '@/features/import-assistant/lib/mapping'
 import { useImportAssistantStore } from '@/features/import-assistant/store/import-assistant.store'
-import { useCreateMappingMutation } from '@/features/mappings/api/mappings.mutations'
+import { useFileProfileQuery, useFileQuery, usePreviewImportMutation } from '@/features/imports/api/imports.queries'
+import { PreviewPanel } from '@/features/imports/components/PreviewPanel'
+import { useCreateMappingMutation } from '@/features/mappings/api/mappings.queries'
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
 export function ImportAssistantPage() {
-  const { fileId, proposalId, dataSourceId, setFileId, setProposalId } = useAssistantSearch()
+  const { fileId, proposalId, dataSourceId, setFileId, setProposalId, setMappingId } = useAssistantSearch()
   const syncProposal = useImportAssistantStore((state) => state.syncProposal)
   const composer = useImportAssistantStore((state) => state.composer)
   const turns = useImportAssistantStore((state) => state.turns)
@@ -117,12 +113,15 @@ export function ImportAssistantPage() {
     accept.mutate(
       {
         data_source_id: dataSourceId,
-        name: `${mapping.name}-p${proposalId}`,
+        name: `${mapping.name || 'mapping'}-p${proposalId}`,
         source_format: mapping.source_format,
         entities: mapping.entities,
       },
       {
-        onSuccess: (saved) => setAcceptedMappingId(saved.id),
+        onSuccess: (saved) => {
+          setAcceptedMappingId(saved.id)
+          setMappingId(saved.id)
+        },
       },
     )
   }
@@ -131,6 +130,14 @@ export function ImportAssistantPage() {
     if (fileId == null || acceptedMappingId == null) return
     preview.mutate({ file_id: fileId, mapping_id: acceptedMappingId, sample_size: 20 })
   }
+
+  const continueImport = (
+    <Button asChild>
+      <Link to="/imports/new" search={(prev) => prev}>
+        Continue import
+      </Link>
+    </Button>
+  )
 
   const headerAction = (() => {
     if (fileId == null) return null
@@ -143,9 +150,12 @@ export function ImportAssistantPage() {
     }
     if (acceptedMappingId != null) {
       return (
-        <Button type="button" variant="secondary" onClick={runPreview} loading={preview.isPending}>
-          Preview import
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {continueImport}
+          <Button type="button" variant="secondary" onClick={runPreview} loading={preview.isPending}>
+            Preview
+          </Button>
+        </div>
       )
     }
     return (
@@ -160,11 +170,22 @@ export function ImportAssistantPage() {
       <PageHeader
         kicker="Import assistant"
         title="Mapping studio"
-        description="The assistant proposes. You validate. The engine executes."
+        description="The assistant proposes. You validate. The import wizard applies."
         action={headerAction}
       />
 
       <FilePicker key={fileId ?? 'none'} fileId={fileId} fileName={file.data?.original_name} onSubmit={setFileId} />
+      {fileId != null ? (
+        <p className="mb-[var(--space-3)] text-secondary">
+          <Link
+            to="/imports/new"
+            search={(prev) => prev}
+            className="text-primary underline-offset-4 hover:underline"
+          >
+            Back to import
+          </Link>
+        </p>
+      ) : null}
 
       {providers.isError ? (
         <p role="status" className="mb-[var(--space-3)] text-body text-error">
@@ -180,7 +201,7 @@ export function ImportAssistantPage() {
       {fileId == null ? (
         <EmptyState
           title="Select a file"
-          description="The studio maps an already uploaded file. Enter its id — the seed TraceLab sample is 1. Uploading a new file is a separate import step."
+          description="Open this studio from New import, or enter an already uploaded file id. The seed TraceLab sample is 1."
         />
       ) : file.isError || profile.isError ? (
         <EmptyState
@@ -285,7 +306,7 @@ export function ImportAssistantPage() {
                 ) : null}
                 {acceptedMappingId != null ? (
                   <p className="text-secondary text-foreground-muted">
-                    Saved as mapping {acceptedMappingId}. Preview writes nothing.
+                    Saved as mapping {acceptedMappingId}. Continue the import to preview and launch.
                   </p>
                 ) : mappingDraft != null ? (
                   <p className="text-secondary text-foreground-muted">
@@ -293,7 +314,7 @@ export function ImportAssistantPage() {
                   </p>
                 ) : dataSourceId == null && proposal.data != null ? (
                   <p className="text-secondary text-foreground-muted">
-                    Pick a dataset in the top bar before accepting. The assistant does not apply a mapping on its own.
+                    Pick a data source in the import wizard or the top bar before accepting.
                   </p>
                 ) : null}
                 <form onSubmit={sendMessage} className="grid gap-2">

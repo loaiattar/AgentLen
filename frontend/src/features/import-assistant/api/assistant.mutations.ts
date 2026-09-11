@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 
 import { apiClient } from '@/lib/api/client'
 import { assistantKeys } from '@/features/import-assistant/api/assistant.keys'
-import type { ImportPreview, MappingDocument, ProposalResponse } from '@/features/import-assistant/types'
+import type { MappingProposalDocument, ProposalResponse } from '@/features/import-assistant/types'
 
 export function useProposeMappingMutation() {
   const queryClient = useQueryClient()
@@ -37,7 +37,7 @@ export function usePatchProposalMutation() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ proposalId, mapping }: { proposalId: number; mapping: MappingDocument }) =>
+    mutationFn: ({ proposalId, mapping }: { proposalId: number; mapping: MappingProposalDocument }) =>
       apiClient.patch<ProposalResponse>(`/mappings/proposals/${proposalId}`, {
         name: mapping.name,
         source_format: mapping.source_format as 'jsonl' | 'csv' | 'parquet',
@@ -47,12 +47,5 @@ export function usePatchProposalMutation() {
     onSuccess: (data) => {
       queryClient.setQueryData(assistantKeys.proposal(data.proposal_id), data)
     },
-  })
-}
-
-export function usePreviewImportMutation() {
-  return useMutation({
-    mutationFn: (body: { file_id: number; mapping_id: number; sample_size?: number }) =>
-      apiClient.post<ImportPreview>('/imports/preview', body),
   })
 }
