@@ -82,14 +82,18 @@ export function ImportWizardPage() {
         description="Upload a trace file, check what the mapping would produce, then import it."
         action={
           <Button variant="secondary" asChild>
-            <Link to="/imports">Import history</Link>
+            <Link to="/imports" search={(prev) => prev}>
+              Import history
+            </Link>
           </Button>
         }
       />
 
       <WizardSteps current={wizard.currentStep} />
 
-      {wizard.file === null ? (
+      {wizard.fileQuery.isLoading ? (
+        <GlassSkeleton className="h-40" />
+      ) : wizard.file === null ? (
         <FileDropzone
           onFileSelected={(file) => {
             void wizard.uploadFile(file)
@@ -109,26 +113,26 @@ export function ImportWizardPage() {
           onReplace={wizard.reset}
         />
       )}
-      <ErrorNote error={wizard.uploadMutation.error} />
+      <ErrorNote error={wizard.uploadMutation.error ?? wizard.fileQuery.error} />
 
       {wizard.file !== null ? (
         <Section
           title="Field profile"
           description="Types, null ratio and cardinality, computed by the backend on a bounded sample."
         >
-          {wizard.profileMutation.isPending ? (
+          {wizard.profileQuery.isLoading ? (
             <GlassSkeleton className="h-48" />
           ) : wizard.profile !== null ? (
             <ProfileTable profile={wizard.profile} />
           ) : (
             <div className="glass-surface rounded-xl p-6">
               <p className="text-body text-foreground">This file could not be profiled.</p>
-              <ErrorNote error={wizard.profileMutation.error} />
+              <ErrorNote error={wizard.profileQuery.error} />
               <Button
                 variant="secondary"
                 size="sm"
                 className="mt-4"
-                loading={wizard.profileMutation.isPending}
+                loading={wizard.profileQuery.isFetching}
                 onClick={() => {
                   void wizard.retryProfile()
                 }}

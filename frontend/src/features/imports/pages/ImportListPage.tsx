@@ -35,7 +35,9 @@ export function ImportListPage() {
 
   const startImport = (
     <Button asChild>
-      <Link to="/imports/new">Start import</Link>
+      <Link to="/imports/new" search={(prev) => prev}>
+        Start import
+      </Link>
     </Button>
   )
 
