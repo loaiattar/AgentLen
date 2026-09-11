@@ -32,7 +32,9 @@ from agentlen.application.dto.persistence import ModelCallRow, SessionRow, ToolC
 from agentlen.application.errors import MappingInvalidError, NotFoundError
 from agentlen.application.ports.file_reader import FileReader
 from agentlen.application.ports.unit_of_work import UnitOfWork
+from agentlen.application.use_cases.resolve_references import CacheKey, ResolveReferences
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
+from agentlen.domain.model.reference import ReferenceRequest
 from agentlen.domain.services import mapping_validator
 from agentlen.domain.services.record_normalizer import RecordNormalizer
 
@@ -139,7 +141,7 @@ class RunImport:
         # Referential ids are cached for the whole run: the same tool name
         # appears on most records, and resolving it once per row would be one
         # round trip per row.
-        reference_cache: dict[tuple[str, str, str], int] = {}
+        references = ResolveReferences(_CurrentReferentials(self._uow))
         line_number = 0
 
         for batch in self._reader.iter_batches(
@@ -156,7 +158,7 @@ class RunImport:
                     import_run_id=import_run_id,
                 ),
                 counters=counters,
-                reference_cache=reference_cache,
+                references=references,
             )
             all_issues.extend(batch_issues)
 
@@ -173,7 +175,7 @@ class RunImport:
         start_line: int,
         context: _RunContext,
         counters: _Counters,
-        reference_cache: dict[tuple[str, str, str], int],
+        references: ResolveReferences,
     ) -> list[ImportIssue]:
         counters.read += len(batch)
         issues: list[ImportIssue] = []
@@ -187,7 +189,7 @@ class RunImport:
             sessions: list[SessionRow] = []
             model_calls: list[tuple[ModelCallRow, str | None]] = []
             tool_calls: list[tuple[ToolCallRow, str]] = []
-            pending_references: set[tuple[str, str, str]] = set()
+            pending_references: list[ReferenceRequest] = []
             normalised: list[Any] = []
 
             for offset, record in enumerate(batch):
@@ -200,10 +202,9 @@ class RunImport:
                 )
                 normalised.append((line, result))
                 issues.extend(result.issues)
-                for request in result.reference_requests:
-                    pending_references.add((request.kind, request.name, _context_key(request)))
+                pending_references.extend(result.reference_requests)
 
-            resolved = await self._resolve(uow, pending_references, reference_cache)
+            resolved = await references.execute(pending_references)
 
             for line, result in normalised:
                 raw_id = raw_ids.get(line)
@@ -211,31 +212,26 @@ class RunImport:
                     # Line already stored by a previous attempt of this run.
                     continue
                 for session in result.sessions:
+                    agent_key = _reference_key("agent", session.agent_name)
                     sessions.append(
                         SessionRow(
                             entity=session,
                             import_run_id=context.import_run_id,
                             raw_record_id=raw_id,
-                            agent_id=resolved.get(("agent", session.agent_name or "", "")),
+                            agent_id=_resolved_id(resolved, agent_key, line, "warning", issues),
                         )
                     )
                     counters.note_missing("session", session)
                 for call in result.model_calls:
+                    model_key = _reference_key("model", call.model_name, call.provider_name)
+                    model_id = _resolved_id(resolved, model_key, line, "warning", issues)
                     model_calls.append(
-                        (
-                            ModelCallRow(
-                                entity=call,
-                                raw_record_id=raw_id,
-                                model_id=resolved.get(
-                                    ("model", call.model_name or "", _model_key(call))
-                                ),
-                            ),
-                            None,
-                        )
+                        (ModelCallRow(entity=call, raw_record_id=raw_id, model_id=model_id), None)
                     )
                     counters.note_missing("model_call", call)
                 for call in result.tool_calls:
-                    tool_id = resolved.get(("tool", call.tool_name, ""))
+                    tool_key = _reference_key("tool", call.tool_name)
+                    tool_id = _resolved_id(resolved, tool_key, line, "rejected", issues)
                     if tool_id is None:
                         continue
                     tool_calls.append(
@@ -312,28 +308,70 @@ class RunImport:
 
         return issues
 
-    async def _resolve(
-        self,
-        uow: UnitOfWork,
-        requests: set[tuple[str, str, str]],
-        cache: dict[tuple[str, str, str], int],
-    ) -> dict[tuple[str, str, str], int]:
-        for key in requests:
-            if key in cache:
-                continue
-            kind, name, marker = key
-            if not name:
-                continue
-            context = dict(part.split("=", 1) for part in marker.split(";") if "=" in part)
-            cache[key] = await uow.referentials.resolve(kind, name, context=context or None)
-        return cache
+
+class _CurrentReferentials:
+    """The referential repository of the transaction in progress.
+
+    `ResolveReferences` keeps its cache for the whole run, while each batch is
+    its own transaction and the unit of work hands out a new repository for it.
+    """
+
+    def __init__(self, uow: UnitOfWork) -> None:
+        self._uow = uow
+
+    async def resolve(self, kind: str, name: str, *, context: dict[str, str] | None = None) -> int:
+        return await self._uow.referentials.resolve(kind, name, context=context)
 
 
-def _context_key(request: Any) -> str:
-    context = dict(getattr(request, "context", ()) or ())
-    return ";".join(f"{k}={v}" for k, v in sorted(context.items()))
+# Where each resolved kind comes from in a mapping, for the issue's `field_path`.
+_REFERENCE_FIELDS = {
+    "agent": "entities[target=session].fields[target=agent_name]",
+    "model": "entities[target=model_call].fields[target=model_name]",
+    "tool": "entities[target=tool_call].fields[target=tool_name]",
+}
 
 
-def _model_key(call: Any) -> str:
-    provider = getattr(call, "provider_name", None)
-    return f"provider_name={provider}" if provider else ""
+def _reference_key(
+    kind: str, name: str | None, provider_name: str | None = None
+) -> CacheKey | None:
+    """The key RecordNormalizer gave its request for this name; `None` without a name.
+
+    A model's provider stays a tuple in the context, so a provider called
+    `a;b=c` is looked up whole instead of being re-split on `;` and `=`.
+    """
+    if name is None:
+        return None
+    return (kind, name, (("provider_name", provider_name),) if provider_name else ())
+
+
+def _resolved_id(
+    resolved: dict[CacheKey, int],
+    key: CacheKey | None,
+    line: int,
+    severity: str,
+    issues: list[ImportIssue],
+) -> int | None:
+    """The id of a named referential, or `None` with an issue saying why.
+
+    No name is no reference, and no issue. A name the normaliser did not ask to
+    resolve has no id: a tool call cannot be stored without one
+    (`severity="rejected"`), a session or a model call is stored without the
+    link (`"warning"`). Either way it is reported: this lookup used to drop the
+    tool call in silence (#141).
+    """
+    if key is None:
+        return None
+    found = resolved.get(key)
+    if found is None:
+        kind, name, _ = key
+        outcome = "appel non enregistré" if severity == "rejected" else "enregistré sans ce lien"
+        issues.append(
+            ImportIssue(
+                severity=severity,
+                code="REFERENCE_UNRESOLVED",
+                message=f"Référence {kind} « {name} » non résolue : {outcome}.",
+                field_path=_REFERENCE_FIELDS[kind],
+                line_number=line,
+            )
+        )
+    return found

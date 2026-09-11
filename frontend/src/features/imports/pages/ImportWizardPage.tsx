@@ -77,9 +77,7 @@ export function ImportWizardPage() {
   return (
     <div>
       <PageHeader
-        kicker="Imports"
         title="New import"
-        description="Upload a trace file, check what the mapping would produce, then import it."
         action={
           <Button variant="secondary" asChild>
             <Link to="/imports" search={(prev) => prev}>

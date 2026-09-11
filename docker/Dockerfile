@@ -16,7 +16,10 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir uv
+# Pinned: a new uv release must not change how the lock is read on some random
+# build. Same version as CI (`UV_VERSION` in .github/workflows/ci.yml), which
+# checks the two agree.
+RUN pip install --no-cache-dir uv==0.12.10
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \

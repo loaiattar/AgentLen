@@ -104,22 +104,25 @@ Run these **two commands once** after cloning the repo:
 gh auth login
 # Choose: GitHub.com → HTTPS → Login with a web browser
 
-# 2. Install the push hook (makes `git push` auto-stream CI)
+# 2. Check the setup (also removes the old `push` alias, which git never used)
 make setup
 ```
 
-After that, **`git push` does everything automatically**:
+Then push with **`make push`**: it pushes your branch and streams the CI run of
+the commit you just pushed. `git push` stays plain git — git ignores any alias
+named after one of its own commands, so no alias can change it.
 
 ```
-$ git push
+$ make push ARGS="-u origin HEAD"   # first push of a branch; later just `make push`
 
   Pushing branch 'my-feature' ...
 
-  Waiting for CI to start on 'my-feature' ...
+  Waiting for CI to start on commit 1a2b3c4 ...
   Streaming CI run #42 (Ctrl+C to detach) ...
-
-  ✔ Lint    ✔ Test    ✔ Build    ✔ CI Passed
 ```
+
+CI runs on pull requests and on `main`/`develop`: open the PR before pushing
+if you want a run to follow.
 
 ### Other useful commands
 
@@ -127,14 +130,8 @@ $ git push
 |---|---|
 | `make ci` | Show CI status for your current branch |
 | `make ci-watch` | Live-stream the latest run on your current branch |
-| `make push` | Same as `git push` (fallback if setup wasn’t run) |
+| `make push` | Push the current branch and stream the CI run of that commit |
 | `make ci-logs RUN=<id>` | Full logs for a specific run ID |
-
-### Uninstall the hook
-
-```bash
-git config --local --unset alias.push
-```
 
 ---
 

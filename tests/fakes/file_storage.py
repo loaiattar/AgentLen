@@ -25,6 +25,10 @@ class InMemoryFileStorage:
         self._max_bytes = max_bytes
         self.contents: dict[str, bytes] = {}
 
+    @property
+    def max_bytes(self) -> int:
+        return self._max_bytes
+
     async def store(self, chunks: AsyncIterator[bytes], *, original_name: str) -> StoredFile:
         suffix = Path(original_name).suffix.lower()
         if suffix not in ALLOWED_EXTENSIONS:

@@ -15,7 +15,7 @@ export function AppLayout() {
   const logout = useLogoutMutation()
   const aiProviders = useAiProvidersQuery()
   const readiness = useReadinessQuery()
-  const accountLabel = me.data?.email ? initialsFromEmail(me.data.email) : 'AS'
+  const accountLabel = me.data?.email ? initialsFromEmail(me.data.email) : 'AL'
 
   return (
     <Shell
