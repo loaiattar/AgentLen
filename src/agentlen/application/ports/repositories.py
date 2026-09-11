@@ -97,9 +97,19 @@ class ImportRunRepository(Protocol):
 
     async def count(self) -> int: ...
 
-    async def save_report(
-        self, import_run_id: int, report: ImportReport, *, status: str
-    ) -> None: ...
+    async def save_progress(self, import_run_id: int, report: ImportReport) -> None:
+        """Write the counters and `fields_missing`; status and `finished_at` stay.
+
+        `RunImport` calls it inside each batch's transaction, so the stored
+        counters are those of the committed batches, even when the run fails
+        later.
+        """
+        ...
+
+    async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
+        """The same columns as `save_progress`, plus the final status and `finished_at`."""
+        ...
+
     async def get_report(self, import_run_id: int) -> ImportReport | None: ...
 
 

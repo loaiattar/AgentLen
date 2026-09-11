@@ -14,6 +14,11 @@ deliberate middle ground:
 
 A batch is small enough to be cheap to retry and large enough that the round
 trips disappear.
+
+The report's counters are saved in each batch's transaction too, so what
+`import_run` shows is always what was committed: a run that fails at batch N
+keeps the counters of batches 1 to N-1 (DATA_MODEL.md §6). The end of the run
+only adds its status and finish time.
 """
 
 from __future__ import annotations
@@ -76,6 +81,7 @@ class _Counters:
             records_duplicate=self.duplicate,
             records_rejected=self.rejected,
             issues=tuple(issues),
+            fields_missing=dict(self.fields_missing),
         )
 
     @property
@@ -299,6 +305,9 @@ class RunImport:
                 import_run_id=context.import_run_id,
                 issues=[(issue, raw_ids.get(issue.line_number or -1)) for issue in issues],
             )
+            # Same transaction as the batch: a later failure keeps these counters,
+            # a failure of this batch rolls them back with its rows.
+            await uow.import_runs.save_progress(context.import_run_id, counters.to_report([]))
             await uow.commit()
 
         return issues

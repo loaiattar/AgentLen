@@ -287,6 +287,22 @@ Trois barrières successives :
 
 > Un réimport reste tracé : un nouvel `import_run` est créé avec `records_imported = 0` et `records_duplicate = n`. **L'historique des imports n'est jamais perdu**, seules les données de faits ne sont pas dupliquées.
 
+### Unités du bilan
+
+Les compteurs d'`import_run` ne comptent pas tous la même chose, et `GET /imports/{id}` les expose tels quels :
+
+| Colonne | Ce qui est compté |
+|---|---|
+| `records_read` | lignes source lues, rejetées comprises |
+| `records_rejected` | lignes source portant au moins une issue `rejected` |
+| `records_imported` | entités insérées : sessions, appels modèle et appels outil additionnés |
+| `records_duplicate` | entités déjà présentes : une session une fois pour tout l'import, chaque appel une fois |
+| `fields_missing` | `{"entité.champ": n}` : entités normalisées sans ce champ. Une session décrite sur trois lignes compte trois fois. `NULL` tant qu'aucun lot n'est validé |
+
+Une ligne qui porte une session et dix appels donne donc `records_read = 1` et `records_imported = 11` : les deux ne se comparent pas. Les comptes par entité ne sont pas encore exposés séparément.
+
+**Un run en échec garde son bilan.** Chaque lot est une transaction qui écrit ses lignes, ses faits, ses issues et les compteurs cumulés du run. Un échec au lot N annule ce lot seul : l'`import_run` passe en `failed` avec les compteurs des lots 1 à N-1, qui restent en base. Seule la fin du run écrit le statut et `finished_at`.
+
 ---
 
 ## 7. Couche de lecture pour le dashboard

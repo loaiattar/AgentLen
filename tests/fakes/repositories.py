@@ -295,17 +295,21 @@ class InMemoryImportRunRepository:
     async def count(self) -> int:
         return len(self._s.import_runs)
 
-    async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
+    async def save_progress(self, import_run_id: int, report: ImportReport) -> None:
         self._s.reports[import_run_id] = report
         if import_run_id in self._s.import_runs:
             self._s.import_runs[import_run_id].update(
-                status=status,
                 records_read=report.records_read,
                 records_imported=report.records_imported,
                 records_duplicate=report.records_duplicate,
                 records_rejected=report.records_rejected,
-                finished_at=datetime.now(UTC),
+                fields_missing=dict(report.fields_missing),
             )
+
+    async def save_report(self, import_run_id: int, report: ImportReport, *, status: str) -> None:
+        await self.save_progress(import_run_id, report)
+        if import_run_id in self._s.import_runs:
+            self._s.import_runs[import_run_id].update(status=status, finished_at=datetime.now(UTC))
 
     async def get_report(self, import_run_id: int) -> ImportReport | None:
         return self._s.reports.get(import_run_id)

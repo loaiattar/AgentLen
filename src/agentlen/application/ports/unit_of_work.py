@@ -1,8 +1,12 @@
-"""Transaction boundary for an import run.
+"""Transaction boundary.
 
-One import is one transaction. A file that fails halfway must leave the
-database exactly as it was — a half-imported file is worse than a failed one,
-because nothing tells you which half you got.
+One unit of work is one transaction, and an import is not one transaction:
+`RunImport` commits each batch in its own unit of work, together with the
+run's counters so far. A run that fails keeps the batches committed before the
+failure, and `import_run` counts exactly those, so it says which part was
+imported; the failing batch rolls back whole. Running the same import again
+skips the lines it already stored (`raw_record` is unique on
+`(import_run_id, line_number)`).
 
 The repositories hang off the unit of work rather than being injected
 separately, so they cannot accidentally be used outside a transaction.
