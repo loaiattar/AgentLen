@@ -38,11 +38,17 @@ jobs:
       - name: Lint (S rules forbid eval/exec)
         run: ruff check .
 
-      - name: Type check — strict on domain, application and the AI adapters
-        # infrastructure/ai is in scope so the SanitizedSamples NewType is
-        # actually binding: handing raw records to the prompt builder has to
-        # fail here, not in review.
-        run: mypy --strict src/agentlen/domain src/agentlen/application src/agentlen/infrastructure/ai
+      - name: Type check — strict on the whole package
+        # Everything, `interfaces/` included. The narrower scope this replaces
+        # covered domain, application and infrastructure/ai only, and three real
+        # errors sat in `interfaces/` for as long as it did: `SqlAlchemyUnitOfWork`
+        # had stopped satisfying the `UnitOfWork` port, and the conversion is
+        # only ever performed in `interfaces/`, so nothing checked it.
+        #
+        # infrastructure/ai stays in scope for its own reason: the
+        # SanitizedSamples NewType is only binding if handing raw records to
+        # the prompt builder fails here rather than in review.
+        run: mypy --strict src/agentlen
 
       - name: Dependency rule (import-linter)
         # The automated proof of the Clean Architecture. A PR that imports
