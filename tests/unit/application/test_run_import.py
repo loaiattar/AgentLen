@@ -1,13 +1,21 @@
-"""RunImport on the in-memory unit of work: how referential names are resolved (#141)."""
+"""RunImport on the in-memory unit of work.
+
+How referential names are resolved (#141), and the call keys of a session
+spread over several lines (#188).
+"""
 
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
+import pytest
+
 from agentlen.application.use_cases.preview_import import PreviewImport
 from agentlen.application.use_cases.run_import import RunImport
+from agentlen.domain.model.import_run import ImportReport
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.services.record_normalizer import NormalizationResult, RecordNormalizer
 from tests.fakes.file_reader import InMemoryFileReader
@@ -55,6 +63,40 @@ RECORD = {
     "tools": [{"name": "Bash"}],
 }
 
+COLLISION = ("SEQUENCE_INDEX_COLLISION", "entities[target=tool_call].fields[target=sequence_index]")
+
+# TraceLab's shape: one round per line, the session repeated, and a tool index
+# that starts again at 0 on every round.
+ROUNDS = [
+    {"sid": "s1", "tools": [{"name": "Bash", "i": 0}, {"name": "Read", "i": 1}]} for _ in range(3)
+]
+
+
+def _rounds_mapping(*tool_fields: FieldRule) -> Mapping:
+    return Mapping(
+        id=uuid4(),
+        name="rounds",
+        version=1,
+        source_format="jsonl",
+        entities=(
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=(FieldRule(target="external_id", source="$.sid", required=True),),
+            ),
+            EntityMapping(
+                target="tool_call",
+                natural_key=("sequence_index",),
+                iterate="$.tools",
+                parent=PARENT,
+                fields=(
+                    FieldRule(target="tool_name", source="$.name", required=True),
+                    *tool_fields,
+                ),
+            ),
+        ),
+    )
+
 
 class _NormalizerThatAsksForNothing(RecordNormalizer):
     """Stands in for any drift between the names the normaliser asks to resolve
@@ -64,11 +106,12 @@ class _NormalizerThatAsksForNothing(RecordNormalizer):
         return dataclasses.replace(super().normalize(*args, **kwargs), reference_requests=())
 
 
-async def _prepare(records: list[dict[str, Any]]) -> tuple[InMemoryUnitOfWork, dict[str, Any]]:
+async def _seed(mapping: Mapping) -> tuple[InMemoryUnitOfWork, dict[str, Any]]:
+    """A unit of work holding a data source, `mapping` and a file stored at PATH."""
     uow = InMemoryUnitOfWork()
     async with uow:
         source = await uow.data_sources.create(slug="tracelab", name="TraceLab")
-        mapping_id = await uow.mappings.save(MAPPING, data_source_id=source)
+        mapping_id = await uow.mappings.save(mapping, data_source_id=source)
         upload = await uow.file_uploads.create(
             original_name="t.jsonl",
             storage_path=PATH,
@@ -76,12 +119,37 @@ async def _prepare(records: list[dict[str, Any]]) -> tuple[InMemoryUnitOfWork, d
             size_bytes=1,
             content_hash="a" * 64,
         )
+        await uow.commit()
+    return uow, {"source": source, "file": upload.id, "mapping": mapping_id}
+
+
+async def _new_run(uow: InMemoryUnitOfWork, ids: dict[str, Any]) -> int:
+    async with uow:
         run_id = await uow.import_runs.create(
-            data_source_id=source, file_upload_id=upload.id, mapping_id=mapping_id
+            data_source_id=ids["source"], file_upload_id=ids["file"], mapping_id=ids["mapping"]
         )
         await uow.commit()
-    reader = InMemoryFileReader({PATH: records})
-    return uow, {"run": run_id, "file": upload.id, "mapping": mapping_id, "reader": reader}
+    return run_id
+
+
+async def _prepare(records: list[dict[str, Any]]) -> tuple[InMemoryUnitOfWork, dict[str, Any]]:
+    uow, ids = await _seed(MAPPING)
+    ids["run"] = await _new_run(uow, ids)
+    ids["reader"] = InMemoryFileReader({PATH: records})
+    return uow, ids
+
+
+async def _importer(
+    mapping: Mapping,
+) -> tuple[Callable[[], Awaitable[ImportReport]], InMemoryUnitOfWork]:
+    """Imports ROUNDS with `mapping`, as a new run on every call."""
+    uow, ids = await _seed(mapping)
+
+    async def run() -> ImportReport:
+        run_id = await _new_run(uow, ids)
+        return await RunImport(uow, InMemoryFileReader({PATH: ROUNDS})).execute(run_id)
+
+    return run, uow
 
 
 async def test_an_unresolved_reference_is_reported_and_the_rest_of_the_record_imports() -> None:
@@ -140,3 +208,41 @@ async def test_preview_and_import_count_the_same_rows() -> None:
     assert report.records_rejected == preview.would_reject == 2
     blank = [issue.line_number for issue in report.issues if issue.code == "REFERENCE_NAME_INVALID"]
     assert blank == [2, 2]
+
+
+async def test_unmapped_index_keeps_every_call_of_a_split_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IMPORT_BATCH_SIZE", "2")
+    run, uow = await _importer(_rounds_mapping())
+
+    first = await run()
+    second = await run()
+
+    assert len(uow._store.tool_calls) == 6
+    assert (first.records_imported, first.records_duplicate, first.records_rejected) == (7, 0, 0)
+    assert (second.records_imported, second.records_duplicate, second.records_rejected) == (0, 7, 0)
+
+
+@pytest.mark.parametrize("batch_size", ["500", "1"], ids=["same-batch", "later-batch"])
+async def test_a_mapped_index_restarting_on_each_line_collides_instead_of_duplicating(
+    monkeypatch: pytest.MonkeyPatch, batch_size: str
+) -> None:
+    monkeypatch.setenv("IMPORT_BATCH_SIZE", batch_size)
+    run, uow = await _importer(_rounds_mapping(FieldRule(target="sequence_index", source="$.i")))
+
+    first = await run()
+    second = await run()
+
+    assert len(uow._store.tool_calls) == 2
+    # Lines 2 and 3 repeat the keys of line 1: rejected, each with its line.
+    collisions = [(*COLLISION, line) for line in (2, 2, 3, 3)]
+    assert [(i.code, i.field_path, i.line_number) for i in first.issues] == collisions
+    assert (first.records_imported, first.records_duplicate, first.records_rejected) == (3, 0, 2)
+    # A re-import meets line 1's rows again: those are duplicates, the rest still collide.
+    assert (second.records_imported, second.records_duplicate, second.records_rejected) == (0, 3, 2)
+    assert [
+        (i.code, i.field_path, i.line_number)
+        for i in second.issues
+        if i.code == "SEQUENCE_INDEX_COLLISION"
+    ] == collisions

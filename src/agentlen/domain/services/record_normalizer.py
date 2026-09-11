@@ -19,6 +19,14 @@ _TOKEN_USAGE_FIELDS = (
     "cache_creation_tokens",
 )
 
+#: Width of one source record's range in a derived call index: an iterated call
+#: without a mapped `sequence_index` gets `(rank - 1) * RECORD_STRIDE + position`
+#: (MAPPING_CONTRACT.md §2.2).
+RECORD_STRIDE = 1_000
+
+#: `sequence_index` is an INTEGER column; a larger value would fail the whole batch.
+_MAX_SEQUENCE_INDEX = 2**31 - 1
+
 
 @dataclass(frozen=True)
 class NormalizationResult:
@@ -131,6 +139,41 @@ class RecordNormalizer:
                 line_number=line_number,
             )
         return None
+
+    @staticmethod
+    def _sequence_index(
+        entity: EntityMapping, result: dict[str, Any], line_number: int | None
+    ) -> tuple[Any, ImportIssue | None]:
+        """The call's key within its session (MAPPING_CONTRACT.md §2.2).
+
+        A mapped value is kept as it is: the mapping vouches that it is unique
+        within the session. Without one, an iterated call only knows its
+        position in this record's list, which restarts at 0 on every record —
+        TraceLab writes one round per line, so every round reused the first
+        round's keys (#188). The record's rank is folded in to keep lines apart.
+        A non-iterated entity keeps its position, always 0 (#134).
+        """
+        data = result["data"]
+        if "sequence_index" in data:
+            sequence_index = data["sequence_index"]
+        elif entity.iterate is not None:
+            rank = (line_number or 1) - 1
+            sequence_index = rank * RECORD_STRIDE + result["source_index"]
+        else:
+            sequence_index = result["source_index"]
+
+        if isinstance(sequence_index, int) and sequence_index > _MAX_SEQUENCE_INDEX:
+            return None, ImportIssue(
+                severity="rejected",
+                code="SEQUENCE_INDEX_OUT_OF_RANGE",
+                message=(
+                    f"'{entity.target}' sequence_index {sequence_index} exceeds "
+                    f"{_MAX_SEQUENCE_INDEX}, the largest value the column holds."
+                ),
+                field_path=f"entities[target={entity.target}].fields[target=sequence_index]",
+                line_number=line_number,
+            )
+        return sequence_index, None
 
     @staticmethod
     def _construction_issue(target: str, exc: Exception, line_number: int | None) -> ImportIssue:
@@ -264,9 +307,11 @@ class RecordNormalizer:
             return model_calls, issues, references
 
         for result in entries:
-            data = result["data"]
-            sequence_index = data.get("sequence_index", result["source_index"])
-            data = {**data, "sequence_index": sequence_index}
+            sequence_index, index_issue = self._sequence_index(entity, result, line_number)
+            if index_issue is not None:
+                issues.append(index_issue)
+                continue
+            data = {**result["data"], "sequence_index": sequence_index}
 
             natural_key_issue = self._check_natural_key(entity, data, line_number)
             if natural_key_issue is not None:
@@ -332,9 +377,11 @@ class RecordNormalizer:
             return tool_calls, issues, references
 
         for result in entries:
-            data = result["data"]
-            sequence_index = data.get("sequence_index", result["source_index"])
-            data = {**data, "sequence_index": sequence_index}
+            sequence_index, index_issue = self._sequence_index(entity, result, line_number)
+            if index_issue is not None:
+                issues.append(index_issue)
+                continue
+            data = {**result["data"], "sequence_index": sequence_index}
 
             natural_key_issue = self._check_natural_key(entity, data, line_number)
             if natural_key_issue is not None:

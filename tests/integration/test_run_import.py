@@ -12,11 +12,13 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.use_cases.run_import import RunImport
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
+from agentlen.infrastructure.files.polars_record_reader import PolarsRecordReader
 from agentlen.infrastructure.persistence import tables as t
 from agentlen.infrastructure.persistence.engine import to_async_url
 from agentlen.infrastructure.persistence.repositories import sql as sql_repositories
 from agentlen.infrastructure.persistence.repositories.mapping_codec import mapping_to_document
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from agentlen.interfaces.cli.seed import SAMPLE_FILE, _tracelab_mapping
 from tests.fakes.file_reader import InMemoryFileReader
 from tests.integration.conftest import requires_postgres
 
@@ -465,6 +467,78 @@ async def test_reimporting_a_split_session_counts_it_once(
 
     assert report.records_imported == 0
     assert report.records_duplicate == 6  # the session once, its five calls
+
+
+async def test_the_seed_sample_keeps_all_nineteen_tool_calls_once(
+    clean_db: Connection, database_url: str, engine: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TraceLab restarts `tool_index` on every round: 14 of the 19 calls were lost (#188)."""
+    monkeypatch.setenv("IMPORT_BATCH_SIZE", "4")  # the sessions also cross batches
+    ids = _seed(clean_db, _tracelab_mapping())
+    with engine.begin() as conn:
+        conn.execute(
+            update(t.file_upload)
+            .where(t.file_upload.c.id == ids["file_id"])
+            .values(storage_path=str(SAMPLE_FILE))
+        )
+    async_engine = create_async_engine(to_async_url(database_url))
+    uow = SqlAlchemyUnitOfWork(async_engine)
+    run_import = RunImport(uow, PolarsRecordReader())
+    try:
+        first = await run_import.execute(await _new_run(uow, ids))
+        second = await run_import.execute(await _new_run(uow, ids))
+    finally:
+        await async_engine.dispose()
+
+    with engine.connect() as conn:
+        per_session = conn.execute(
+            select(t.session.c.external_id, func.count(t.tool_call.c.id))
+            .select_from(t.session.join(t.tool_call))
+            .group_by(t.session.c.external_id)
+        ).all()
+    assert sorted(count for _, count in per_session) == [9, 10]
+    assert first.records_duplicate == 0
+    assert second.records_imported == 0
+    assert all(i.code != "SEQUENCE_INDEX_COLLISION" for i in (*first.issues, *second.issues))
+
+
+@pytest.mark.parametrize("batch_size", ["500", "1"], ids=["same-batch", "later-batch"])
+async def test_two_calls_of_one_import_sharing_a_key_are_rejected_not_duplicates(
+    indexed: dict[str, Any],
+    importer: Any,
+    engine: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    batch_size: str,
+) -> None:
+    monkeypatch.setenv("IMPORT_BATCH_SIZE", batch_size)
+    run_import, uow = importer(
+        [
+            {"sid": "s1", "tools": [{"name": "Bash", "i": 0}]},
+            {"sid": "s1", "tools": [{"name": "Read", "i": 0}]},
+        ]
+    )
+
+    report = await run_import.execute(await _new_run(uow, indexed))
+    reimport = await run_import.execute(await _new_run(uow, indexed))
+
+    collision = (
+        "SEQUENCE_INDEX_COLLISION",
+        "entities[target=tool_call].fields[target=sequence_index]",
+        2,
+    )
+    assert [(i.code, i.field_path, i.line_number) for i in report.issues] == [collision]
+    assert (report.records_imported, report.records_duplicate, report.records_rejected) == (2, 0, 1)
+    # The re-import meets line 1's call again (a duplicate); line 2 still collides.
+    assert (reimport.records_duplicate, reimport.records_rejected) == (2, 1)
+    assert collision in [(i.code, i.field_path, i.line_number) for i in reimport.issues]
+    with engine.connect() as conn:
+        assert _count(conn, t.tool_call) == 1
+        stored = conn.execute(
+            select(t.import_issue.c.code, t.raw_record.c.line_number)
+            .select_from(t.import_issue.join(t.raw_record))
+            .where(t.import_issue.c.severity == "rejected")
+        ).all()
+    assert [tuple(row) for row in stored] == [("SEQUENCE_INDEX_COLLISION", 2)] * 2
 
 
 # ---------------------------------------------------------------------------

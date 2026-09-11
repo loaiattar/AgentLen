@@ -125,6 +125,16 @@ Quatre règles non négociables :
 - **Refusé à la validation**, avec le code `MAPPING_UNSUPPORTED_PATH`, le `field_path` fautif (`entities[target=model_call].iterate`, `entities[target=session].fields[target=external_id].source`) et la raison : filtre `[?(...)]`, joker `*`, index ou tranche `[0]`, descente récursive `..`, guillemets simples, échappement inconnu, guillemet non fermé, chemin qui ne commence pas par `$`. Aucune expression n'est évaluée.
 - **À l'import**, un chemin absent ou `null` donne une valeur absente, et un `iterate` absent zéro ligne, sans issue. Un `iterate` qui rencontre une valeur d'un autre type, par exemple une chaîne là où la liste est attendue, produit l'issue `ITERATE_NOT_A_LIST` (rejet) au lieu de zéro ligne silencieuse.
 
+### 2.2 Index des appels (`sequence_index`)
+
+Un `model_call` ou un `tool_call` est identifié dans sa session par `sequence_index` : c'est la contrainte `UNIQUE (session_id, sequence_index)` (DATA_MODEL.md §6). L'index doit donc être unique **dans la session**, quelle que soit la ligne source qui porte l'appel.
+
+- **Index mappé** : une règle `sequence_index` est reprise telle quelle. Elle doit désigner un compteur propre à la session (numéro d'événement, index global de l'appel). Un index qui repart à 0 à chaque ligne ne convient pas : `tool_index` de TraceLab, qui écrit un round par ligne, ne se mappe pas.
+- **Index dérivé** : sous `iterate`, sans règle `sequence_index` ou quand la valeur est absente, l'index vaut `(rang − 1) × 1000 + position`. `rang` est le numéro de ligne de l'enregistrement dans le fichier (le `line_number` du `raw_record`, à partir de 1), `position` la place de l'élément dans sa liste, comptée avant tout rejet. Deux lignes d'une session ne partagent donc pas leurs index, un élément rejeté ne décale pas les suivants et le réimport du même fichier redonne les mêmes clés. L'index dérivé dépend du fichier : pour une session répartie sur plusieurs fichiers, ou un fichier redécoupé, mappez un index propre à la session. Une liste de plus de 1000 éléments empiète sur la plage de la ligne suivante, ce qui ne compte que si cette ligne décrit la même session (collision signalée, voir plus bas).
+- **Entité non itérée** : elle produit une ligne par enregistrement, en position 0 ; elle doit mapper son `sequence_index`.
+- **Collision dans un import** : deux appels du même import qui produisent la même clé ne sont pas des doublons. Le premier, dans l'ordre du fichier, est importé ; chaque suivant est rejeté avec `SEQUENCE_INDEX_COLLISION`, le `field_path` `entities[target=tool_call].fields[target=sequence_index]` et sa ligne. Seule une clé déjà stockée par un import **précédent** compte comme doublon (`ALREADY_IMPORTED`).
+- **Hors bornes** : la colonne est un `INTEGER`. Un index supérieur à 2 147 483 647 (valeur mappée trop grande, ou index dérivé au-delà d'environ 2,1 millions de lignes) rejette l'appel avec `SEQUENCE_INDEX_OUT_OF_RANGE` au lieu de faire échouer le lot.
+
 ---
 
 ## 3. Whitelist d'opérateurs
