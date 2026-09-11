@@ -22,8 +22,14 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
-from agentlen.application.dto.persistence import ModelCallRow, SessionRow, ToolCallRow
+from agentlen.application.dto.persistence import (
+    InsertOutcome,
+    ModelCallRow,
+    SessionRow,
+    ToolCallRow,
+)
 from agentlen.application.errors import MappingInvalidError, NotFoundError
 from agentlen.application.ports.file_reader import FileReader
 from agentlen.application.ports.unit_of_work import UnitOfWork
@@ -50,6 +56,10 @@ class _Counters:
         # A session already stored by a previous import is one duplicate for the
         # whole run, however many batches refer to it.
         self.duplicate_sessions: set[int] = set()
+        # Database id of every call row a call of this run landed on, by target.
+        # A second call landing on the same row produced the same key in this
+        # very run: a collision to explain, not a re-import (#188).
+        self.call_rows: dict[str, set[int]] = defaultdict(set)
 
     def note_missing(self, target: str, entity: Any) -> None:
         """Count fields the source did not provide.
@@ -251,6 +261,11 @@ class RunImport:
                 session_ids=session_outcome.ids,
                 model_call_ids=model_outcome.ids,
             )
+            origins = _call_origins(normalised)
+            collisions = _collisions(
+                "model_call", model_calls, model_outcome, origins, counters
+            ) + _collisions("tool_call", tool_calls, tool_outcome, origins, counters)
+            issues.extend(collisions)
 
             counters.imported += (
                 session_outcome.inserted_count
@@ -265,6 +280,7 @@ class RunImport:
                 len(new_duplicate_sessions)
                 + model_outcome.duplicate_count
                 + tool_outcome.duplicate_count
+                - len(collisions)  # the repository saw them as duplicates too
             )
             counters.duplicate += duplicates
             if duplicates:
@@ -318,6 +334,58 @@ class RunImport:
             context = dict(part.split("=", 1) for part in marker.split(";") if "=" in part)
             cache[key] = await uow.referentials.resolve(kind, name, context=context or None)
         return cache
+
+
+def _call_origins(normalised: list[Any]) -> dict[UUID, tuple[int, str]]:
+    """Source line and session external id of every call of the batch."""
+    return {
+        call.id: (line, result.sessions[0].external_id)
+        for line, result in normalised
+        if result.sessions
+        for call in (*result.model_calls, *result.tool_calls)
+    }
+
+
+def _collisions(
+    target: str,
+    calls: list[tuple[Any, Any]],
+    outcome: InsertOutcome,
+    origins: dict[UUID, tuple[int, str]],
+    counters: _Counters,
+) -> list[ImportIssue]:
+    """Calls that landed on a row another call of this run already holds.
+
+    The repository reports them as duplicates, since their key is taken. But a
+    re-import is another run meeting its own rows again; two calls of one run
+    sharing a key means the index is not unique within the session, and the
+    second call is lost. That is a rejection with its line, not a duplicate.
+    Calls are walked in source order, so the first of them is the one kept.
+    """
+    row_ids = outcome.ids
+    claimed = counters.call_rows[target]
+    issues: list[ImportIssue] = []
+    for row, _ in calls:
+        row_id = row_ids.get(row.entity.id)
+        if row_id is None:  # unlinked: reported as PARENT_SESSION_MISSING
+            continue
+        if row_id not in claimed:
+            claimed.add(row_id)
+            continue
+        line, external_id = origins[row.entity.id]
+        issues.append(
+            ImportIssue(
+                severity="rejected",
+                code="SEQUENCE_INDEX_COLLISION",
+                message=(
+                    f"Appel '{target}' non importé : un autre appel de cet import a déjà "
+                    f"l'index {row.entity.sequence_index} dans la session '{external_id}'. "
+                    "L'index doit être unique dans la session (MAPPING_CONTRACT.md §2.2)."
+                ),
+                field_path=f"entities[target={target}].fields[target=sequence_index]",
+                line_number=line,
+            )
+        )
+    return issues
 
 
 def _context_key(request: Any) -> str:

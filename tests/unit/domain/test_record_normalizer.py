@@ -375,6 +375,75 @@ def test_model_reference_request_carries_provider_as_context():
     assert model_request.context == (("provider_name", "anthropic"),)
 
 
+def test_implicit_sequence_index_does_not_restart_on_the_next_line():
+    # TraceLab writes one round per line and each round's list starts again at
+    # position 0: round two's calls used to take round one's keys (#188).
+    normalizer = RecordNormalizer()
+    first = normalizer.normalize(
+        _full_mapping(), RAW_RECORD, data_source_id=DATA_SOURCE_ID, line_number=1
+    )
+    second = normalizer.normalize(
+        _full_mapping(), RAW_RECORD, data_source_id=DATA_SOURCE_ID, line_number=2
+    )
+
+    assert [tc.sequence_index for tc in first.tool_calls] == [0, 1, 2, 3, 4]
+    assert [tc.sequence_index for tc in second.tool_calls] == [1000, 1001, 1002, 1003, 1004]
+    assert [mc.sequence_index for mc in second.model_calls] == [1000, 1001, 1002]
+
+
+def test_a_mapped_sequence_index_is_kept_whatever_the_line():
+    mapping = Mapping(
+        id=uuid4(),
+        name="test",
+        version=1,
+        source_format="jsonl",
+        entities=[
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=[FieldRule(target="external_id", source="$.id", required=True)],
+            ),
+            EntityMapping(
+                target="tool_call",
+                natural_key=("sequence_index",),
+                iterate="$.tool_uses",
+                parent={"entity": "session", "via": "external_id"},
+                fields=[
+                    FieldRule(target="tool_name", source="$.name", required=True),
+                    FieldRule(target="sequence_index", source="$.i"),
+                ],
+            ),
+        ],
+    )
+    raw = {"id": "sess-1", "tool_uses": [{"name": "Bash", "i": 7}]}
+
+    result = RecordNormalizer().normalize(
+        mapping, raw, data_source_id=DATA_SOURCE_ID, line_number=42
+    )
+
+    assert [tc.sequence_index for tc in result.tool_calls] == [7]
+
+
+def test_a_derived_sequence_index_beyond_the_integer_column_is_rejected():
+    line = 3_000_000  # (line - 1) * 1000 is past 2**31 - 1
+
+    result = RecordNormalizer().normalize(
+        _full_mapping(), RAW_RECORD, data_source_id=DATA_SOURCE_ID, line_number=line
+    )
+
+    assert len(result.sessions) == 1
+    assert result.model_calls == ()
+    assert result.tool_calls == ()
+    assert len(result.issues) == EXPECTED_MODEL_CALL_COUNT + EXPECTED_TOOL_CALL_COUNT
+    assert {(i.code, i.severity, i.line_number) for i in result.issues} == {
+        ("SEQUENCE_INDEX_OUT_OF_RANGE", "rejected", line)
+    }
+    assert {i.field_path for i in result.issues} == {
+        "entities[target=model_call].fields[target=sequence_index]",
+        "entities[target=tool_call].fields[target=sequence_index]",
+    }
+
+
 def test_sequence_index_string_without_cast_is_rejected_as_type_mismatch():
     mapping = Mapping(
         id=uuid4(),

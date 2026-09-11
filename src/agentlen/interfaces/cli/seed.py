@@ -132,13 +132,12 @@ def _tracelab_mapping() -> Mapping:
                 iterate="$.tools",
                 parent={"entity": "session", "via": "external_id"},
                 natural_key=("sequence_index",),
+                # `sequence_index` is deliberately not mapped: `$.tool_index`
+                # restarts at 0 on every round, so it is not unique within a
+                # session and 14 of the sample's 19 calls overwrote each other
+                # (#188). Unmapped, it is derived from the line and the position
+                # in `tools` (MAPPING_CONTRACT.md §2.2).
                 fields=(
-                    FieldRule(
-                        target="sequence_index",
-                        source="$.tool_index",
-                        required=True,
-                        operators=({"op": "cast", "to": "integer"},),
-                    ),
                     FieldRule(target="tool_name", source="$.tool_name", required=True),
                     FieldRule(
                         target="status",
