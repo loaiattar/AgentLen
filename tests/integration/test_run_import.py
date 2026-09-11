@@ -7,13 +7,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Connection, func, insert, select, update
+from sqlalchemy import Connection, event, func, insert, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.use_cases.run_import import RunImport
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.infrastructure.persistence import tables as t
 from agentlen.infrastructure.persistence.engine import to_async_url
+from agentlen.infrastructure.persistence.repositories import sql as sql_repositories
 from agentlen.infrastructure.persistence.repositories.mapping_codec import mapping_to_document
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tests.fakes.file_reader import InMemoryFileReader
@@ -266,6 +267,81 @@ async def test_children_stay_attached_to_their_session(
         assert dict(by_session) == {"s1": 2, "s2": 1}
 
 
+async def test_non_iterated_calls_on_separate_lines_keep_their_explicit_indices(
+    clean_db: Connection, importer: Any, engine: Any
+) -> None:
+    """One session may span source lines; each explicit index must survive."""
+    mapping = Mapping(
+        id=uuid4(),
+        name="calls-per-line",
+        version=1,
+        source_format="jsonl",
+        entities=(
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=(FieldRule(target="external_id", source="$.sid", required=True),),
+            ),
+            EntityMapping(
+                target="model_call",
+                natural_key=("sequence_index",),
+                parent={"entity": "session", "via": "external_id"},
+                fields=(
+                    FieldRule(target="sequence_index", source="$.call.index", required=True),
+                    FieldRule(target="model_name", source="$.call.model"),
+                ),
+            ),
+        ),
+    )
+    source_id = clean_db.execute(
+        insert(t.data_source)
+        .values(slug="calls-per-line", name="Calls per line")
+        .returning(t.data_source.c.id)
+    ).scalar_one()
+    file_id = clean_db.execute(
+        insert(t.file_upload)
+        .values(
+            original_name="calls.jsonl",
+            storage_path=PATH,
+            format="jsonl",
+            size_bytes=1,
+            content_hash="b" * 64,
+        )
+        .returning(t.file_upload.c.id)
+    ).scalar_one()
+    mapping_id = clean_db.execute(
+        insert(t.mapping)
+        .values(
+            data_source_id=source_id,
+            name=mapping.name,
+            version=1,
+            source_format="jsonl",
+            document=mapping_to_document(mapping),
+            status="active",
+        )
+        .returning(t.mapping.c.id)
+    ).scalar_one()
+    clean_db.commit()
+    records = [
+        {"sid": "shared-session", "call": {"index": index, "model": f"model-{index}"}}
+        for index in range(3)
+    ]
+    run_import, uow = importer(records)
+
+    await run_import.execute(
+        await _new_run(
+            uow,
+            {"source": source_id, "file_id": file_id, "mapping_id": mapping_id},
+        )
+    )
+
+    with engine.connect() as conn:
+        indices = conn.execute(
+            select(t.model_call.c.sequence_index).order_by(t.model_call.c.sequence_index)
+        ).scalars()
+        assert list(indices) == [0, 1, 2]
+
+
 async def test_every_row_points_at_the_raw_record_it_came_from(
     seeded: dict[str, Any], importer: Any, engine: Any
 ) -> None:
@@ -456,6 +532,97 @@ async def test_the_report_records_which_fields_the_source_never_provided(
 
 
 # ---------------------------------------------------------------------------
+# Referential names (#141)
+# ---------------------------------------------------------------------------
+
+# Every name the import resolves to a referential row: agent, provider, model, tool.
+NAMES = Mapping(
+    id=uuid4(),
+    name="names",
+    version=1,
+    source_format="jsonl",
+    entities=(
+        EntityMapping(
+            target="session",
+            natural_key=("external_id",),
+            fields=(
+                FieldRule(target="external_id", source="$.sid", required=True),
+                FieldRule(target="agent_name", source="$.agent"),
+            ),
+        ),
+        EntityMapping(
+            target="model_call",
+            natural_key=("sequence_index",),
+            iterate="$.calls",
+            parent={"entity": "session", "via": "external_id"},
+            fields=(
+                FieldRule(target="model_name", source="$.model"),
+                FieldRule(target="provider_name", source="$.provider"),
+            ),
+        ),
+        EntityMapping(
+            target="tool_call",
+            natural_key=("sequence_index",),
+            iterate="$.tools",
+            parent={"entity": "session", "via": "external_id"},
+            fields=(FieldRule(target="tool_name", source="$.name", required=True),),
+        ),
+    ),
+)
+
+
+@pytest.fixture
+def named(clean_db: Connection) -> dict[str, Any]:
+    return _seed(clean_db, NAMES)
+
+
+async def test_numeric_referential_names_are_stored_as_text(
+    named: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    """A JSON number used as a name must not reach asyncpg as an int and fail the run."""
+    run_import, uow = importer(
+        [
+            {
+                "sid": "s1",
+                "agent": 42,
+                "calls": [{"model": 7.5, "provider": 3}],
+                "tools": [{"name": 123}],
+            }
+        ]
+    )
+
+    report = await run_import.execute(await _new_run(uow, named))
+
+    assert report.records_rejected == 0
+    assert report.records_imported == 3  # the session, its model call and its tool call
+    with engine.connect() as conn:
+        for table, name in ((t.agent, "42"), (t.provider, "3"), (t.model, "7.5"), (t.tool, "123")):
+            assert conn.execute(select(table.c.name)).scalars().all() == [name]
+
+
+async def test_a_tool_call_without_a_usable_name_is_explained_and_the_rest_imports(
+    named: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    """It used to vanish: no issue, no rejection, no duplicate."""
+    run_import, uow = importer([{"sid": "s1", "tools": [{"name": "Bash"}, {"name": ""}]}])
+
+    report = await run_import.execute(await _new_run(uow, named))
+
+    assert report.records_rejected == 1
+    assert any(
+        issue.code == "REFERENCE_NAME_INVALID"
+        and issue.severity == "rejected"
+        and issue.field_path == "entities[target=tool_call].fields[target=tool_name]"
+        and issue.line_number == 1
+        for issue in report.issues
+    )
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 1
+        assert conn.execute(select(t.tool.c.name)).scalars().all() == ["Bash"]
+        assert _count(conn, t.tool_call) == 1
+
+
+# ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
 
@@ -472,3 +639,78 @@ async def test_a_large_file_is_imported_in_batches(seeded: dict[str, Any], impor
     assert report.records_read == 1200
     assert reader.batch_sizes, "the reader was never asked for batches"
     assert all(size <= 500 for size in reader.batch_sizes)
+
+
+# ---------------------------------------------------------------------------
+# Batches larger than one statement can bind (#136)
+# ---------------------------------------------------------------------------
+
+
+def _sent_statements(uow: SqlAlchemyUnitOfWork) -> list[tuple[str, int]]:
+    """Every statement the unit of work sends, with its number of bind parameters."""
+    sent: list[tuple[str, int]] = []
+
+    def record(_conn: Any, _cursor: Any, statement: str, parameters: Any, *_: Any) -> None:
+        sent.append((statement, len(parameters or ())))
+
+    event.listen(uow._engine.sync_engine, "before_cursor_execute", record)
+    return sent
+
+
+def _tool_call_inserts(sent: list[tuple[str, int]]) -> int:
+    return sum(1 for statement, _ in sent if statement.startswith("INSERT INTO tool_call "))
+
+
+def _lines(count: int, tools: int) -> list[dict[str, Any]]:
+    return [
+        {"sid": f"s{i}", "tools": [{"name": "Bash"} for _ in range(tools)]} for i in range(count)
+    ]
+
+
+async def test_a_batch_binding_more_parameters_than_a_statement_accepts_is_imported(
+    seeded: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    """500 lines of eight tool calls are one batch of 4 000 calls: 36 000 bind
+    parameters as a single INSERT, which asyncpg refuses — the whole import failed."""
+    run_import, uow = importer(_lines(500, tools=8))
+    sent = _sent_statements(uow)
+
+    first = await run_import.execute(await _new_run(uow, seeded))
+    second = await run_import.execute(await _new_run(uow, seeded))
+
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 500
+        assert _count(conn, t.tool_call) == 4000
+    assert (first.records_imported, first.records_duplicate) == (4500, 0)
+    assert (second.records_imported, second.records_duplicate) == (0, 4500)
+    assert max(count for _, count in sent) <= sql_repositories.MAX_BIND_PARAMETERS
+    assert _tool_call_inserts(sent) == 4  # two statements per import
+
+
+@pytest.mark.parametrize("case", [(32_767, 2), (60, 60)], ids=["one-statement", "split"])
+async def test_a_split_batch_imports_like_a_single_statement(
+    seeded: dict[str, Any],
+    importer: Any,
+    engine: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    case: tuple[int, int],
+) -> None:
+    """Same file, same rows, same report whether a batch is one INSERT per table
+    or thirty: the limit only decides how many statements carry it."""
+    bind_limit, tool_call_inserts = case
+    monkeypatch.setattr(sql_repositories, "MAX_BIND_PARAMETERS", bind_limit)
+    run_import, uow = importer(_lines(40, tools=3))
+    sent = _sent_statements(uow)
+
+    first = await run_import.execute(await _new_run(uow, seeded))
+    second = await run_import.execute(await _new_run(uow, seeded))
+
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 40
+        assert _count(conn, t.tool_call) == 120
+        attached = conn.execute(select(func.count(func.distinct(t.tool_call.c.session_id))))
+        assert attached.scalar_one() == 40
+    assert (first.records_imported, first.records_duplicate) == (160, 0)
+    assert (second.records_imported, second.records_duplicate) == (0, 160)
+    assert max(count for _, count in sent) <= bind_limit
+    assert _tool_call_inserts(sent) == tool_call_inserts  # 120 calls, 4 per statement when split

@@ -69,6 +69,12 @@ asyncio_mode = "auto"
 # real gate is the `requires_postgres` skipif in tests/integration/conftest.py,
 # so the dead declaration is gone rather than left as a second, unused mechanism.
 addopts = "--strict-markers"
+markers = [
+    # The six behaviours ARCHITECTURE.md §11 says the brief requires. They live
+    # in tests/acceptance and are selected on their own by `make test-acceptance`,
+    # so a reader can see the requirements answered without reading the rest.
+    "acceptance: one of the six behaviours explicitly required by the brief",
+]
 
 # ---------------------------------------------------------------------------
 # Mypy — strict on domain and application only

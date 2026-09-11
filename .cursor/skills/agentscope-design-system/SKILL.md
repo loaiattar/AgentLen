@@ -1,9 +1,9 @@
 ---
 name: agentscope-design-system
-description: Applique le design system AgentScope (liquid glass, Bento, tokens Tailwind/shadcn) lors du développement frontend. Use when building or restyling AgentScope UI, components/ui, pages, Figma parity, tokens, typography, or liquid glass.
+description: Applique le design system AgentLen (liquid glass, Bento, Inter, light/dark, tokens Tailwind/shadcn) lors du développement frontend. Use when building or restyling AgentLen UI, components/ui, pages, Figma parity, tokens, typography, or liquid glass.
 ---
 
-# Design system AgentScope
+# Design system AgentLen
 
 Source de vérité visuelle pour le frontend. Ne pas inventer de couleurs, rayons, ombres ou densités locales.
 
@@ -15,33 +15,35 @@ Références :
 - API composants : [components.md](components.md)
 - Composition des pages : [pages.md](pages.md)
 - Doc humaine : `docs/architecture/design-system.md`
-- Maquette : [Figma AgentScope](https://www.figma.com/design/kHqSTLbPioSwXsh0URi7BB/Untitled?node-id=0-1&m=dev)
+- Maquette d’origine : [Figma](https://www.figma.com/design/kHqSTLbPioSwXsh0URi7BB/Untitled?node-id=0-1&m=dev)
 
 ## Philosophie
 
-AgentScope est une fenêtre sur le comportement d’agents IA.
+AgentLen est une fenêtre sur le comportement d’agents IA.
 
 - Moins d’UI, plus de clarté
 - Moins de texte, plus de hiérarchie
 - Moins de boutons, plus d’actions contextuelles
 - Moins de bruit, plus d’espace négatif
 
-Le produit doit paraître light, calme, précis, premium, modulaire. Futuriste mais quiet.
+Le produit doit paraître calme, précis, premium, modulaire. Futuriste mais quiet.
 
 Éviter : SaaS générique, corporate, crowding, cyberpunk, néon excessif, glass excessif, titres gras.
 
-Équilibre visuel : **80%** neutres lumineux / **15%** liquid glass / **5%** accents.
+Équilibre visuel : **80%** neutres / **15%** liquid glass / **5%** accents.
 
 ## Direction visuelle
 
-- Light mode uniquement
-- Fond lumineux `#F5F8F9` avec halos cyan / mint / blue / magenta / pink très flous, faible opacité
-- Modules Bento en liquid glass (blanc semi-transparent, blur, bordure claire, ombre diffuse, refraction)
-- Typo display : Kanit Italic 300–400
-- Typo UI : Manrope 400–500
-- Contraste fort contenu / fond (`#182228` sur glass)
+- Light **et** dark, via tokens globaux (`:root` / `.dark`) et `ThemeToggle`
+- Light : fond lumineux `#F5F8F9`, texte `#101618`
+- Dark : fond `#0D1417`, texte `#F5F8F9`
+- Halos cyan / mint / blue / magenta / pink très flous
+- Modules Bento en liquid glass (blur, bordure, ombre diffuse, refraction)
+- Typo unique : Inter 400–500 (titres un peu plus tracking négatif)
+- Contraste fort contenu / fond
 - Un focus primaire par page, 2–3 secondaires
 - Une action primaire visible, au plus une secondaire. Le reste va dans `OverflowMenu`, hover, lien texte
+- Branding visible : **AgentLen** (jamais AgentScope)
 
 ## Règles d’implémentation
 
@@ -55,6 +57,7 @@ Le produit doit paraître light, calme, précis, premium, modulaire. Futuriste m
 8. Ne pas remplir un grand module Bento. Titre + valeur/visuel + une info support.
 9. Une donnée absente reste absente. Jamais `0` à la place d’une valeur manquante.
 10. Respecter `prefers-reduced-motion`.
+11. Aucune police hors Inter. Aucune couleur de thème locale. `PageHeader` = titre seul, pas de sous-titre.
 
 ## Stack
 
@@ -66,12 +69,12 @@ Classes structurelles :
 - `glass-surface` — panneau glass statique
 - `glass-module` — module Bento interactif (`data-interactive`, `data-state="selected"`)
 - `bento-grid` — grille 1 / 6 / 12 colonnes
-- `font-display` — Kanit italic
+- `font-display` — Inter, tracking serré (alias de `font-sans`)
 - `text-display|hero|page|section|kpi|card|body|secondary|meta`
 
 ## Étendre le système
 
-1. Ajouter le token dans `:root` puis `@theme inline` de `globals.css`.
+1. Ajouter le token dans `:root` et `.dark` si besoin, puis `@theme inline` de `globals.css`.
 2. Créer ou étendre un composant dans `components/ui/` avec `cva`.
 3. Documenter la variante dans [components.md](components.md) et `docs/architecture/design-system.md`.
 4. Consommer le composant depuis la feature. Ne jamais recopier ses classes.

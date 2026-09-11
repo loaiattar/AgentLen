@@ -3,7 +3,9 @@ from uuid import uuid4
 import pytest
 
 from agentlen.domain.errors import (
+    InvalidNaturalKeyFieldError,
     MissingNaturalKeyError,
+    MissingSequenceIndexError,
     UnknownTargetFieldError,
     UnsupportedOperatorError,
 )
@@ -106,7 +108,7 @@ def test_multiple_errors_all_returned():
         ]
     )
     errors = validate(mapping)
-    assert len(errors) == 2  # unknown field + unsupported operator
+    assert len(errors) == 3  # unknown field + unsupported operator + unproduced natural key
 
 
 def test_unknown_entity_target_returns_error():
@@ -314,3 +316,82 @@ def test_list_marker_in_a_source_is_only_accepted_as_the_iterate_prefix():
         )
     ]
     assert "iterate" in errors[0].message
+
+
+def test_natural_key_must_reference_a_produced_field():
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="session",
+                natural_key=["source_session_id"],
+                fields=[FieldRule(target="external_id", source="$.session_id")],
+            )
+        ]
+    )
+
+    errors = validate(mapping)
+
+    assert len(errors) == 1
+    assert isinstance(errors[0], InvalidNaturalKeyFieldError)
+    assert errors[0].code == "MAPPING_INVALID_NATURAL_KEY"
+    assert errors[0].field_path.endswith("natural_key[0]")
+
+
+def test_non_iterated_call_requires_an_explicit_sequence_index():
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="model_call",
+                natural_key=["sequence_index"],
+                fields=[FieldRule(target="model_name", source="$.model")],
+            )
+        ]
+    )
+
+    errors = validate(mapping)
+
+    assert {error.code for error in errors} == {
+        "MAPPING_INVALID_NATURAL_KEY",
+        "MAPPING_MISSING_SEQUENCE_INDEX",
+    }
+    assert any(isinstance(error, MissingSequenceIndexError) for error in errors)
+
+
+def test_iterated_call_has_an_implicit_stable_sequence_index():
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="tool_call",
+                natural_key=["sequence_index"],
+                iterate="$.tools",
+                fields=[FieldRule(target="tool_name", source="$.name")],
+            )
+        ]
+    )
+
+    assert validate(mapping) == []
+
+
+def test_empty_iterate_is_not_treated_as_iterated():
+    """`iterate: ""` must fail the same guards as `iterate: null`.
+
+    The wire schema accepts it (`str | None`, no min_length) and
+    `TransformationEngine.apply` tests `iterate` for truthiness, so an empty
+    string is a flat entity for the engine. An `is not None` test here granted
+    it the implicit sequence_index and skipped the missing-index check at once.
+    """
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="model_call",
+                natural_key=["sequence_index"],
+                iterate="",
+                fields=[FieldRule(target="model_name", source="$.model")],
+            )
+        ]
+    )
+
+    assert {error.code for error in validate(mapping)} == {
+        "MAPPING_INVALID_NATURAL_KEY",
+        "MAPPING_MISSING_SEQUENCE_INDEX",
+    }

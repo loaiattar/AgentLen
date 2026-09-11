@@ -1,158 +1,224 @@
 # AgentLen
 
-AgentLen ingests traces from AI coding agents (Claude Code, Codex, ...), normalizes them into a common relational model, and exposes them through a dashboard.
+AgentLen ingère les traces d'agents de code IA (Claude Code, Codex, ...), les normalise dans un modèle relationnel commun, et les expose via un dashboard.
 
-- Architecture : [`docs/architecture/`](docs/architecture/README.md)
+- Contrat API : [`docs/architecture/API.md`](docs/architecture/API.md)
+- Architecture : [`docs/architecture/README.md`](docs/architecture/README.md)
 - Datasets : [`docs/datasets.md`](docs/datasets.md)
+- Conventions de travail : [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md)
+- Licence : [`LICENSE`](LICENSE)
 
-> This README currently documents the ingestion work in progress on `feat/jsonl-reader-profiler` (issue #3). It will be replaced by the full project README once the core setup lands.
+---
 
-## Quickstart
+## Prérequis
+
+Assurez-vous d'avoir installé les outils suivants sur votre machine :
+
+- **Docker** (avec Docker Compose)
+- **Python 3.12+** (uniquement pour lancer le backend hors Docker)
+- **Node.js >= 22.22.2** et **npm** (uniquement pour lancer le frontend hors Docker)
+- **gh CLI** authentifié (facultatif — requis seulement pour `make setup`/`make push`/`make ci`)
+
+---
+
+## Installation et lancement du projet
+
+### 1. Configurer les variables d'environnement
+
+- Dupliquez [`.env.example`](.env.example) en `.env` à la racine du projet.
+- Dupliquez [`frontend/.env.example`](frontend/.env.example) en `frontend/.env`.
+- Renseignez les valeurs nécessaires (voir les commentaires de chaque fichier).
+
+### 2. Lancer la stack complète via Docker
+
+À la racine du projet :
+
+```bash
+make up
+```
+
+Cela démarre la base de données Postgres, l'API, le worker d'import et le frontend, en construisant les images si besoin.
+
+- Frontend : http://localhost:8080
+- API : http://localhost:8000/api/v1
+- Documentation interactive de l'API (Swagger) : http://localhost:8000/docs
+
+Les migrations Alembic sont appliquées automatiquement au démarrage du conteneur `api`. Pour les rejouer manuellement (par exemple après avoir ajouté une migration) :
+
+```bash
+make migrate
+```
+
+Pour peupler la base avec une source et un mapping d'exemple (TraceLab) :
+
+```bash
+make seed
+```
+
+### 3. Lancer le backend en local, sans Docker
 
 ```bash
 python -m venv .venv
-.venv\Scripts\Activate.ps1   # PowerShell; use .venv/bin/activate on macOS/Linux
-pip install -r requirements.txt
-python -m pytest -v
+.venv\Scripts\Activate.ps1   # PowerShell ; .venv/bin/activate sur macOS/Linux
+pip install -e ".[dev]"
+pytest -q
 ```
 
-## Changes and improvements
+Nécessite une base Postgres accessible (via `docker compose up db` par exemple) et un `DATABASE_URL` valide dans `.env`.
 
-### Fixed — two review findings on the #29 session detail page
-- **Tokens KPI showed `0` instead of `—` for a real "no data" case.** The sum only guarded `modelCalls.length === 0`; a session with model calls but every `input_tokens`/`output_tokens` null (common with TraceLab) still summed to `0` and displayed it — violating the project's own "null isn't 0" rule (same as the dashboard). Fixed by tracking which calls report *any* token data at all: `—` now means "nothing known", not "zero calls".
-- **The Back link dropped the list's drill-down filters.** `<Link to="/sessions">` with no `search` prop resets the shared `/_app` search state — returning from a session opened while filtered by tool/day landed back on the unfiltered list. Added `search={(prev) => prev}`, the same pattern already used everywhere else this route is entered (`openSession`, `useSessionIdSearch`, the list row links).
+### 4. Lancer le frontend en local, sans Docker
 
-### Added — issue #29 (frontend: session detail page)
-- `frontend/src/features/sessions/pages/SessionDetailPage.tsx`: replaced the static design-mock (hardcoded "gpt-4.1", fake timeline) with a real page wired to the API. The data layer (`sessionsQueries.detail/.timeline/.record`, the `useSessionQuery`/`useSessionTimelineQuery`/`useRawRecordQuery` hooks, and the matching TypeScript types) already existed from #28 — this only builds the page that consumes it.
-- General info: duration, total tokens (summed across model calls, `—` when there are none — never a bare `0` for "no data"), model/tool call counts, agent/source ids, outcome badge, start/end instants — reusing `formatDurationMs`/`formatCount`/`formatInstant`/`outcomeTone` from `sessions/lib/format.ts` rather than duplicating formatting logic.
-- Timeline: each model/tool call renders via the existing `Timeline`/`TimelineItem` component, expandable for its own detail (tokens/duration for model calls, duration/error for tool calls) — nothing shown up front beyond time, type and status, per the issue's "reading over controls" brief.
-- Raw record drill-down: `GET /records/{raw_record_id}` is fetched lazily (`enabled` only once a "View raw record" button is clicked) into a `Drawer`, not eagerly for the whole timeline — the issue calls for it accessible on demand, not shown by default.
-- Verified: `tsc -b` and `oxlint` clean, `vite build` succeeds. **Not verified live in a browser** — no browser tool available here, and no Docker locally to run the real backend against real data; needs a manual check with `npm run dev`.
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-### Fixed — same class of CI failure, now in `test_mappings_routes.py`
-- `_seed_data_source()` defaulted to `slug="tracelab"` on every call. Unlike the repository's own `create()`, `POST /data-sources` genuinely 409s on a duplicate slug — so the second `@requires_postgres` test to call this without an explicit slug got a 409 instead of 201, and `response.json()["id"]` raised `KeyError: 'id'`. Same root cause as the `test_imports_routes.py` fix above, just a different file — CI (real Postgres) caught it, not local (Docker unavailable).
-- Fixed by generating a unique slug by default; `test_list_mappings_filters_by_data_source`'s two hardcoded slugs (`"tracelab"`/`"swe-chat"`) dropped in favour of the same unique default.
-- Also hardened `test_imports_routes.py::test_preview_rejects_an_invalid_mapping_with_422`, the one remaining bare `slug="tracelab"` literal anywhere in the e2e suite: safe today only because of pytest's current file collection order relative to `test_data_sources_routes.py`'s own `"tracelab"` — fragile, so gave it its own unique slug too rather than wait for a third CI round-trip on the same root cause.
+Le serveur de développement Vite proxifie les appels `/api` vers le backend (voir `frontend/.env.example`).
 
-### Fixed — CI formatting failure from Nabil's `develop` merge into #94
-- Nabil merged `develop` (which had just picked up #59, sessions exploration) directly into `feat/50-data-sources-files-routers` on GitHub — legitimate branch sync, but pushed without `ruff format`/`check`. Fixed formatting and import ordering in `app.py`/`dependencies.py`; full suite (347 passed), `mypy --strict` and import-linter stayed clean after the merge.
-- Merging that into this branch (#52) additionally conflicted in `app.py` on the router registration list — both branches added a line in the same spot (`mappings.router` here, `exploration.router` from the merge). Resolved by keeping both.
+---
 
-### Fixed — two CI failures on the real-Postgres e2e suite
-- `test_missing_required_field_is_a_422_not_a_500` (`test_data_sources_routes.py`) asserted the wrong status: a malformed request body is remapped to 400 (API.md §1 reserves 422 for business validation), not 422 — the test was wrong, not the app. Renamed and fixed the assertion.
-- `test_imports_routes.py`'s `_seed()` helper reused the same mapping name (`"tracelab-jsonl"`) on every call. `live_client`/`live_engine` share one Postgres across the whole CI run with no truncation between tests (unlike the contract suite's `clean_db`), and `mappings.save()` has no idempotence to fall back on the way `data_sources.create()`/`file_uploads.create()` do — so the second test to call `_seed()` collided on `uq_mapping_name_version` (`UniqueViolationError`). Fixed by generating a unique slug/name/hash per call.
-- Follow-up in the same round: missed one assertion (`body["mapping"]["name"] == "tracelab-jsonl"`) that still compared against the old hardcoded name instead of the one `_seed()` actually used — caught by CI, not locally (needs Postgres). `_seed()` now also returns `mapping_name` so the test asserts against the real value instead of a literal.
+## Scripts utiles
 
-### Fixed — `POST /files/{id}/profile` returned 500 on every real upload
-- Found during Nabil's Docker smoke test: `PolarsFileProfiler.profile()` infers the file format from the path's extension, but `LocalFileStorage` writes uploads content-addressed (`<root>/<hash[:2]>/<hash>`, no extension at all — #47) — `infer_format` raised `ValueError` on literally any real upload, surfaced as a raw 500.
-- The format is already known at profile time (`file_upload.format`, set from the magic bytes at upload); it just wasn't threaded through. Added an optional `format` parameter to the `FileProfiler` port, `PolarsFileProfiler.profile()` (falls back to `infer_format(path)` only when `format` is omitted — existing callers/fixtures unaffected) and `ProfileFileCommand`; the `/files/{id}/profile` route now passes `record.format` through instead of leaving the profiler to re-guess it from an extensionless path.
-- `tests/unit/test_polars_profiler.py`: reproduces the exact bug (a content-addressed path with no suffix) and confirms `format=` fixes it, plus confirms the no-format/no-extension case still fails with a clear error rather than silently guessing wrong.
-- Fixed on `feat/50-data-sources-files-routers` (PR #94) and merged into this branch since it inherited the same broken code.
+### À la racine du projet (Makefile)
 
-### Added — issue #52 (`/mappings` router — CRUD, validation, versioning)
-- `interfaces/http/routers/mappings.py`: `GET /api/v1/mappings` (filterable by `data_source_id`/`status`, paginated), `POST /api/v1/mappings` (201, validated before write — 422 with every error otherwise, nothing partial), `GET /api/v1/mappings/{id}`, `PUT /api/v1/mappings/{id}` (creates version N+1, marks the previous version `superseded`), `POST /api/v1/mappings/validate` (validates without saving — no `UnitOfWork` dependency at all, since nothing is ever written).
-- `interfaces/http/schemas/mappings.py`: wire shapes matching MAPPING_CONTRACT.md §2 (`FieldRuleIn/Out`, `EntityMappingIn/Out`, `MappingOut`, `MappingValidateOut`).
-- `application/ports/repositories.py`: extended `MappingRepository` with `get_by_id`/`list_records`/`count`/`supersede` — additive, the existing `get`/`save`/`list` (used by `RunImport`/`PreviewImport`) are untouched. Reuses `mapping_codec.mapping_to_document`/`document_to_mapping` (#45) rather than re-serialising the document by hand.
-- `POST /mappings` checks the referenced `data_source_id` exists (404) and that the name isn't already taken for that source (409) before writing — same pattern as `/data-sources` and `/imports`.
-- Hit a real `mypy --strict` gotcha: a Protocol/class with a method literally named `list` shadows the builtin `list[...]` in every bare-generic annotation that follows it in the same class body (mypy resolves the name against the class's own namespace once `list` exists there). Fixed by ordering `get_by_id`/`list_records`/`count`/`supersede` before `get`/`save`/`list` in both `MappingRepository` and `SqlAlchemyMappingRepository`.
-- `tests/contract/test_repository_contract.py`: coverage for the new repository methods (get_by_id, filtering, pagination, supersede leaves the document untouched), run against both implementations.
-- `tests/e2e/test_mappings_routes.py`: full route coverage. The `/validate` tests and the "invalid document" 422 on `POST /mappings` need no database at all (validation runs before the `UnitOfWork` is even opened) and genuinely ran this session — the rest need Postgres (Docker unavailable locally), written but unverified against a real database.
-- Branch built on top of `feat/50-data-sources-files-routers` (PR #94, not yet merged) rather than `develop`, to reuse its plumbing (`UnitOfWork` wiring, `DataSourceRepository.get_by_id`) instead of redoing it — will need a `git rebase origin/develop` once #94 merges.
+| Commande | Description |
+|---|---|
+| `make setup` | Installation unique — fait en sorte que `git push` streame la CI automatiquement (à lancer après le clone) |
+| `make push` | Push la branche courante et streame la CI en direct |
+| `make ci` | Affiche le statut de la CI pour la branche courante |
+| `make ci-watch` | Suit en direct le run de CI actif sur la branche courante |
+| `make ci-logs RUN=<id>` | Affiche les logs complets d'un run précis |
+| `make lint` | Lance tous les contrôles qualité bloquants, comme en CI (`ruff format --check`, `ruff check`, `mypy --strict`, `lint-imports`) |
+| `make format` | Applique le formatage et les correctifs de lint sûrs |
+| `make test` | Tests unitaires et contract (la partie SQL nécessite une base, sinon elle est ignorée) |
+| `make test-all` | Tous les tests, y compris intégration et end-to-end (nécessite Docker ou `TEST_DATABASE_URL`) |
+| `make up` | Démarre db + api + worker + frontend (http://localhost:8080) |
+| `make down` | Arrête la stack Docker Compose |
+| `make migrate` | Applique les migrations Alembic dans le conteneur `api` |
+| `make seed` | Crée la source TraceLab et son mapping, puis importe le fichier d'exemple |
+| `make logs` | Suit les logs de toute la stack Docker Compose |
+| `make help` | Liste toutes les commandes disponibles |
 
-### Fixed — mapping validator error codes, ahead of issue #52 (`/mappings` router)
-- `domain/errors.py`: `UnsupportedOperatorError`/`UnknownTargetFieldError` carried `UNSUPPORTED_OPERATOR`/`UNKNOWN_TARGET_FIELD` — neither matches what API.md and MAPPING_CONTRACT.md §4 actually document (`MAPPING_UNKNOWN_OPERATOR`/`MAPPING_UNKNOWN_TARGET`), and #52's acceptance criteria tests for the documented codes specifically. Renamed both.
-- Added `MissingNaturalKeyError` (`MAPPING_MISSING_NATURAL_KEY`) and wired it into `mapping_validator._validate_entity`: an entity with no `natural_key` was never flagged — MAPPING_CONTRACT.md §4 lists this as a required structural check ("`natural_key` complète"), and #52 tests for it explicitly.
-- Updated `tests/unit/domain/test_mapping_validator.py` and `tests/e2e/test_error_envelope.py` for the renamed codes; added coverage for the new check.
+### Backend, hors Docker
 
-### Added — issue #56 (`/imports` router — preview, launch, history, status, issues)
-- `interfaces/http/routers/imports.py`: `POST /api/v1/imports/preview` (dry-run, on top of the existing `PreviewImport` use case), `POST /api/v1/imports` (202, creates the `import_run` row in `pending` — exactly what `interfaces/cli/seed.py` already does by hand; the worker from #55 claims and runs it, nothing here reimplements that loop), `GET /api/v1/imports` (paginated history), `GET /api/v1/imports/{id}` (status + report, joined with the source/file/mapping refs), `GET /api/v1/imports/{id}/issues` (paginated, filterable by severity).
-- `interfaces/http/schemas/imports.py`: wire shapes matching API.md §5 exactly (`ImportPreviewOut`, `ImportStatusOut`, `ImportIssueOut`, ...).
-- `application/ports/repositories.py`: extended `ImportRunRepository` with `list()`/`count()` and `ImportIssueRepository` with `count()` — both additive, needed for the paginated envelope (`{items, total, limit, offset}`).
-- `GET /imports/{id}` and the history list read `data_source`/`file`/`mapping` via three reads on the already-open `UnitOfWork` rather than a dedicated SQL view — the same call this project already made for the dashboard reads, not worth a view for three scalars.
-- `POST /imports` and `POST /imports/preview` validate the referenced ids up front (`NotFoundError` -> 404) instead of letting a foreign-key violation reach the client as a raw 500.
-- `tests/contract/test_repository_contract.py`: coverage for `import_runs.list()`/`.count()` ordering and pagination, run against both the in-memory and SQL implementations.
-- `tests/e2e/test_imports_routes.py`: full route coverage — launch, unknown-ref 404s, joined status, paginated history, issues + severity filter, invalid-mapping 422 on preview. Everything but the malformed-body case needs Postgres (Docker), so only that one ran locally this session — the rest are unverified against a real database until CI or a Docker-equipped machine runs them.
-- Second half of the reconciliation with Nabil's PR #92 (issue #89): his branch's plumbing didn't cover `/imports` at all (only the DTO/port/UoW/dependencies changes, no router), so this was built from scratch against the existing `PreviewImport`/`RunImport`/`PostgresJobQueue` use cases from #51/#55.
+- `pytest tests/unit tests/contract -q` — tests unitaires et contract
+- `pytest -q` — suite complète (intégration et e2e inclus)
+- `ruff format .` / `ruff check .` — formatage et lint
+- `mypy --strict src/agentlen` — vérification de types
+- `lint-imports` — vérifie la règle de dépendance entre couches ([`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md))
 
-### Added — issue #50 (`/files` router — upload, metadata, profiling)
-- `interfaces/http/routers/files.py`: `POST /api/v1/files` (multipart upload, 201), `GET /api/v1/files/{id}` (metadata), `POST /api/v1/files/{id}/profile` (200) — the second half of #50, closing it out on top of `/data-sources`.
-- `interfaces/http/schemas/files.py`: `FileUploadOut`/`FieldProfileOut`/`FileProfileOut` wire shapes.
-- `interfaces/http/dependencies.py`: wired `get_file_storage` (`LocalFileStorage`, rooted at `<repo>/storage/uploads`), `get_file_reader` (`PolarsRecordReader`) and `get_file_profiler` (`PolarsFileProfiler`) for real, replacing their `_not_wired` placeholders — nothing reimplemented, `UploadFile`/`ProfileFile` (#47/#48) and the existing storage/profiler adapters are wired as-is.
-- `interfaces/http/errors.py`: added the `FileStorageError` handler (-> 422, e.g. `UNSUPPORTED_FILE_FORMAT`) — a disallowed extension was previously falling through to the generic 500 handler with no code, contradicting API.md §1.
-- `tests/e2e/test_files_routes.py`: upload + metadata + profiling coverage, plus a duplicate-content ("already_seen") case and a 404 on both metadata and profiling for an unknown id. The extension-rejection test runs without Postgres, since `LocalFileStorage` refuses the file before any row is touched.
-- Found while reconciling with a colleague's parallel PR (#92, `Closes #89`) covering overlapping scope: its plumbing changes (dependency wiring style, `FileStorageError` handler) matched what this issue needed, but its branch as pushed was missing the router/schema/test files its own `app.py` imported — confirmed via a scratch worktree (`ImportError` on startup). Rebuilt independently against this issue's fuller `DataSourceRecord` (API.md §2 requires `dataset_version`/`retrieved_at`, absent from the other branch's version).
+### Frontend ([`frontend/package.json`](frontend/package.json))
 
-### Added — issue #50 (`/data-sources` router)
-- `interfaces/http/routers/data_sources.py`: `GET /api/v1/data-sources` (list) and `POST /api/v1/data-sources` (create, 201) — the first half of #50, before `/files` (the upload half).
-- `interfaces/http/schemas/data_sources.py`: `DataSourceOut`/`DataSourceCreateIn` wire shapes.
-- `application/ports/repositories.py`: extended `DataSourceRepository` with `get_by_id`, `list`, and additive `create(...)` kwargs (description, url, license, dataset_version, retrieved_at).
-- `infrastructure/persistence/repositories/sql.py` and `tests/fakes/repositories.py`: matching implementations, kept in sync via the contract test suite.
-- `interfaces/http/dependencies.py`: wired `get_unit_of_work` for real (`SqlAlchemyUnitOfWork`), replacing its `_not_wired` placeholder — repository, session and mapping ports go through it now.
-- Fixed a latent `mypy --strict` gap surfaced by wiring the UoW for real: `SqlAlchemyUnitOfWork`'s repository attributes were untyped at the class level, so mypy inferred their concrete adapter types instead of the `UnitOfWork` protocol's port types — invariant under Protocol structural checks, so every repository attribute silently failed the check. Fixed by declaring them at the class level with the port types.
-- Fixed `tests/e2e/conftest.py`'s `client` fixture: its `ASGITransport` was missing `raise_app_exceptions=False`, so a genuinely unhandled exception (simulated via an unreachable database) propagated through httpx instead of returning the app's own clean `500 {"error": {"code": "INTERNAL_ERROR"}}` response — the one other e2e fixture that exercises this path (`raising_client` in `test_error_envelope.py`) already had the flag set.
-- `tests/e2e/test_data_sources_routes.py`: full route coverage (empty list, create + full record, appears in list, duplicate slug -> 409, missing field -> 422, database down -> 500 envelope).
+- `npm run dev` — lance le frontend en mode développement
+- `npm run build` — vérifie les types (`tsc -b`) puis génère le dossier `dist` pour le déploiement
+- `npm run lint` — lint avec Oxlint
+- `npm run test` — tests avec Vitest
+- `npm run test:watch` — tests en mode watch
+- `npm run test:coverage` — tests avec rapport de couverture
+- `npm run preview` — prévisualise le build de production
 
-### Added — issue #48 (CSV/Parquet profiling, wired to the domain port)
-- `polars_reader.py`: `read_csv`, `read_parquet` alongside `read_jsonl`. All three are now **lazy** (`pl.scan_*`, return `LazyFrame`) instead of eager reads, so a large file is never loaded whole. Added `scan_file(path, format=...)` dispatcher and `infer_format(path)` (suffix-based).
-- `polars_profiler.py`: rewritten as `PolarsFileProfiler`, a concrete implementation of the `FileProfiler` port (`application/ports/file_reader.py`). `profile(path, sample_size=500)` now returns the domain's `FileProfile`/`FieldProfile` dataclasses (not a Polars object — a leaked Polars type across the port boundary was a stated PR-rejection criterion).
-  - Nested fields (structs and lists of structs) are recursively flattened into JSONPath-addressed leaves, e.g. `$.tools[].tool_name`.
-  - `record_count` is the file's real total row count (cheap `pl.len()` scan); `sampled_records` is bounded by `sample_size` — the two are computed independently so profiling stays bounded on large files.
-  - Per field: `types` (including `"null"` when nulls are present), `null_ratio`, `distinct_ratio`, `min`/`max` (numeric fields only), `examples`.
-- `application/use_cases/profile_file.py`: new `ProfileFile` use case — calls the port, then stamps the real `file_id` onto the resulting profile (the port itself is source-agnostic).
-- `tests/fixtures/profiler/`: small flat dataset generated identically as `.jsonl`/`.csv`/`.parquet` (`generate_flat_sample.py`), used to test that all three formats produce equivalent `FileProfile`s.
-- Test coverage: lazy reading per format, format inference, nested-field flattening on the real TraceLab sample, exact `null_ratio` computation, `record_count` vs `sampled_records` distinction, no-Polars-type-leak check, cross-format equivalence.
-- `pyproject.toml` dev extras (`pytest-asyncio`, `mypy`, `import-linter`, `ruff`) — verified locally: `mypy --strict` and `import-linter` both pass on `domain/`/`application/`.
+---
 
-### Fixed — review findings on PR #66 (loaiattar)
-- **`examples` reached the mapping agent's prompt unsanitized** — a raw API key or home path in a source file leaked straight through `file_profile.fields[].examples` (MAPPING_CONTRACT.md §5), even though `sample_records` was already redacted. Now goes through `sanitize_value` (the `SampleSanitizer` from #44), same as everything else that reaches a provider.
-- **A field appearing after row 100 silently vanished from the profile** — `scan_ndjson`/`scan_csv` only infer the schema from their first `infer_schema_length` rows (Polars default: 100), independently of `sample_size` (default: 500). `infer_schema_length` now follows `sample_size` (floored at 100).
-- **`distinct_ratio` could never reach `1.0` on a nullable column** — it divided unique non-null values by the *total* row count instead of the non-null count, capping a fully-unique-but-nullable key below the 1.0 threshold `MAPPING_CONTRACT.md` §5 uses as the natural-key signal.
-- **JSONPath collisions on dotted field names** — a raw field literally named `"a.b"` rendered identically to a nested field `a.b` from a struct (`$.a.b` either way). Segments are now escaped to `$["a.b"]` when the raw name isn't a plain identifier.
-- **`profile()` blocked the event loop** — both `collect()` calls were synchronous inside an `async def`; on `POST /files/{id}/profile` that would stall every other concurrent FastAPI request for the duration of the profile. Now runs via `asyncio.to_thread`.
-- `_type_name`'s fallback (`str(dtype).lower()`) leaked raw Polars reprs (e.g. `"decimal(precision=38, scale=2)"`) across the port boundary — the exact leak the port exists to prevent. `Decimal`/`Duration` are now named explicitly; anything else reports `"unknown"`. `Decimal` also now gets `min`/`max` like other numeric types.
-- `sample_size <= 0` now raises a clear `ValueError` instead of silently profiling nothing (`0`) or leaking a raw Polars `ValueError` (`-1`).
-- An empty (0-byte) file now returns a `record_count=0` profile instead of crashing with a raw Polars `ComputeError` during schema inference.
-- The cross-format test checked each of jsonl/csv/parquet against fixed values independently — a real divergence between two formats would have passed silently. Added a direct three-way comparison of the `FileProfile`s.
-### Added — issue #46 (RecordNormalizer + referentials resolution)
-- `domain/model/reference.py`: `ReferenceRequest` (kind + name), declarative only — the domain never does I/O.
-- `domain/services/record_normalizer.py`: `RecordNormalizer.normalize(mapping, raw, data_source_id=..., line_number=...)` assembles `TransformationEngine`'s flat field values into linked `Session`/`ModelCall`/`ToolCall` domain entities — session built first, children linked to it via the generated UUID, `sequence_index` deduced from an explicit field or the deterministic iteration order, `MAPPING_MISSING_NATURAL_KEY`/`PARENT_SESSION_MISSING` issues on failure, and `ReferenceRequest`s collected for every agent/provider/model/tool name encountered.
-- `application/ports/repositories.py`: added `ReferentialRepository` (upsert-by-name for provider/model/agent/tool/repository — didn't exist yet).
-- `application/use_cases/resolve_references.py`: `ResolveReferences` upserts `ReferenceRequest`s through that port, with a per-instance cache so the same name declared by several records only hits the repository once per import run.
-- **Fixed a gap in `TransformationEngine` (Lot A, already merged)**: a `required` field that was simply absent from the source (no operator exception) rejected its entity with **zero** `ImportIssue` — silently, which contradicts the project's "an explained rejection" principle. Now emits `MISSING_REQUIRED_FIELD`.
-- Tests: entity assembly/linking/sequence_index/natural-key/rejection cascade in `tests/unit/domain/test_record_normalizer.py`; caching/reuse behaviour (with an in-memory fake repository, no DB needed) in `tests/unit/application/use_cases/test_resolve_references.py`.
+## Documentation
 
-### Fixed — review findings on PR #67 (loaiattar)
-- **`sequence_index` broke reimport idempotence** — it was derived from a row's rank among *survivors*, not its position in the source. Rejecting a middle row shifted every later row's key, so fixing that row and reimporting inserted the shifted rows a second time under a new key (ARCHITECTURE.md §11's idempotence acceptance test). `TransformationEngine.apply()` now returns each result's `source_index` (position before any rejection); `RecordNormalizer` uses that instead of its own loop rank.
-- **Three ways a single bad row could crash the whole import** instead of producing a rejection: `data["external_id"]`/`data["tool_name"]` indexed directly even though `natural_key` doesn't guarantee their presence (→ `KeyError`), and an out-of-enum `status`/`outcome` (e.g. a source writing `"success"` instead of `"ok"`) raised straight out of the entity's `__post_init__` (→ `ValueError`). Entity construction is now wrapped in `try/except`, converting both into an `ENTITY_CONSTRUCTION_FAILED` `ImportIssue` — the row is skipped, the rest of the import continues.
-- **Multiple session rows from one record were silently dropped to the first** — nothing in `EntityMapping`/`MappingValidator` actually forbids `iterate` on the session entity. Now emits a `MULTIPLE_SESSIONS_IGNORED` warning for the discarded ones instead of losing them with zero trace.
-- **`ReferentialRepository.resolve(kind, name)` couldn't satisfy the schema** — `model` is unique on `(provider_id, name)`, not `name` alone (`DATA_MODEL.md` §4). `ReferenceRequest`/`ReferentialRepository.resolve` gained a `context` field/param for composite keys, decided now rather than surfacing as a `NOT NULL` violation deep in #45's adapter. `RecordNormalizer` now emits the provider as context on every model reference; `ResolveReferences`' cache key includes context, so two providers publishing a same-named model no longer collapse into one row. `repository` reference requests are still not emitted — `Session` has no repository/host/owner field yet, a domain-model gap flagged for a follow-up, not papered over here.
-- `sequence_index` is now cast to `int` during construction (same try/except catches a bad cast too).
-- `PARENT_SESSION_MISSING` is now emitted once per affected entity type (`model_call`, `tool_call`), not once per child — was inflating `ImportReport.issues` 8x on a rejected session with 8 children.
-- 12 new tests added directly reproducing each scenario above (reimport-after-fix, missing-optional-field crash, invalid status/outcome, multiple sessions, model/provider context, cache non-collapse, int cast).
+| Document | Contenu |
+|---|---|
+| [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md) | Couches, règle de dépendance, ports et adaptateurs, flux principaux, sécurité, tests |
+| [`docs/architecture/API.md`](docs/architecture/API.md) | Contrat REST v1 : routes, schémas, conventions d'erreur et de valeurs absentes, drill-down |
+| [`docs/architecture/DATA_MODEL.md`](docs/architecture/DATA_MODEL.md) | Diagramme relationnel, grain de chaque table, stratégie d'idempotence |
+| [`docs/architecture/MAPPING_CONTRACT.md`](docs/architecture/MAPPING_CONTRACT.md) | Format du document de mapping, whitelist d'opérateurs, validation |
+| [`docs/architecture/AGENT.md`](docs/architecture/AGENT.md) | Boucle agentique IA, tools disponibles, politique de contexte |
+| [`docs/architecture/frontend.md`](docs/architecture/frontend.md) | Architecture frontend (stack, features, routing) |
+| [`docs/architecture/design-system.md`](docs/architecture/design-system.md) | Tokens, composants `components/ui/` |
+| [`docs/architecture/decisions.md`](docs/architecture/decisions.md) | ADR : contexte, décision, alternatives écartées, conséquences |
+| [`docs/datasets.md`](docs/datasets.md) | Provenance, versions et méthode de sélection des jeux de données |
+| [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | Modèle de branches, conventions de commit, revue de PR |
 
-### Added — issue #43 (transformation engine operators)
-- `domain/services/transformation_engine.py`: implemented 5 of the 6 operators that were placeholders — `parse_datetime` (iso8601/unix_seconds/unix_millis/strptime, always UTC-aware, never falls back to a default date on failure), `coalesce` and `concat` (both resolve their own `sources` list of paths against the raw record, per `MAPPING_CONTRACT.md` §3), `hash` (sha256 over canonicalized `sources` values, same approach as `Deduplicator.content_hash` — stable regardless of key order), `regex_extract` (uses `google-re2`, not the stdlib `re`, so a pathological pattern like `(a+)+$` can't cause catastrophic backtracking — the timeout guarantee is structural).
-- `domain/errors.py`: added `OperatorFailedError` (carries a stable `ImportIssue` code, e.g. `DATETIME_PARSE_FAILED`) and `InvalidOperatorParamError` (e.g. an uncompilable regex).
-- `_apply_operator` now also receives the raw row, needed by `coalesce`/`concat`/`hash` since they read several source fields, not just the field's own pre-extracted value.
-- Added `google-re2` as a project dependency + a mypy override (it ships no type stubs).
-- Tests: one nominal + one failure case per operator, in `tests/unit/domain/test_transformation_engine_operators.py`.
-- **Rebased onto `develop`**, which had tightened `import-linter`'s contract in the meantime to forbid `re2` in `domain/` (previously not listed) — `regex_extract`'s original direct `import re2` now failed CI. Fixed by extracting a `RegexExtractor` Protocol in `transformation_engine.py` and moving the concrete re2 implementation to `infrastructure/text/re2_regex_extractor.py`, injected into the engine's constructor. Using `regex_extract` without one configured now fails clearly (`REGEX_EXTRACTOR_NOT_CONFIGURED`) instead of an import error.
+---
 
-**Not done — `split_rows` is blocked on a design question, raised with the team rather than guessed:** every other operator is `value -> value`, but `split_rows` is described as "one source record produces N target rows" at the *field* level, which doesn't fit that contract (the engine already has an equivalent mechanism at the *entity* level via `entity_mapping.iterate`). Needs clarification on how a field-level operator is meant to fan out into multiple rows before implementing it.
+## Endpoints de l'API backend
 
-### Added — issue #3 (original ingestion utilities)
-- Real sample extract from TraceLab (`data/samples/tracelab_example_session.jsonl`), 19 rows, sanitized public example pulled from `uw-syfi/TraceLab` (`example_sessions/sanitized/round_trace.jsonl`).
-- Project scaffolding: `pyproject.toml` (pytest config, `pythonpath = ["src"]`), `requirements.txt` (polars, pytest), `.gitignore`.
+Toutes les routes sont préfixées par `/api/v1` (voir [`src/agentlen/interfaces/http/app.py`](src/agentlen/interfaces/http/app.py)). `/health`, `/health/ready` et `/version` restent aussi disponibles sans préfixe pour les sondes d'orchestrateur. Contrat complet, schémas et codes d'erreur : [`docs/architecture/API.md`](docs/architecture/API.md).
 
-### Fixed
-- `profile_fields` initially cast example values to `Utf8` directly through Polars, which crashed on nested columns (e.g. `timing_events`, a list of structs) with `InvalidOperationError: cannot cast List type ... to String`. Fixed by converting example values to Python objects first (`Series.to_list()`) and stringifying them with `str()`, which works for any column type, nested or not. (Superseded by the recursive flattening added in #48, which handles nested columns field-by-field rather than stringifying the whole value.)
+### Service — [`routers/service.py`](src/agentlen/interfaces/http/routers/service.py)
 
-## Status
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/health` | Liveness — le process est en vie |
+| GET | `/health/ready` | Readiness — dépendances joignables et schéma à jour |
+| GET | `/version` | Version de l'application |
 
-- 158/158 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files this issue touches.
-- `infrastructure/files/` now implements the `FileReader`-adjacent scanning helpers and the `FileProfiler` port, and is wired into `application/use_cases/profile_file.py`. Not yet wired into an HTTP route or a persisted `file_upload` (that's Lot E / #47 / #50).
-- All findings from loaiattar's review on PR #66 addressed (see changelog above).
-- 61/61 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean on the files issue #46 touches. Rebased onto latest `develop`.
-- **Known gap, not fixed here**: `mapping_validator._SCHEMA` accepts `session.repository_url`, `model_call.reasoning_tokens` and `tool_call.arguments`, none of which `RecordNormalizer` reads — a validated mapping can silently lose those fields. Needs the domain entities extended before it can be fixed; flagged for the team rather than worked around.
-- 142/142 tests passing (`pytest`), `ruff`/`mypy --strict`/`import-linter` clean, rebased onto latest `develop`.
-- 5 of 6 transformation-engine operators done; `split_rows` pending a team decision (see above) — opening the PR now for the 5 that are done rather than waiting.
+### Auth — [`routers/auth.py`](src/agentlen/interfaces/http/routers/auth.py)
+
+| Méthode | Route | Description |
+|---|---|---|
+| POST | `/api/v1/auth/register` | Crée un compte avec un e-mail et un mot de passe |
+| POST | `/api/v1/auth/login` | Échange un couple e-mail/mot de passe contre un jeton de session |
+| POST | `/api/v1/auth/logout` | Invalide le jeton de session courant |
+| GET | `/api/v1/auth/me` | Utilisateur authentifié pour le jeton de session courant |
+
+### Data sources — [`routers/data_sources.py`](src/agentlen/interfaces/http/routers/data_sources.py)
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/api/v1/data-sources` | Liste les sources de données déclarées |
+| POST | `/api/v1/data-sources` | Déclare une nouvelle source de données |
+
+### Files — [`routers/files.py`](src/agentlen/interfaces/http/routers/files.py)
+
+| Méthode | Route | Description |
+|---|---|---|
+| POST | `/api/v1/files` | Dépose un fichier (`multipart/form-data`) |
+| GET | `/api/v1/files/{file_id}` | Métadonnées d'un fichier |
+| POST | `/api/v1/files/{file_id}/profile` | Profile un fichier stocké : types, cardinalité, ratio de nulls, exemples |
+
+### Mappings — [`routers/mappings.py`](src/agentlen/interfaces/http/routers/mappings.py)
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/api/v1/mappings` | Liste les mappings, filtrable par source et statut |
+| POST | `/api/v1/mappings` | Enregistre un mapping — validé avant écriture |
+| POST | `/api/v1/mappings/validate` | Valide un document sans l'enregistrer |
+| GET | `/api/v1/mappings/{mapping_id}` | Document complet d'un mapping |
+| PUT | `/api/v1/mappings/{mapping_id}` | Crée la version N+1 — l'ancienne version passe à `superseded` |
+
+### Imports — [`routers/imports.py`](src/agentlen/interfaces/http/routers/imports.py)
+
+| Méthode | Route | Description |
+|---|---|---|
+| POST | `/api/v1/imports/preview` | Dry-run : transforme un échantillon, n'écrit rien |
+| POST | `/api/v1/imports` | Lance un import (asynchrone — statut via `GET /imports/{id}`) |
+| GET | `/api/v1/imports` | Historique des imports, plus récents en premier |
+| GET | `/api/v1/imports/{import_run_id}` | Statut et rapport complet d'un import |
+| GET | `/api/v1/imports/{import_run_id}/issues` | Rejets, doublons et avertissements, paginés |
+
+### AI mapping — [`routers/ai.py`](src/agentlen/interfaces/http/routers/ai.py)
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/api/v1/ai/providers` | Fournisseurs IA disponibles et leur statut |
+| POST | `/api/v1/mappings/proposals` | Génère une proposition de mapping par l'agent IA |
+| GET | `/api/v1/mappings/proposals/{proposal_id}` | Relit une proposition existante |
+| POST | `/api/v1/mappings/proposals/{proposal_id}/messages` | Affine une proposition via un message (boucle agentique) |
+| PATCH | `/api/v1/mappings/proposals/{proposal_id}` | Corrige manuellement une proposition |
+
+### Exploration — [`routers/exploration.py`](src/agentlen/interfaces/http/routers/exploration.py)
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/api/v1/sessions` | Liste des sessions, paginée et filtrable |
+| GET | `/api/v1/sessions/{id}` | Détail d'une session avec ses appels |
+| GET | `/api/v1/sessions/{id}/timeline` | Événements ordonnés d'une session |
+| GET | `/api/v1/records/{raw_record_id}` | Enregistrement brut source d'une entité |
+
+### Metrics — [`routers/metrics.py`](src/agentlen/interfaces/http/routers/metrics.py)
+
+| Méthode | Route | Description |
+|---|---|---|
+| GET | `/api/v1/metrics/definitions` | Comment chaque indicateur est calculé, et sa politique sur les données manquantes |
+| GET | `/api/v1/metrics/overview` | Les quatre indicateurs clés, chacun avec sa couverture |
+| GET | `/api/v1/metrics/activity` | Sessions et tokens par jour et par source |
+| GET | `/api/v1/metrics/tools` | Volume d'appels et taux d'erreur par outil |
+| GET | `/api/v1/metrics/models` | Volume d'appels et tokens par modèle et fournisseur |
+| GET | `/api/v1/metrics/quality` | Ce que chaque import a reçu et rejeté |

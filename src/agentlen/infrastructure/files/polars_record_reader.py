@@ -29,7 +29,7 @@ from typing import Any, NoReturn
 
 from agentlen.application.ports.file_reader import SourceItem
 from agentlen.domain.model.import_run import ImportIssue
-from agentlen.infrastructure.files.polars_reader import infer_format, scan_file
+from agentlen.infrastructure.files.polars_reader import infer_format, read_head, scan_file
 
 
 class PolarsRecordReader:
@@ -66,7 +66,7 @@ def _records(
     if format_ == "jsonl":
         yield from _jsonl_records(path)
         return
-    lazy = scan_file(path, format=format_)
+    lazy = scan_file(path, format=format_) if limit is None else read_head(path, format_, limit)
     if limit is not None:
         lazy = lazy.head(limit)
     for frame in lazy.collect_batches(chunk_size=chunk_size):

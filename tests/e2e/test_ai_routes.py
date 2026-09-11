@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 from sqlalchemy import insert, select
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.dto.mapping_document import document_to_mapping
 from agentlen.application.errors import AnalyzerError
 from agentlen.domain.model.mapping import MappingProposal
+from agentlen.infrastructure.ai.factory import supported_providers
 from agentlen.infrastructure.ai.fake_adapter import FakeAnalyzer
 from agentlen.infrastructure.config.settings import AISettings
 from agentlen.infrastructure.persistence import tables as t
+from agentlen.interfaces.http import dependencies
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.dependencies import get_analyzer_factory, get_provider_status
 
-from .conftest import asgi_client, requires_postgres
+from .conftest import UNREACHABLE_URL, asgi_client, requires_postgres
 
 
 @pytest.fixture
@@ -181,3 +185,64 @@ async def test_unknown_proposal_is_404(ai_client):
     response = await client.get("mappings/proposals/999999")
     assert response.status_code == 404
     assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+@pytest.mark.parametrize(
+    ("body", "field_path"),
+    [
+        ({"provider": "gemini", "model": "m"}, "body.provider"),
+        ({"provider": "anthropic"}, "body.model"),
+        ({"model": "two words"}, "body.model"),
+        ({"model": ""}, "body.model"),
+    ],
+)
+async def test_a_bad_provider_or_model_is_a_400_before_any_analyzer(body, field_path):
+    """An unknown provider used to reach the factory and come back as a 502."""
+    app = create_app(engine=create_async_engine(UNREACHABLE_URL))
+    built: list[tuple[str | None, str | None]] = []
+    app.dependency_overrides[get_analyzer_factory] = lambda: (
+        lambda provider, model: built.append((provider, model))
+    )
+
+    async with asgi_client(app, raise_app_exceptions=False, base_url="http://test/api/v1") as c:
+        response = await c.post("mappings/proposals", json={"file_id": 1, **body})
+
+    assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["code"] == "MALFORMED_REQUEST"
+    assert error["field_path"] == field_path
+    if field_path == "body.provider":
+        for accepted in supported_providers():
+            assert accepted in error["message"]
+    assert built == [], "no analyzer may be built for a rejected request"
+
+
+@requires_postgres
+async def test_a_slow_analysis_is_a_504_for_a_proposal_and_a_refinement(ai_client, monkeypatch):
+    """Through the real factory, reading AI_TOTAL_TIMEOUT_SECONDS."""
+    client, _, file_id, _, app = ai_client
+    created = await client.post("mappings/proposals", json={"file_id": file_id})
+    proposal_id = created.json()["proposal_id"]
+
+    class SlowAnalyzer(FakeAnalyzer):
+        async def run_agent_loop(self, profile, tool_executor, hint=None):
+            await asyncio.sleep(60)
+
+        async def refine(self, proposal, user_message, tool_executor, history=()):
+            await asyncio.sleep(60)
+
+    app.dependency_overrides.pop(get_analyzer_factory)
+    monkeypatch.setenv("AI_PROVIDER", "fake")
+    monkeypatch.setenv("AI_TOTAL_TIMEOUT_SECONDS", "0.05")
+    monkeypatch.setattr(dependencies, "build_structure_analyzer", lambda settings: SlowAnalyzer())
+
+    refined = await client.post(
+        f"mappings/proposals/{proposal_id}/messages", json={"message": "corrige"}
+    )
+    proposed = await client.post("mappings/proposals", json={"file_id": file_id})
+
+    for response in (refined, proposed):
+        assert response.status_code == 504
+        error = response.json()["error"]
+        assert error["code"] == "ANALYZER_TIMEOUT"
+        assert error["details"] == {"total_timeout_seconds": 0.05}

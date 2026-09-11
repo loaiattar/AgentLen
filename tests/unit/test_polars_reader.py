@@ -4,12 +4,15 @@ import polars as pl
 import pytest
 
 from agentlen.infrastructure.files.polars_reader import (
+    PREVIEW_INFER_SCHEMA_LENGTH,
     infer_format,
     read_csv,
+    read_head,
     read_jsonl,
     read_parquet,
     scan_file,
 )
+from agentlen.infrastructure.files.polars_record_reader import PolarsRecordReader
 
 SAMPLE_FILE = Path(__file__).parents[2] / "data" / "samples" / "tracelab_example_session.jsonl"
 FLAT_FIXTURES = Path(__file__).parents[2] / "tests" / "fixtures" / "profiler"
@@ -81,3 +84,35 @@ def test_infer_format(path, expected):
 def test_infer_format_rejects_unknown_suffix():
     with pytest.raises(ValueError):
         infer_format("data/x.xml")
+
+
+def _csv_with_a_string_at_row(path: Path, row: int, rows: int) -> Path:
+    """Column `n` holds integers except on data row `row`, which holds text."""
+    lines = ("oops,x" if i == row - 1 else f"{i},x" for i in range(rows))
+    path.write_text("\n".join(["n,s", *lines]) + "\n", encoding="utf-8")
+    return path
+
+
+def test_a_csv_preview_does_not_read_the_whole_file(tmp_path: Path) -> None:
+    """Row 50 001 turns `n` into text for whole-file inference. A one-record
+    preview that still reads `n` as an integer never went that far."""
+    path = _csv_with_a_string_at_row(tmp_path / "big.csv", row=50_001, rows=50_001)
+
+    preview = PolarsRecordReader().read_records(str(path), limit=1, format="csv")
+
+    assert preview == [{"n": 0, "s": "x"}]
+    # The import keeps whole-file inference (#176): the late text widens `n`.
+    batches = PolarsRecordReader().iter_batches(str(path), batch_size=10, format="csv")
+    assert next(iter(batches))[0] == {"n": "0", "s": "x"}
+
+
+def test_a_type_change_just_past_the_preview_window_falls_back_to_the_whole_file(
+    tmp_path: Path,
+) -> None:
+    """Polars parses beyond the rows it returns, so a bounded window can meet a
+    value it did not infer and fail. The preview must not fail where the
+    import reads the file: it retries with whole-file inference."""
+    row = PREVIEW_INFER_SCHEMA_LENGTH + 1
+    path = _csv_with_a_string_at_row(tmp_path / "near.csv", row=row, rows=4 * row)
+
+    assert read_head(path, "csv", 1).collect().to_dicts() == [{"n": "0", "s": "x"}]

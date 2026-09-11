@@ -96,6 +96,22 @@ class AnalyzerError(ApplicationError):
     code = "ANALYZER_FAILED"
 
 
+class AnalyzerTimeoutError(AnalyzerError):
+    """One analysis ran past its overall deadline. -> 504
+
+    Still an `AnalyzerError` (upstream fault, retry), with its own code.
+    """
+
+    code = "ANALYZER_TIMEOUT"
+
+    def __init__(self, total_timeout_seconds: float) -> None:
+        super().__init__(
+            f"L'analyse a dépassé le délai total de {total_timeout_seconds:g} s "
+            "(AI_TOTAL_TIMEOUT_SECONDS) et a été interrompue.",
+            details={"total_timeout_seconds": total_timeout_seconds},
+        )
+
+
 class InvalidCredentialsError(ApplicationError):
     """Login failed. -> 401
 

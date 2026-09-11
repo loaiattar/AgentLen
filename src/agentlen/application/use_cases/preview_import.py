@@ -13,6 +13,7 @@ are reported as they appear in the data instead.
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from typing import Any
 
@@ -76,7 +77,11 @@ class PreviewImport:
                 [{"code": e.code, "field_path": e.field_path, "message": e.message} for e in errors]
             )
 
-        records = self._reader.read_records(storage_path, limit=sample_size, format=file_format)
+        # Reading the file is blocking IO and parsing: done in a worker thread,
+        # so a preview does not hold up every other request on the event loop.
+        records = await asyncio.to_thread(
+            self._reader.read_records, storage_path, limit=sample_size, format=file_format
+        )
 
         would_import: dict[str, int] = defaultdict(int)
         rows: dict[str, list[dict[str, Any]]] = defaultdict(list)

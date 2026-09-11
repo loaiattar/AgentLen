@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import Any
 from uuid import uuid4
 
@@ -259,3 +260,23 @@ async def test_lines_that_cannot_be_read_or_stored_are_rejected_as_at_import() -
         (3, "UNSTORABLE_VALUE"),
     ]
     assert (result.sampled, result.would_reject, result.would_import["session"]) == (3, 2, 1)
+
+
+async def test_the_file_is_read_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reading and parsing a file blocks: on the event loop, a preview would
+    hold up every other request until it finished."""
+    preview, _, reader, file_id, mapping_id = await build(valid_mapping())
+    loop_thread = threading.get_ident()
+    reading_threads: list[int] = []
+    read_records = reader.read_records
+
+    def spy(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        reading_threads.append(threading.get_ident())
+        return read_records(*args, **kwargs)
+
+    monkeypatch.setattr(reader, "read_records", spy)
+
+    result = await preview.execute(file_id=file_id, mapping_id=mapping_id)
+
+    assert result.sampled == len(RECORDS)
+    assert reading_threads and loop_thread not in reading_threads
