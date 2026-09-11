@@ -395,7 +395,7 @@ Couche distincte de `X-API-Key` (§1) : ces routes identifient **une personne**,
 { "id": 1, "email": "alice@example.com", "created_at": "2026-09-10T12:00:00Z" }
 ```
 
-Ni `password` ni son hash n'apparaissent jamais dans une réponse. `409` si l'e-mail est déjà utilisé, `422` (`INVALID_EMAIL` / `WEAK_PASSWORD`) si l'e-mail ou le mot de passe échoue à la validation.
+Ni `password` ni son hash n'apparaissent jamais dans une réponse. `409` (`CONFLICT`) si l'e-mail est déjà utilisé : le message ne répète pas l'adresse et `details` est vide. Le statut, lui, indique encore qu'un compte existe — le masquer demanderait une vérification par e-mail, que l'application n'a pas. `422` (`INVALID_EMAIL` / `WEAK_PASSWORD`) si l'e-mail ou le mot de passe échoue à la validation.
 
 **Longueurs maximales (`/auth/register` et `/auth/login`).** `email` : 254 caractères. `password` : 72 octets en UTF-8, la limite de bcrypt (un caractère accentué en compte deux). Au-delà, la requête est refusée avant tout traitement par `400` `MALFORMED_REQUEST`, avec `field_path` à `body.email` ou `body.password`, et non par `422` : ces routes répondent sans session, et une valeur non bornée permettrait à n'importe qui d'occuper le serveur.
 
@@ -406,9 +406,9 @@ Ni `password` ni son hash n'apparaissent jamais dans une réponse. `409` si l'e-
   "user": { "id": 1, "email": "alice@example.com", "created_at": "2026-09-10T12:00:00Z" } }
 ```
 
-`401` (`INVALID_CREDENTIALS`) pour un mot de passe incorrect **ou** un compte inexistant — volontairement la même erreur dans les deux cas, pour ne pas laisser deviner quels e-mails ont un compte.
+`401` (`INVALID_CREDENTIALS`) pour un mot de passe incorrect **ou** un compte inexistant — volontairement la même erreur, et le même temps de réponse, dans les deux cas, pour ne pas laisser deviner quels e-mails ont un compte.
 
-Le jeton est un **jeton de session opaque stocké en base** (`user_session`), pas un JWT : la révocation au logout est un simple `DELETE`, sans clé de signature à gérer. Il se présente en `Authorization: Bearer <token>` sur toute route protégée.
+Le jeton est un **jeton de session opaque**, pas un JWT : la base n'en garde que le SHA-256 (`user_session.token_hash`), et la révocation au logout est un simple `DELETE`, sans clé de signature à gérer. Les sessions expirées sont purgées à chaque connexion. Il se présente en `Authorization: Bearer <token>` sur toute route protégée.
 
 **`POST /auth/logout` → `204`.** Idempotent : appeler la route sans jeton, ou avec un jeton déjà invalidé, renvoie aussi `204`.
 

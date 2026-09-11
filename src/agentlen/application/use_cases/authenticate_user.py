@@ -14,6 +14,7 @@ from agentlen.application.dto.persistence import UserRecord
 from agentlen.application.errors import UnauthenticatedError
 from agentlen.application.ports.clock import Clock
 from agentlen.application.ports.unit_of_work import UnitOfWork
+from agentlen.domain.services.session_tokens import session_token_digest
 
 _SCHEME_PREFIX = "bearer "
 
@@ -27,10 +28,12 @@ class AuthenticateUser:
         token = self._extract_token(authorization_header)
 
         async with self._uow as uow:
-            session = await uow.user_sessions.get_by_token(token)
+            # The repository filters out expired sessions, so an expired token
+            # and an unknown one are the same `None`.
+            session = await uow.user_sessions.get_active_by_token_hash(
+                session_token_digest(token), now=self._clock.now()
+            )
             if session is None:
-                raise UnauthenticatedError()
-            if session.expires_at is not None and session.expires_at <= self._clock.now():
                 raise UnauthenticatedError()
 
             user = await uow.users.get_by_id(session.user_id)

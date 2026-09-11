@@ -23,7 +23,7 @@ from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select, tuple_
+from sqlalchemy import delete, or_, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -1015,10 +1015,11 @@ class SqlAlchemyUserRepository(_Base):
         except IntegrityError as exc:
             # Defense in depth: the use case already checks get_by_email
             # first, this only fires on a genuine race between two concurrent
-            # registrations for the same address.
+            # registrations for the same address. The message does not echo
+            # the address (same wording as RegisterUser).
             raise ConflictError(
-                f"Un compte existe déjà pour l'adresse '{email}'.",
-                details={"email": email},
+                "Impossible de créer un compte avec cette adresse e-mail. "
+                "Si elle vous appartient, connectez-vous."
             ) from exc
         return _to_user(row)
 
@@ -1034,28 +1035,41 @@ def _to_user(row: Any) -> UserRecord:
 
 class SqlAlchemyUserSessionRepository(_Base):
     async def create(
-        self, *, user_id: int, token: str, expires_at: datetime | None
+        self, *, user_id: int, token_hash: str, expires_at: datetime | None
     ) -> UserSessionRecord:
         statement = (
             insert(t.user_session)
-            .values(user_id=user_id, token=token, expires_at=expires_at)
+            .values(user_id=user_id, token_hash=token_hash, expires_at=expires_at)
             .returning(t.user_session)
         )
         row = (await self._conn.execute(statement)).mappings().one()
         return _to_user_session(row)
 
-    async def get_by_token(self, token: str) -> UserSessionRecord | None:
-        query = select(t.user_session).where(t.user_session.c.token == token)
+    async def get_active_by_token_hash(
+        self, token_hash: str, *, now: datetime
+    ) -> UserSessionRecord | None:
+        c = t.user_session.c
+        query = select(t.user_session).where(
+            c.token_hash == token_hash, or_(c.expires_at.is_(None), c.expires_at > now)
+        )
         row = (await self._conn.execute(query)).mappings().one_or_none()
         return _to_user_session(row) if row else None
 
-    async def delete_by_token(self, token: str) -> None:
-        await self._conn.execute(delete(t.user_session).where(t.user_session.c.token == token))
+    async def delete_by_token_hash(self, token_hash: str) -> None:
+        await self._conn.execute(
+            delete(t.user_session).where(t.user_session.c.token_hash == token_hash)
+        )
+
+    async def delete_expired(self, *, now: datetime) -> int:
+        result = await self._conn.execute(
+            delete(t.user_session).where(t.user_session.c.expires_at <= now)
+        )
+        return result.rowcount
 
 
 def _to_user_session(row: Any) -> UserSessionRecord:
     return UserSessionRecord(
-        token=row["token"],
+        token_hash=row["token_hash"],
         user_id=row["user_id"],
         created_at=row["created_at"],
         expires_at=row["expires_at"],
