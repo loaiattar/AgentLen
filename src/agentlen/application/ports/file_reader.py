@@ -25,6 +25,12 @@ class FileProfiler(Protocol):
         ...
 
 
+class ProfileSanitizer(Protocol):
+    """Sanitise every example before a profile reaches a provider."""
+
+    def sanitize(self, profile: FileProfile) -> FileProfile: ...
+
+
 class FileReader(Protocol):
     """Port for reading source records from a file."""
 

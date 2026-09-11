@@ -52,7 +52,17 @@ class FakeAnalyzer(BaseAnalyzerAdapter):
             return self._response_text
         path = FIXTURES / self._fixture
         if not path.exists():
-            raise AnalyzerError(f"Fixture introuvable : {path.name}")
+            # `AISettings.provider` vaut `fake` par défaut, et les fixtures ne
+            # sont présentes que dans une copie des sources. Un déploiement qui
+            # oublie AI_PROVIDER échouait donc à l'analyse sur un nom de
+            # fichier, sans rien qui désigne la cause. Le message la nomme.
+            raise AnalyzerError(
+                f"Fixture introuvable : {path}. Le fournisseur 'fake' rejoue des "
+                "réponses enregistrées et n'existe que pour le développement — "
+                "renseigner AI_PROVIDER (anthropic, openai ou openai_compatible) "
+                "pour interroger un vrai modèle.",
+                details={"provider": self.provider_name, "fixture": self._fixture},
+            )
         return path.read_text(encoding="utf-8")
 
     async def run_agent_loop(
@@ -77,6 +87,7 @@ class FakeAnalyzer(BaseAnalyzerAdapter):
         proposal: MappingProposal,
         user_message: str,
         tool_executor: ImportAgentToolExecutor,
+        history: tuple[dict[str, str | int], ...] = (),
     ) -> MappingProposal:
         await tool_executor.execute("validate_mapping", {"mapping": {}})
         self.tool_calls_made.append("validate_mapping")
