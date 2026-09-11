@@ -44,15 +44,39 @@ MAPPING = Mapping(
     ),
 )
 
+# Tool calls carry their own index, so several lines of one session do not all
+# fall back to position 0 in their `tools` list.
+INDEXED = Mapping(
+    id=uuid4(),
+    name="indexed",
+    version=1,
+    source_format="jsonl",
+    entities=(
+        EntityMapping(
+            target="session",
+            natural_key=("external_id",),
+            fields=(FieldRule(target="external_id", source="$.sid", required=True),),
+        ),
+        EntityMapping(
+            target="tool_call",
+            natural_key=("sequence_index",),
+            iterate="$.tools",
+            parent={"entity": "session", "via": "external_id"},
+            fields=(
+                FieldRule(target="tool_name", source="$.name", required=True),
+                FieldRule(target="sequence_index", source="$.i", required=True),
+            ),
+        ),
+    ),
+)
+
 GOOD = [
     {"sid": "s1", "tools": [{"name": "Bash"}, {"name": "Read"}]},
     {"sid": "s2", "tools": [{"name": "Write"}]},
 ]
 
 
-@pytest.fixture
-def seeded(clean_db: Connection) -> dict[str, Any]:
-    conn = clean_db
+def _seed(conn: Connection, mapping: Mapping) -> dict[str, Any]:
     source = conn.execute(
         insert(t.data_source).values(slug="tracelab", name="TraceLab").returning(t.data_source.c.id)
     ).scalar_one()
@@ -71,16 +95,26 @@ def seeded(clean_db: Connection) -> dict[str, Any]:
         insert(t.mapping)
         .values(
             data_source_id=source,
-            name="tracelab",
+            name=mapping.name,
             version=1,
             source_format="jsonl",
-            document=mapping_to_document(MAPPING),
+            document=mapping_to_document(mapping),
             status="active",
         )
         .returning(t.mapping.c.id)
     ).scalar_one()
     conn.commit()
     return {"source": source, "file_id": file_id, "mapping_id": mapping_id}
+
+
+@pytest.fixture
+def seeded(clean_db: Connection) -> dict[str, Any]:
+    return _seed(clean_db, MAPPING)
+
+
+@pytest.fixture
+def indexed(clean_db: Connection) -> dict[str, Any]:
+    return _seed(clean_db, INDEXED)
 
 
 @pytest.fixture
@@ -130,9 +164,10 @@ async def test_importing_the_same_file_twice_creates_no_duplicate(
         assert _count(conn, t.tool_call) == 3
         assert _count(conn, t.import_run) == 2  # history is never lost
 
-    assert first.records_imported > 0
+    assert first.records_imported == 5  # two sessions, three tool calls
+    assert first.records_duplicate == 0
     assert second.records_imported == 0
-    assert second.records_duplicate > 0
+    assert second.records_duplicate == 5
 
 
 async def test_children_stay_attached_to_their_session(
@@ -177,6 +212,73 @@ async def test_every_row_points_at_the_raw_record_it_came_from(
     assert [r.line_number for r in rows] == [1, 2]
     # The payload is the source record, untouched.
     assert [r.payload for r in rows] == GOOD
+
+
+# ---------------------------------------------------------------------------
+# A session that other lines, batches or files come back to (#123)
+# ---------------------------------------------------------------------------
+
+
+def _rounds(session: str, indexes: range) -> list[dict[str, Any]]:
+    """One line per round, the session repeated on each — TraceLab's shape."""
+    return [{"sid": session, "tools": [{"name": "Bash", "i": i}]} for i in indexes]
+
+
+async def test_a_session_split_across_batches_keeps_every_call(
+    indexed: dict[str, Any], importer: Any, engine: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every batch after the first used to see the session as a duplicate and
+    drop its calls, while reporting them as already imported."""
+    monkeypatch.setenv("IMPORT_BATCH_SIZE", "2")
+    run_import, uow = importer(_rounds("s1", range(5)))
+
+    report = await run_import.execute(await _new_run(uow, indexed))
+
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 1
+        assert _count(conn, t.tool_call) == 5
+    assert report.records_imported == 6  # one session, five calls
+    assert report.records_duplicate == 0
+
+
+async def test_a_file_extending_an_imported_session_adds_its_calls(
+    indexed: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    first_import, uow = importer(_rounds("s1", range(2)))
+    await first_import.execute(await _new_run(uow, indexed))
+    second_import, uow = importer(_rounds("s1", range(2, 3)))
+
+    report = await second_import.execute(await _new_run(uow, indexed))
+
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 1
+        assert _count(conn, t.tool_call) == 3
+    assert report.records_imported == 1
+    assert report.records_duplicate == 1  # the session itself was already there
+
+
+async def test_lines_repeating_a_session_are_not_counted_as_several_imports(
+    indexed: dict[str, Any], importer: Any
+) -> None:
+    run_import, uow = importer(_rounds("s1", range(3)))
+
+    report = await run_import.execute(await _new_run(uow, indexed))
+
+    assert report.records_imported == 4  # one session and three calls, not three sessions
+    assert report.records_duplicate == 0
+
+
+async def test_reimporting_a_split_session_counts_it_once(
+    indexed: dict[str, Any], importer: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("IMPORT_BATCH_SIZE", "2")
+    run_import, uow = importer(_rounds("s1", range(5)))
+    await run_import.execute(await _new_run(uow, indexed))
+
+    report = await run_import.execute(await _new_run(uow, indexed))
+
+    assert report.records_imported == 0
+    assert report.records_duplicate == 6  # the session once, its five calls
 
 
 # ---------------------------------------------------------------------------
