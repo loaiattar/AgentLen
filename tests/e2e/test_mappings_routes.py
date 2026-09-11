@@ -244,6 +244,64 @@ async def test_put_creates_a_new_version_and_supersedes_the_old_one(
 
 
 @requires_postgres
+async def test_a_second_put_on_the_same_version_is_409_not_500(live_client: AsyncClient) -> None:
+    """The double click. Reproduced against Postgres before the fix.
+
+    `PUT /mappings/{v1}` twice both computed v1 + 1, and the second insert
+    raised `UniqueViolationError` on `uq_mapping_name_version`. Nothing catches
+    `IntegrityError`, so the caller got a bare 500.
+    """
+    source_id = await _seed_data_source(live_client, slug="double-put")
+    created = await live_client.post(
+        "/api/v1/mappings",
+        json={"data_source_id": source_id, "name": "double-put", **VALID_DOCUMENT},
+    )
+    first_id = created.json()["id"]
+
+    second = await live_client.put(f"/api/v1/mappings/{first_id}", json=VALID_DOCUMENT)
+    assert second.status_code == 200
+    assert second.json()["version"] == 2
+
+    again = await live_client.put(f"/api/v1/mappings/{first_id}", json=VALID_DOCUMENT)
+
+    assert again.status_code == 409
+    assert again.json()["error"]["code"] == "CONFLICT"
+    assert again.json()["error"]["details"]["latest_version"] == 2
+
+
+@requires_postgres
+async def test_put_refuses_a_data_source_change_instead_of_ignoring_it(
+    live_client: AsyncClient,
+) -> None:
+    """The guard existed but no request could reach it.
+
+    `update_mapping` always passed `data_source_id=None`, so a caller naming
+    the wrong source was silently ignored. The field is now accepted on the
+    PUT, checked against the previous version, and refused on a mismatch.
+    """
+    source_id = await _seed_data_source(live_client, slug="put-source")
+    other_id = await _seed_data_source(live_client, slug="put-other-source")
+    created = await live_client.post(
+        "/api/v1/mappings",
+        json={"data_source_id": source_id, "name": "put-source-guard", **VALID_DOCUMENT},
+    )
+    mapping_id = created.json()["id"]
+
+    refused = await live_client.put(
+        f"/api/v1/mappings/{mapping_id}",
+        json={"data_source_id": other_id, **VALID_DOCUMENT},
+    )
+    assert refused.status_code == 409
+
+    accepted = await live_client.put(
+        f"/api/v1/mappings/{mapping_id}",
+        json={"data_source_id": source_id, **VALID_DOCUMENT},
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["version"] == 2
+
+
+@requires_postgres
 async def test_put_on_an_unknown_mapping_is_404(live_client: AsyncClient) -> None:
     response = await live_client.put("/api/v1/mappings/999999", json=VALID_DOCUMENT)
 

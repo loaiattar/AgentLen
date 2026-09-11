@@ -1,6 +1,7 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiClient } from '@/lib/api/client'
+import { dashboardKeys } from '@/features/dashboard/api/dashboard.keys'
 import { dataSourceKeys, fileKeys, importKeys } from '@/features/imports/api/imports.keys'
 import {
   isTerminal,
@@ -40,10 +41,27 @@ export const fileQueries = {
       queryKey: fileKeys.detail(fileId),
       queryFn: () => apiClient.get<FileUpload>(`/files/${fileId}`),
     }),
+  profile: (fileId: number) =>
+    queryOptions({
+      queryKey: fileKeys.profile(fileId),
+      queryFn: () => apiClient.post<FileProfile>(`/files/${fileId}/profile`),
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+    }),
 }
 
-export function useFileQuery(fileId: number | null) {
-  return useQuery({ ...fileQueries.detail(fileId ?? 0), enabled: fileId !== null })
+export function useFileQuery(fileId: number | null | undefined) {
+  return useQuery({
+    ...fileQueries.detail(fileId ?? 0),
+    enabled: fileId != null && Number.isInteger(fileId) && fileId > 0,
+  })
+}
+
+export function useFileProfileQuery(fileId: number | null | undefined) {
+  return useQuery({
+    ...fileQueries.profile(fileId ?? 0),
+    enabled: fileId != null && Number.isInteger(fileId) && fileId > 0,
+  })
 }
 
 /**
@@ -126,6 +144,7 @@ export function useCreateImportMutation() {
       apiClient.post<ImportCreateResponse>('/imports', body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: importKeys.all })
+      void queryClient.invalidateQueries({ queryKey: dashboardKeys.all })
     },
   })
 }

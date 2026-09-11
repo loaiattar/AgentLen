@@ -4,9 +4,12 @@ from agentlen.domain.errors import (
     MissingNaturalKeyError,
     UnknownTargetFieldError,
     UnsupportedOperatorError,
+    UnsupportedPathError,
     ValidationError,
 )
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
+from agentlen.domain.services import json_path
+from agentlen.domain.services.json_path import JsonPath
 
 # Fields accepted per target entity.
 # Only these combinations are valid in a mapping document.
@@ -49,6 +52,13 @@ _SCHEMA: dict[str, frozenset[str]] = {
         }
     ),
 }
+
+#: The entity names a mapping may target. Derived from `_SCHEMA` so the two can
+#: never drift: an entity is valid exactly when this module knows which fields
+#: it accepts. `EntityMapping` used to carry its own `VALID_TARGETS` frozenset
+#: and a `validate_target` method that nothing called — a second source of truth
+#: for the same list, with nothing holding the two together.
+VALID_TARGETS: frozenset[str] = frozenset(_SCHEMA)
 
 # Only these operator names are allowed in a field rule.
 OPERATOR_WHITELIST: frozenset[str] = frozenset(
@@ -108,16 +118,37 @@ def _validate_entity(entity: EntityMapping) -> list[ValidationError]:
             )
         )
 
+    # Syntactic: paths must be in the notation the engine resolves (json_path.py).
+    prefix: JsonPath | None = None
+    if entity.iterate:
+        try:
+            prefix = json_path.iterate_path(entity.iterate)
+        except UnsupportedPathError as exc:
+            errors.append(
+                UnsupportedPathError(
+                    exc.path, exc.reason, field_path=f"entities[target={entity.target}].iterate"
+                )
+            )
+
     for field_rule in entity.fields:
-        errors.extend(_validate_field(field_rule, entity.target, allowed_fields))
+        errors.extend(_validate_field(field_rule, entity.target, allowed_fields, prefix))
 
     return errors
+
+
+def _path_errors(path: str, prefix: JsonPath | None, field_path: str) -> list[ValidationError]:
+    try:
+        json_path.source_path(path, prefix)
+    except UnsupportedPathError as exc:
+        return [UnsupportedPathError(exc.path, exc.reason, field_path=field_path)]
+    return []
 
 
 def _validate_field(
     rule: FieldRule,
     entity_target: str,
     allowed_fields: frozenset[str],
+    prefix: JsonPath | None,
 ) -> list[ValidationError]:
     errors: list[ValidationError] = []
     field_path = f"entities[target={entity_target}].fields[target={rule.target}]"
@@ -125,6 +156,8 @@ def _validate_field(
     # Semantic: target field must exist in the schema
     if rule.target not in allowed_fields:
         errors.append(UnknownTargetFieldError(target=rule.target, field_path=field_path))
+
+    errors.extend(_path_errors(rule.source, prefix, f"{field_path}.source"))
 
     # Semantic: all operators must be whitelisted
     for i, op in enumerate(rule.operators):
@@ -136,5 +169,12 @@ def _validate_field(
                     field_path=f"{field_path}.operators[{i}]",
                 )
             )
+        # coalesce/concat/hash resolve their `sources` like `source`.
+        sources = op.get("sources")
+        for j, source in enumerate(sources if isinstance(sources, list) else []):
+            if isinstance(source, str):
+                errors.extend(
+                    _path_errors(source, prefix, f"{field_path}.operators[{i}].sources[{j}]")
+                )
 
     return errors

@@ -201,5 +201,5 @@ Les ports d'écriture prennent donc des entités et renvoient un `InsertOutcome`
 
 **Alternatives.** JWT / sessions : trop lourd pour un monolithe de sprint, et le front n'a pas d'utilisateurs nommés. Basic Auth : moins pratique à envoyer depuis `fetch` et à documenter dans OpenAPI.
 
-**Conséquences.** Le front envoie `X-API-Key` (variable `VITE_API_KEY`). Un oubli de `API_KEY` en production ferme toute l'API (401), ce qui est le comportement voulu.
+**Conséquences.** Le navigateur ne détient jamais la clé (#149) : toute variable `VITE_*` est inscrite par Vite dans le bundle JavaScript, que n'importe quel visiteur peut lire. C'est le proxy placé devant l'API qui ajoute `X-API-Key` à chaque appel `/api` : nginx dans la stack Docker, depuis la variable `API_KEY` du conteneur `frontend` lue au démarrage (ni l'image ni le bundle ne la contiennent), et le proxy Vite avec `npm run dev`, depuis `API_KEY` sans préfixe `VITE_`. La clé ferme donc l'accès direct à l'API ; derrière le proxy, identifier la personne relève de la session utilisateur. Un oubli de `API_KEY` en production ferme toute l'API (401) et empêche le conteneur `frontend` de démarrer, ce qui est le comportement voulu.
 

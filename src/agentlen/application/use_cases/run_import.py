@@ -47,6 +47,9 @@ class _Counters:
         self.duplicate = 0
         self.rejected = 0
         self.fields_missing: dict[str, int] = defaultdict(int)
+        # A session already stored by a previous import is one duplicate for the
+        # whole run, however many batches refer to it.
+        self.duplicate_sessions: set[int] = set()
 
     def note_missing(self, target: str, entity: Any) -> None:
         """Count fields the source did not provide.
@@ -238,13 +241,15 @@ class RunImport:
                     counters.note_missing("tool_call", call)
 
             session_outcome = await uow.sessions.add_many(sessions)
+            # `ids`, not `assigned`: a session stored by an earlier batch or an
+            # earlier import still owns the calls this batch brings (#123).
             model_outcome = await uow.model_calls.add_many(
-                [row for row, _ in model_calls], session_ids=session_outcome.assigned
+                [row for row, _ in model_calls], session_ids=session_outcome.ids
             )
             tool_outcome = await uow.tool_calls.add_many(
                 [row for row, _ in tool_calls],
-                session_ids=session_outcome.assigned,
-                model_call_ids=model_outcome.assigned,
+                session_ids=session_outcome.ids,
+                model_call_ids=model_outcome.ids,
             )
 
             counters.imported += (
@@ -252,8 +257,12 @@ class RunImport:
                 + model_outcome.inserted_count
                 + tool_outcome.inserted_count
             )
+            new_duplicate_sessions = {
+                session_outcome.existing[entity_id] for entity_id in session_outcome.duplicates
+            } - counters.duplicate_sessions
+            counters.duplicate_sessions |= new_duplicate_sessions
             duplicates = (
-                session_outcome.duplicate_count
+                len(new_duplicate_sessions)
                 + model_outcome.duplicate_count
                 + tool_outcome.duplicate_count
             )
@@ -266,6 +275,19 @@ class RunImport:
                         message=(
                             f"{duplicates} enregistrement(s) déjà présent(s), "
                             "reconnus par leur clé naturelle."
+                        ),
+                    )
+                )
+
+            unlinked = len(model_outcome.unlinked) + len(tool_outcome.unlinked)
+            if unlinked:
+                issues.append(
+                    ImportIssue(
+                        severity="warning",
+                        code="PARENT_SESSION_MISSING",
+                        message=(
+                            f"{unlinked} appel(s) non enregistré(s) : "
+                            "leur session n'a pas pu être rattachée."
                         ),
                     )
                 )

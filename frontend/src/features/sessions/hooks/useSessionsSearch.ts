@@ -14,14 +14,13 @@ const DRILL_DOWN_KEYS = ['agent_id', 'model_id', 'tool_id', 'import_run_id', 'da
 
 export function useSessionsSearch() {
   const search = appRoute.useSearch()
-  const navigate = appRoute.useNavigate()
-  const routeNavigate = useNavigate()
+  const navigate = useNavigate()
   const filters = searchToDashboardFilters(search)
   const limit = search.limit ?? SESSION_PAGE_SIZE
   const offset = search.offset ?? 0
 
   const patchSearch = (patch: (prev: MetricsSearch) => MetricsSearch) => {
-    void navigate({ search: patch })
+    void navigate({ to: '/sessions', search: patch })
   }
 
   const resetOffset = (next: MetricsSearch): MetricsSearch => {
@@ -74,7 +73,7 @@ export function useSessionsSearch() {
       })
     },
     openSession: (sessionId: number | string) => {
-      void routeNavigate({
+      void navigate({
         to: '/sessions/$sessionId',
         params: { sessionId: String(sessionId) },
         search: (prev) => prev,

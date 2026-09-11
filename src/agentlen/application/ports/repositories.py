@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from agentlen.application.dto.persistence import (
     DataSourceRecord,
     FileUploadRecord,
+    ImportIssueRecord,
     InsertOutcome,
     ModelCallRow,
     SessionRow,
@@ -114,7 +115,9 @@ class ImportIssueRepository(Protocol):
 
     async def list(
         self, *, import_run_id: int, severity: str | None = None, limit: int = 50, offset: int = 0
-    ) -> list[ImportIssue]: ...
+    ) -> list[ImportIssueRecord]:
+        """Oldest first. The line number comes from the linked raw_record."""
+        ...
 
     async def count(self, *, import_run_id: int, severity: str | None = None) -> int: ...
 
@@ -143,6 +146,15 @@ class MappingRepository(Protocol):
     async def count(
         self, *, data_source_id: int | None = None, status: str | None = None
     ) -> int: ...
+
+    async def latest_version(self, *, data_source_id: int, name: str) -> int | None:
+        """The highest version stored under this name, or None if there is none.
+
+        Versioning cannot be derived from the row the caller named: a PUT
+        against an already superseded version would then recreate a version
+        that exists, violating `uq_mapping_name_version`.
+        """
+        ...
 
     async def supersede(self, mapping_id: int) -> None:
         """Marks a mapping 'superseded' — called when a PUT creates its

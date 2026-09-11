@@ -1,6 +1,5 @@
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute, lazyRouteComponent, redirect } from '@tanstack/react-router'
 
-import { LoginPage } from '@/features/auth/pages/LoginPage'
 import { parseAuthRedirectSearch } from '@/features/auth/lib/redirect'
 import { getSessionToken } from '@/lib/auth/session'
 
@@ -11,5 +10,5 @@ export const Route = createFileRoute('/_public/login')({
       throw redirect({ to: '/overview' })
     }
   },
-  component: LoginPage,
+  component: lazyRouteComponent(() => import('@/features/auth/pages/LoginPage'), 'LoginPage'),
 })

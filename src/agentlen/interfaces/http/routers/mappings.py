@@ -14,6 +14,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Query, status
 
 from agentlen.application.errors import NotFoundError
+from agentlen.application.ports.unit_of_work import UnitOfWork
 from agentlen.application.use_cases.save_mapping import SaveMapping
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.services import mapping_validator
@@ -24,6 +25,7 @@ from agentlen.interfaces.http.schemas.mappings import (
     MappingCreateIn,
     MappingDocumentIn,
     MappingOut,
+    MappingUpdateIn,
     MappingValidateOut,
     ValidationErrorOut,
 )
@@ -59,6 +61,22 @@ def _to_domain(body: MappingDocumentIn, *, name: str, version: int) -> Mapping:
             for e in body.entities
         ),
     )
+
+
+async def _reread(mapping_id: int, uow: UnitOfWork) -> dict[str, Any]:
+    """Read back a row SaveMapping has just committed.
+
+    This is a **second** transaction: `SaveMapping` opens and commits its own,
+    so the row is durable but this connection is new — the comment that used to
+    sit here said "same transaction", which it never was. An `assert` was doing
+    the not-None check, and `assert` is stripped under `python -O`, so a
+    concurrent delete would have produced `_to_out(None)` and a TypeError.
+    """
+    async with uow:
+        row = await uow.mappings.get_by_id(mapping_id)
+    if row is None:
+        raise NotFoundError("Mapping", mapping_id)
+    return row
 
 
 def _to_out(row: dict[str, Any]) -> MappingOut:
@@ -103,11 +121,7 @@ async def list_mappings(
 async def create_mapping(body: MappingCreateIn, uow: UnitOfWorkDep) -> MappingOut:
     mapping = _to_domain(body, name=body.name, version=1)
     new_id = await SaveMapping(uow).execute(mapping, data_source_id=body.data_source_id)
-    async with uow:
-        row = await uow.mappings.get_by_id(new_id)
-
-    assert row is not None  # just created, in the same transaction
-    return _to_out(row)
+    return _to_out(await _reread(new_id, uow))
 
 
 @router.post(
@@ -141,15 +155,11 @@ async def get_mapping(mapping_id: int, uow: UnitOfWorkDep) -> MappingOut:
     response_model=MappingOut,
     summary="Create version N+1 — the previous version becomes 'superseded'",
 )
-async def update_mapping(
-    mapping_id: int, body: MappingDocumentIn, uow: UnitOfWorkDep
-) -> MappingOut:
+async def update_mapping(mapping_id: int, body: MappingUpdateIn, uow: UnitOfWorkDep) -> MappingOut:
+    # `name` and `version` are placeholders: SaveMapping resolves both from the
+    # row being superseded, and validates what it resolved rather than these.
     new_mapping = _to_domain(body, name="", version=1)
     new_id = await SaveMapping(uow).execute(
-        new_mapping, data_source_id=None, previous_mapping_id=mapping_id
+        new_mapping, data_source_id=body.data_source_id, previous_mapping_id=mapping_id
     )
-    async with uow:
-        row = await uow.mappings.get_by_id(new_id)
-
-    assert row is not None  # just created, in the same transaction
-    return _to_out(row)
+    return _to_out(await _reread(new_id, uow))

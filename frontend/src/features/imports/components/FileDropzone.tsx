@@ -56,7 +56,7 @@ export function FileDropzone({ onFileSelected, disabled = false, busy = false }:
         }}
         onDragLeave={() => setDragging(false)}
         className={cn(
-          'flex flex-col items-center justify-center rounded-xl border border-dashed border-border px-6 py-12 text-center transition-colors',
+          'glass-surface flex flex-col items-center justify-center rounded-xl border border-dashed border-border px-6 py-12 text-center transition-colors',
           dragging && 'border-primary bg-primary-soft',
           disabled && 'opacity-50',
         )}

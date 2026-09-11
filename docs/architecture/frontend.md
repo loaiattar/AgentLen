@@ -266,6 +266,7 @@ Un élément reste dans sa feature tant qu'il n'est utilisé que par elle. Il n'
 | `quality/` | Intégrité des données importées, issues expliquées. |
 | `landing/` | Page d'accueil publique. |
 | `auth/` | Connexion et inscription (session Bearer, distincte de `X-API-Key`). |
+| `system/` | État du serveur affiché par le shell : fournisseur et modèle IA actifs (`GET /ai/providers`), disponibilité de l'API (`GET /health/ready`). Chargé dans `AppLayout`, passé en props à `AppSidebar`. |
 
 #### Cas particulier : `import-assistant/` vs `mappings/`
 
@@ -333,7 +334,7 @@ Backend
 
 ### Emplacements
 
-- **Fonctions d'appel API brutes** (`fetch`/wrapper HTTP, pas de React) : `features/<feature>/api/*.ts` pour les endpoints spécifiques à une feature ; `lib/api/` pour le client HTTP partagé (instance de base, gestion des headers, des erreurs, de l'auth). Le client envoie `X-API-Key` depuis `VITE_API_KEY` (voir [API.md](API.md) §1).
+- **Fonctions d'appel API brutes** (`fetch`/wrapper HTTP, pas de React) : `features/<feature>/api/*.ts` pour les endpoints spécifiques à une feature ; `lib/api/` pour le client HTTP partagé (instance de base, gestion des headers, des erreurs, de l'auth). Le client n'envoie pas `X-API-Key` : le proxy (nginx en Docker, Vite en développement) l'ajoute depuis `API_KEY`, pour que la clé ne soit jamais livrée au navigateur ; le client n'ajoute que le jeton de session (`Authorization: Bearer`). Aucune clé ne doit être lue via `import.meta.env` : Vite inscrit toute variable `VITE_*` dans le bundle (voir [API.md](API.md) §1).
 - **Queries** : définies avec `queryOptions` (ou hooks `useQuery`) dans `features/<feature>/api/`, ex. `features/imports/api/imports.queries.ts`. Elles encapsulent la clé de cache (`queryKey`) et la fonction d'appel.
 - **Mutations** : définies dans `features/<feature>/api/`, ex. `features/imports/api/imports.mutations.ts`, avec gestion de l'invalidation associée dans `onSuccess`.
 - Les composants (pages, components de feature) **consomment** ces queries/mutations via des hooks exportés (`useImportsQuery`, `useCreateImportMutation`) — ils n'appellent jamais `fetch` directement.

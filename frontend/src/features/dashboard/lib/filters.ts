@@ -23,6 +23,7 @@ export interface MetricsSearch {
   offset?: number
   file_id?: number
   proposal_id?: number
+  mapping_id?: number
 }
 
 /** Seed source from `make seed`. No `GET /data-sources` yet — do not invent others. */
@@ -62,6 +63,7 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   const importRunId = parseIntParam(search.import_run_id, { min: 1 })
   const fileId = parseIntParam(search.file_id, { min: 1 })
   const proposalId = parseIntParam(search.proposal_id, { min: 1 })
+  const mappingId = parseIntParam(search.mapping_id, { min: 1 })
   const limit = parseIntParam(search.limit, { min: 1, max: SESSION_PAGE_SIZE_MAX })
   const offset = parseIntParam(search.offset, { min: 0 })
 
@@ -72,6 +74,7 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   if (importRunId != null) parsed.import_run_id = importRunId
   if (fileId != null) parsed.file_id = fileId
   if (proposalId != null) parsed.proposal_id = proposalId
+  if (mappingId != null) parsed.mapping_id = mappingId
   if (typeof search.date_from === 'string' && search.date_from.length > 0) parsed.date_from = search.date_from
   if (typeof search.date_to === 'string' && search.date_to.length > 0) parsed.date_to = search.date_to
   if (typeof search.status === 'string' && SESSION_STATUSES.includes(search.status as SessionStatus)) {
@@ -115,14 +118,24 @@ export function periodToRange(
   }
 }
 
-export function searchToDashboardFilters(search: MetricsSearch, now = new Date()): DashboardFilters {
-  const dates =
-    search.date_from || search.date_to
-      ? {
-          ...(search.date_from ? { date_from: search.date_from } : {}),
-          ...(search.date_to ? { date_to: search.date_to } : {}),
-        }
-      : periodToRange(search.period, now)
+/**
+ * The filters the URL describes — identical for as long as the URL is.
+ *
+ * A period stays a period here and only becomes dates when a request is sent
+ * (`resolvePeriod`). Resolving it at render time put `new Date()`, to the
+ * millisecond, into every query key: each render made a new key, each response
+ * re-rendered, and the dashboard refetched in a loop (#122).
+ */
+export function searchToDashboardFilters(search: MetricsSearch): DashboardFilters {
+  const hasDates = Boolean(search.date_from || search.date_to)
+  const dates = hasDates
+    ? {
+        ...(search.date_from ? { date_from: search.date_from } : {}),
+        ...(search.date_to ? { date_to: search.date_to } : {}),
+      }
+    : search.period
+      ? { period: search.period }
+      : {}
 
   return {
     ...(search.data_source_id != null ? { data_source_id: search.data_source_id } : {}),
@@ -133,4 +146,17 @@ export function searchToDashboardFilters(search: MetricsSearch, now = new Date()
     ...(search.status ? { status: search.status } : {}),
     ...dates,
   }
+}
+
+/**
+ * The query parameters the API expects: a period becomes a date range, computed
+ * when the request leaves — never earlier, so it never reaches a query key.
+ */
+export function resolvePeriod(
+  filters: DashboardFilters,
+  now = new Date(),
+): Omit<DashboardFilters, 'period'> {
+  const { period, ...rest } = filters
+  if (!period || rest.date_from || rest.date_to) return rest
+  return { ...rest, ...periodToRange(period, now) }
 }

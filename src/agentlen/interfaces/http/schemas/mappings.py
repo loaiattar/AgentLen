@@ -36,6 +36,26 @@ class MappingCreateIn(MappingDocumentIn):
     name: str = Field(examples=["tracelab-jsonl"])
 
 
+class MappingUpdateIn(MappingDocumentIn):
+    """A new version of an existing mapping.
+
+    `name` and `version` are not accepted: a version inherits both from the row
+    it supersedes, and letting a caller state them would let it rename a mapping
+    or skip a version. `data_source_id` is optional and, when given, is checked
+    against the previous version rather than applied — a versioned mapping
+    cannot move between sources, and saying so explicitly is how a caller finds
+    out it is versioning something it did not expect.
+    """
+
+    data_source_id: int | None = Field(
+        default=None,
+        description=(
+            "Optional. When given, must match the previous version's source; "
+            "a mismatch is refused with 409 rather than silently ignored."
+        ),
+    )
+
+
 class FieldRuleOut(BaseModel):
     target: str
     source: str
