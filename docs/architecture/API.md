@@ -231,6 +231,30 @@ Réponse `200` :
 **`POST /imports` → `202`** : `{ "import_run_id": 88, "status": "pending" }`.
 Le front interroge ensuite `GET /imports/{id}` (intervalle suggéré : 1 s).
 
+**Ce que la route refuse.** Les trois identifiants existent n'est pas la même
+chose qu'ils vont ensemble. `session` est unique sur
+`(data_source_id, external_id)` : la source fait partie de l'identité d'une
+session, donc importer sous la mauvaise déduplique dans le mauvais espace de
+noms et attribue aux lignes une provenance fausse.
+
+| Cas | Statut | `code` |
+|---|---|---|
+| Source, fichier ou mapping inexistant | `404` | `NOT_FOUND` |
+| Le mapping appartient à une autre source | `422` | `MAPPING_SOURCE_MISMATCH` |
+| Le mapping est `superseded` ou `draft` | `422` | `MAPPING_NOT_ACTIVE` |
+| Le mapping lit un autre format que le fichier | `422` | `MAPPING_FORMAT_MISMATCH` |
+| Ce fichier a déjà un run `pending`, `running` ou `succeeded` avec ce mapping | `409` | `CONFLICT` |
+
+**La règle de réimport.** Le `409` est borné à ces trois statuts, pas à
+« un run existe ». Relancer après `failed`, `partial` ou `cancelled` est
+**autorisé** : c'est le chemin de reprise après un worker interrompu, et le
+moteur d'import est idempotent — rejouer relit le fichier et n'écrit rien qui
+soit déjà là.
+
+Cela n'entre pas en conflit avec le « Import it anyway » de l'assistant : celui-ci
+porte sur un fichier dont le *contenu* est déjà connu (même empreinte), pas sur
+une paire fichier + mapping déjà importée.
+
 **`GET /imports/{id}` → `200`**
 
 ```json
