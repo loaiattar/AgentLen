@@ -217,3 +217,101 @@ def test_source_index_reflects_position_before_rejection_not_survivor_rank():
     assert results[0]["source_index"] == 0
     assert results[1]["data"]["tool_name"] == "Write"
     assert results[1]["source_index"] == expected_third_row_source_index
+
+
+def test_json_number_on_a_string_field_is_coerced_not_rejected():
+    """The type gate must not refuse what RecordNormalizer would have coerced.
+
+    `analysis.py` teaches the model to map `$.run_id` onto `external_id` with no
+    cast operator, and `RecordNormalizer` does `str(data["external_id"])`. A
+    trace whose `run_id` is a JSON number must keep importing: rejecting it here
+    loses the session, and with it every child row under PARENT_SESSION_MISSING.
+    """
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="session",
+                natural_key=["external_id"],
+                fields=[FieldRule(target="external_id", source="$.run_id", required=True)],
+            )
+        ]
+    )
+    results, issues = engine.apply(mapping, {"run_id": 41823})
+
+    assert issues == []
+    assert len(results) == 1
+    assert results[0]["data"]["external_id"] == "41823"
+
+
+def test_float_on_an_integer_field_is_rounded_not_rejected():
+    """A float on an int field is a unit-conversion artefact, not another value."""
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="session",
+                natural_key=["external_id"],
+                fields=[
+                    FieldRule(target="external_id", source="$.id", required=True),
+                    FieldRule(target="duration_ms", source="$.dur"),
+                ],
+            )
+        ]
+    )
+    results, issues = engine.apply(mapping, {"id": "s1", "dur": 1004.9999999999999})
+
+    assert issues == []
+    assert results[0]["data"]["duration_ms"] == 1005
+
+
+def test_type_mismatch_on_an_optional_field_warns_and_keeps_the_entity():
+    """An optional field of the wrong type drops its value, it does not reject.
+
+    Matching the established policy for a failed operator: rejecting the whole
+    entity would drag its children down with PARENT_SESSION_MISSING over a field
+    nobody declared necessary.
+    """
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="session",
+                natural_key=["external_id"],
+                fields=[
+                    FieldRule(target="external_id", source="$.id", required=True),
+                    FieldRule(target="agent_name", source="$.agent"),
+                ],
+            )
+        ]
+    )
+    results, issues = engine.apply(mapping, {"id": "s1", "agent": {"nested": "object"}})
+
+    assert len(results) == 1
+    assert "agent_name" not in results[0]["data"]
+    assert len(issues) == 1
+    assert issues[0].severity == "warning"
+    assert issues[0].code == "TYPE_MISMATCH"
+
+
+def test_type_mismatch_on_a_natural_key_field_rejects_even_when_optional():
+    """A natural-key field is identity: dropping it would silently renumber the row."""
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="tool_call",
+                natural_key=["sequence_index"],
+                fields=[
+                    FieldRule(target="tool_name", source="$.name", required=True),
+                    FieldRule(target="sequence_index", source="$.idx"),
+                ],
+            )
+        ]
+    )
+    results, issues = engine.apply(mapping, {"name": "Bash", "idx": "7"})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].severity == "rejected"
+    assert issues[0].code == "TYPE_MISMATCH"

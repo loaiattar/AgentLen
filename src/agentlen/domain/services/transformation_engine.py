@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -9,6 +10,12 @@ from agentlen.domain.errors import InvalidOperatorParamError, OperatorFailedErro
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.model.target_schema import TARGET_FIELD_TYPES
+
+# Unit conversions land on fields typed `int` in TARGET_FIELD_TYPES, so their
+# result is rounded to an integer. Kept next to the conversion that uses it;
+# adding a target unit to _FACTORS without listing it here emits a float, which
+# the type gate then has to round on its behalf.
+_INTEGER_TARGET_UNITS = frozenset({"ms", "b"})
 
 
 class RegexExtractor(Protocol):
@@ -97,26 +104,38 @@ class TransformationEngine:
             value, field_issues = self._apply_field(field_rule, row, entity.target, line_number)
             issues.extend(field_issues)
 
-            if value is not None and not self._has_target_type(
-                entity.target, field_rule.target, value
-            ):
-                rejected = True
-                expected_name = self._expected_type_name(entity.target, field_rule.target)
-                issues.append(
-                    ImportIssue(
-                        severity="rejected",
-                        code="TYPE_MISMATCH",
-                        message=(
-                            f"Field '{field_rule.target}' received {type(value).__name__}; "
-                            f"expected {expected_name}."
-                        ),
-                        field_path=(
-                            f"entities[target={entity.target}].fields[target={field_rule.target}]"
-                        ),
-                        line_number=line_number,
+            if value is not None:
+                coerced, ok = self._coerce_target_type(entity.target, field_rule.target, value)
+                if ok:
+                    value = coerced
+                else:
+                    expected_name = self._expected_type_name(entity.target, field_rule.target)
+                    # Same policy as a failed operator: a required field rejects
+                    # the entity, an optional one drops its value and lets the
+                    # rest of the row through. A natural-key field counts as
+                    # required whatever the rule says — dropping it would let
+                    # the normalizer fall back to the positional index and give
+                    # the row a different identity, silently.
+                    critical = field_rule.required or field_rule.target in entity.natural_key
+                    issues.append(
+                        ImportIssue(
+                            severity="rejected" if critical else "warning",
+                            code="TYPE_MISMATCH",
+                            message=(
+                                f"Field '{field_rule.target}' received "
+                                f"{type(value).__name__}; expected {expected_name}."
+                            ),
+                            field_path=(
+                                f"entities[target={entity.target}]"
+                                f".fields[target={field_rule.target}]"
+                            ),
+                            line_number=line_number,
+                        )
                     )
-                )
-                continue
+                    if critical:
+                        rejected = True
+                        continue
+                    value = None
 
             if value is None and field_rule.required:
                 # A required field that failed → the whole entity is rejected.
@@ -151,6 +170,45 @@ class TransformationEngine:
         if expected is int and isinstance(value, bool):
             return False
         return isinstance(value, expected)
+
+    @staticmethod
+    def _coerce_target_type(
+        entity_target: str, field_target: str, value: object
+    ) -> tuple[object, bool]:
+        """Narrow a value to its target type, or report that it cannot be.
+
+        `RecordNormalizer` already coerces one layer down —
+        `str(data["external_id"])`, `str(data["tool_name"])`. Rejecting here
+        what it would have accepted there turns files that imported cleanly
+        into files that import nothing, and the AI prompt's own canonical
+        example maps `$.run_id` onto `external_id` with no cast operator.
+
+        So this narrows two cases only — a JSON number onto a string field, and
+        a float onto an integer field — and refuses everything else, including
+        the numeric string that a `cast` operator is there to handle.
+        """
+        if TransformationEngine._has_target_type(entity_target, field_target, value):
+            return value, True
+
+        expected = TARGET_FIELD_TYPES.get(entity_target, {}).get(field_target)
+
+        # A JSON number landing on a string field: the normalizer would `str()`
+        # it. `bool` stays out — `"True"` is not an outcome or a status.
+        if expected is str and isinstance(value, (int, float)) and not isinstance(value, bool):
+            return str(value), True
+
+        if expected is int and not isinstance(value, bool):
+            # A float on an int field is normally a representation artefact of a
+            # unit conversion, not a different value.
+            if isinstance(value, float):
+                if math.isfinite(value):
+                    return round(value), True
+                return value, False
+            # A numeric *string* is deliberately not coerced here: the PR's
+            # own test pins `"7"` onto `sequence_index` as a TYPE_MISMATCH, and
+            # a mapping that means it should say so with a `cast` operator.
+
+        return value, False
 
     @staticmethod
     def _expected_type_name(entity_target: str, field_target: str) -> str:
@@ -347,6 +405,11 @@ class TransformationEngine:
     def _cast(value: object, to: str, on_error: str) -> object:
         if value is None:
             return None
+        # A CSV source yields `""` for an empty cell, never `None`. That is an
+        # unknown value, and rule 4 of MAPPING_CONTRACT.md says an unknown value
+        # stays unknown instead of failing the row or becoming an implicit 0.
+        if isinstance(value, str) and not value.strip():
+            return None
         try:
             match to:
                 case "string":
@@ -393,7 +456,12 @@ class TransformationEngine:
             raise ValueError(f"Unknown unit conversion '{from_unit}' → '{to_unit}'")
         if isinstance(value, (int, float, str, bytes)):
             converted = float(value) * factor
-            return int(converted) if to_unit.lower() in {"ms", "b"} else converted
+            # `int()` truncates toward zero, so binary representation error
+            # became an off-by-one: 1.005 s * 1000 is 1004.9999999999999, and
+            # `int()` stored 1004 ms. Sub-unit values still round to 0 — the
+            # target column is an integer count of ms, and 0.4 ms really is 0 —
+            # but that is the schema's floor, not an arithmetic mistake.
+            return round(converted) if to_unit.lower() in _INTEGER_TARGET_UNITS else converted
         raise ValueError(f"Cannot convert {type(value).__name__} to float for unit conversion")
 
     @staticmethod
