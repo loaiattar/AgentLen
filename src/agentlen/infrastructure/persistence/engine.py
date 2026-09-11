@@ -41,5 +41,12 @@ def to_async_url(url: str) -> str:
 
 
 def create_engine(url: str | None = None, *, echo: bool = False) -> AsyncEngine:
-    """Build the application's async engine."""
-    return create_async_engine(to_async_url(url or get_database_url()), echo=echo)
+    """Build the application's async engine.
+
+    `hide_parameters=True`: a DBAPI error otherwise renders its bound parameters
+    (`[parameters: ...]`), and the parameters of a `raw_record` insert are the
+    trace payload itself. Trace content must never reach a log (ARCHITECTURE §10).
+    """
+    return create_async_engine(
+        to_async_url(url or get_database_url()), echo=echo, hide_parameters=True
+    )
