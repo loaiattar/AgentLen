@@ -11,8 +11,6 @@ export const SESSION_PAGE_SIZE_MAX = 200
 
 export interface MetricsSearch {
   data_source_id?: number
-  /** Carries an uploaded file from the import wizard to the mapping assistant. */
-  file_id?: number
   agent_id?: number
   model_id?: number
   tool_id?: number
@@ -23,6 +21,8 @@ export interface MetricsSearch {
   period?: MetricsPeriod
   limit?: number
   offset?: number
+  file_id?: number
+  proposal_id?: number
 }
 
 /** Seed source from `make seed`. No `GET /data-sources` yet — do not invent others. */
@@ -56,20 +56,22 @@ function parseIntParam(value: unknown, { min, max }: { min: number; max?: number
 export function parseMetricsSearch(search: Record<string, unknown>): MetricsSearch {
   const parsed: MetricsSearch = {}
   const dataSourceId = parseIntParam(search.data_source_id, { min: 1 })
-  const fileId = parseIntParam(search.file_id, { min: 1 })
   const agentId = parseIntParam(search.agent_id, { min: 1 })
   const modelId = parseIntParam(search.model_id, { min: 1 })
   const toolId = parseIntParam(search.tool_id, { min: 1 })
   const importRunId = parseIntParam(search.import_run_id, { min: 1 })
+  const fileId = parseIntParam(search.file_id, { min: 1 })
+  const proposalId = parseIntParam(search.proposal_id, { min: 1 })
   const limit = parseIntParam(search.limit, { min: 1, max: SESSION_PAGE_SIZE_MAX })
   const offset = parseIntParam(search.offset, { min: 0 })
 
   if (dataSourceId != null) parsed.data_source_id = dataSourceId
-  if (fileId != null) parsed.file_id = fileId
   if (agentId != null) parsed.agent_id = agentId
   if (modelId != null) parsed.model_id = modelId
   if (toolId != null) parsed.tool_id = toolId
   if (importRunId != null) parsed.import_run_id = importRunId
+  if (fileId != null) parsed.file_id = fileId
+  if (proposalId != null) parsed.proposal_id = proposalId
   if (typeof search.date_from === 'string' && search.date_from.length > 0) parsed.date_from = search.date_from
   if (typeof search.date_to === 'string' && search.date_to.length > 0) parsed.date_to = search.date_to
   if (typeof search.status === 'string' && SESSION_STATUSES.includes(search.status as SessionStatus)) {
