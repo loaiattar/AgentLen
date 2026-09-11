@@ -230,3 +230,15 @@ async def test_a_verbose_provider_message_is_bounded(patched) -> None:  # type: 
         await analyzer()._post({"x": 1})
 
     assert len((exc.value.details or {})["provider_message"]) <= MAX_PROVIDER_MESSAGE
+
+
+async def test_a_200_without_json_is_an_analyzer_error(patched) -> None:  # type: ignore[no-untyped-def]
+    """Constat #99 : une base_url qui vise un proxy renvoie du HTML en 200.
+    `response.json()` levait alors json.JSONDecodeError, qui n'est pas une
+    AnalyzerError : 500 générique au lieu du 502 voulu."""
+    patched(Refusing(200, "<html><body>Welcome to nginx</body></html>"))
+
+    with pytest.raises(AnalyzerError) as exc:
+        await analyzer()._post({"x": 1})
+
+    assert "AI_BASE_URL" in str(exc.value)

@@ -426,3 +426,37 @@ def test_the_recorded_prompt_version_is_the_one_actually_sent() -> None:
 
     for adapter in (anthropic(), openai(), FakeAnalyzer()):
         assert adapter.descriptor["prompt_version"] == PROMPT_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Une réponse malformée est une erreur de fournisseur, jamais un plantage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("document", "raison"),
+    [
+        (
+            {"entities": [{"target": "session", "fields": [{"target": "external_id"}]}]},
+            "source absent",
+        ),
+        ({"entities": [{"natural_key": [], "fields": []}]}, "target absent"),
+        ("une chaîne, pas un objet", "mapping n'est pas un objet"),
+        ({"source_format": "yaml", "entities": []}, "format inventé"),
+        (
+            {"entities": [{"target": "session", "fields": "pas une liste"}]},
+            "fields n'est pas une liste",
+        ),
+    ],
+)
+def test_a_malformed_document_is_an_analyzer_error(document: Any, raison: str) -> None:
+    """Constat #99 : seules les trois clés de premier niveau étaient vérifiées.
+    `_document_to_mapping` indexait ensuite sans garde, et le KeyError nu
+    remontait jusqu'au fourre-tout 500 — alors que la docstring du module
+    annonce un 502 et que le front ne propose un réessai que sur un 502."""
+    payload = json.dumps({"mapping": document, "ambiguities": [], "unmapped_fields": []})
+
+    with pytest.raises(AnalyzerError) as exc:
+        anthropic()._to_proposal(payload)
+
+    assert "MAPPING_CONTRACT" in str(exc.value), raison

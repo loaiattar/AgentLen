@@ -146,7 +146,23 @@ class BaseAnalyzerAdapter:
                     )
                 else:
                     if response.status_code < HTTP_ERROR_THRESHOLD:
-                        parsed: dict[str, Any] = response.json()
+                        try:
+                            parsed: dict[str, Any] = response.json()
+                        except ValueError as exc:
+                            # Une base_url qui vise un proxy ou un mauvais
+                            # chemin répond volontiers 200 avec du HTML. Sans
+                            # cette garde, json.JSONDecodeError remontait tel
+                            # quel et donnait un 500 générique.
+                            raise AnalyzerError(
+                                f"Le fournisseur {self.provider_name} a répondu "
+                                f"{response.status_code} sans JSON exploitable. "
+                                "Vérifier AI_BASE_URL : le point d'accès ne "
+                                "semble pas être celui d'une API de modèles.",
+                                details={
+                                    "status": response.status_code,
+                                    "content_type": response.headers.get("content-type", ""),
+                                },
+                            ) from exc
                         return parsed
                     diagnostic = _provider_diagnostic(response)
                     if response.status_code not in RETRYABLE_STATUS:
@@ -270,13 +286,26 @@ class BaseAnalyzerAdapter:
                     f"Réponse non conforme : '{required}' manquant (MAPPING_CONTRACT.md §5).",
                     details={"provider": self.provider_name, "missing": required},
                 )
-        return MappingProposal(
-            mapping=_document_to_mapping(payload["mapping"]),
-            rationale=tuple(payload.get("rationale", ())),
-            ambiguities=tuple(payload["ambiguities"]),
-            unmapped_fields=tuple(payload["unmapped_fields"]),
-            analyzer_descriptor=self.descriptor,
-        )
+        try:
+            return MappingProposal(
+                mapping=_document_to_mapping(payload["mapping"]),
+                rationale=tuple(payload.get("rationale", ())),
+                ambiguities=tuple(payload["ambiguities"]),
+                unmapped_fields=tuple(payload["unmapped_fields"]),
+                analyzer_descriptor=self.descriptor,
+            )
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            # Seules les trois clés de premier niveau étaient vérifiées : une
+            # règle sans `source`, un `mapping` qui est une chaîne, un
+            # `source_format` inventé, et l'exception nue remontait jusqu'au
+            # fourre-tout 500. Le contrat du module annonce un 502, et le front
+            # ne propose un réessai que sur un 502. Un modèle qui se trompe de
+            # forme est un cas normal, pas un bug de l'application.
+            raise AnalyzerError(
+                "Le document renvoyé par le modèle ne respecte pas "
+                f"MAPPING_CONTRACT.md §5 : {type(exc).__name__} {exc}.",
+                details={"provider": self.provider_name, "cause": type(exc).__name__},
+            ) from exc
 
 
 # ---------------------------------------------------------------------------
