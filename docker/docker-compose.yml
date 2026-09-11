@@ -42,7 +42,11 @@ services:
       db:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      # Overridable like the other two. A fixed host port is the first thing
+      # that stops a fresh clone on a machine that already runs something on
+      # 8000 — and the frontend reaches the API over the internal network, so
+      # changing this side breaks nothing.
+      - "${API_HOST_PORT:-8000}:8000"
     volumes:
       - agentlen_storage:/app/storage
     # PostgreSQL healthy -> Alembic migrations -> uvicorn. The API stays up
