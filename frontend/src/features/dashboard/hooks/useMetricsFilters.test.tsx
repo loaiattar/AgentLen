@@ -7,7 +7,18 @@ import { useMetricsFilters } from '@/features/dashboard/hooks/useMetricsFilters'
 import { renderInAppLayout } from '@/test/app-router'
 
 const sources = vi.hoisted(() => ({
-  current: { data: undefined as { id: number; name: string }[] | undefined, isPending: false, isError: false },
+  // The real `useDataSourcesQuery` answers a `LoadedList` — `{ items, total,
+  // truncated }` — because the list is read past the 200-row page cap. The
+  // double used to hand back a bare array, which is why this suite stayed green
+  // while `tsc` failed on `develop`: a mock that has drifted from the contract
+  // tests the mock.
+  current: {
+    data: undefined as
+      | { items: { id: number; name: string }[]; total: number | null; truncated: boolean }
+      | undefined,
+    isPending: false,
+    isError: false,
+  },
 }))
 
 vi.mock('@/features/imports/api/imports.queries', () => ({
@@ -35,7 +46,18 @@ function Probe() {
 }
 
 beforeEach(() => {
-  sources.current = { data: [{ id: 1, name: 'TraceLab' }, { id: 7, name: 'Upload from the UI' }], isPending: false, isError: false }
+  sources.current = {
+    data: {
+      items: [
+        { id: 1, name: 'TraceLab' },
+        { id: 7, name: 'Upload from the UI' },
+      ],
+      total: 2,
+      truncated: false,
+    },
+    isPending: false,
+    isError: false,
+  }
 })
 
 describe('useMetricsFilters', () => {

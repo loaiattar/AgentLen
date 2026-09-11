@@ -22,6 +22,11 @@ export function useMetricsFilters() {
   const search = appRoute.useSearch()
   const navigate = useNavigate()
   const sources = useDataSourcesQuery()
+  // `useDataSourcesQuery` answers a `LoadedList` — `{ items, total, truncated }`
+  // — since the list is read past the 200-row page cap. Unwrapped once here, so
+  // `datasetLabel`, `datasetOptions` and the page keep taking a plain array
+  // instead of each learning about the envelope.
+  const sourceNames = sources.data?.items ?? []
   const filters = searchToDashboardFilters(search)
 
   const patchSearch = (patch: (prev: MetricsSearch) => MetricsSearch) => {
@@ -31,8 +36,8 @@ export function useMetricsFilters() {
   return {
     search,
     filters,
-    sources: sources.data ?? [],
-    datasetLabel: datasetLabel(search.data_source_id, sources.data),
+    sources: sourceNames,
+    datasetLabel: datasetLabel(search.data_source_id, sourceNames),
     periodLabel: periodLabel(search),
     // Dates stay raw in `search` (see `parseMetricsSearch`), so the page can say what it ignores.
     ignoredDates: readDateRange(search).ignored,
@@ -60,7 +65,11 @@ export function useMetricsFilters() {
     removeFilter: (key: ExplorationKey) => patchSearch((prev) => withoutSearchKeys(prev, [key])),
     clearExploration: () => patchSearch((prev) => withoutSearchKeys(prev, EXPLORATION_KEYS)),
     dropIgnoredDates: () => patchSearch(withoutIgnoredDates),
-    datasetOptions: datasetOptions(sources),
+    datasetOptions: datasetOptions({
+      data: sourceNames,
+      isPending: sources.isPending,
+      isError: sources.isError,
+    }),
     periodOptions: PERIOD_OPTIONS,
   }
 }
