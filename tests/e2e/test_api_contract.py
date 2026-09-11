@@ -88,6 +88,8 @@ def test_request_validation_is_documented_as_the_400_it_really_is(spec: dict[str
         ("/api/v1/data-sources", "post", 409),
         ("/api/v1/data-sources", "post", 422),
         ("/api/v1/mappings/proposals", "post", 502),
+        ("/api/v1/mappings/proposals", "post", 504),
+        ("/api/v1/mappings/proposals/{proposal_id}/messages", "post", 504),
     ],
 )
 def test_standard_error_statuses_reference_the_envelope(

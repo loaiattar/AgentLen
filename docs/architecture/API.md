@@ -32,6 +32,7 @@ Toutes les erreurs partagent la même enveloppe :
 | `409` | Conflit (fichier déjà importé avec ce mapping) |
 | `422` | Validation métier échouée (mapping invalide, format non supporté) |
 | `502` | Le fournisseur IA a échoué ou renvoyé une réponse non conforme |
+| `504` | L'analyse IA a dépassé son délai total (`ANALYZER_TIMEOUT`, `AI_TOTAL_TIMEOUT_SECONDS`) |
 
 ### Authentification
 
@@ -45,7 +46,7 @@ Exceptions (sans clé) :
 - `GET /version` et `GET /api/v1/version` — version applicative seule, sans accès à la base
 - `GET /docs`, `GET /redoc` et `GET /openapi.json` — documentation interactive et schéma
 
-La documentation est publique par choix : un navigateur qui ouvre `/docs` ne peut pas joindre de header, donc une documentation protégée serait inutilisable ; elle ne décrit que des routes qui exigent toujours la clé, et la clé du front est de toute façon livrée au navigateur. Le schéma déclare les deux mécanismes, sans rien changer à leur application : `ApiKeyAuth` (header `X-API-Key`, exigé partout sauf ci-dessus) et `BearerAuth` (en plus de la clé, sur les routes qui exigent un jeton de session, §10). Chaque opération y documente l'enveloppe d'erreur pour `401`, `500` et, selon la route, `400`, `404`, `409`, `422` et `502`.
+La documentation est publique par choix : un navigateur qui ouvre `/docs` ne peut pas joindre de header, donc une documentation protégée serait inutilisable ; elle ne décrit que des routes qui exigent toujours la clé, et la clé du front est de toute façon livrée au navigateur. Le schéma déclare les deux mécanismes, sans rien changer à leur application : `ApiKeyAuth` (header `X-API-Key`, exigé partout sauf ci-dessus) et `BearerAuth` (en plus de la clé, sur les routes qui exigent un jeton de session, §10). Chaque opération y documente l'enveloppe d'erreur pour `401`, `500` et, selon la route, `400`, `404`, `409`, `422`, `502` et `504`.
 
 Une clé absente ou invalide renvoie `401` :
 
@@ -146,6 +147,11 @@ puis afficher un indicateur de couverture partielle lorsque `ratio` est non
 ```
 
 **`POST /mappings/proposals`** — corps : `{ "file_id": 12, "data_source_id": 3, "provider": null, "model": null, "hint": null }`. `provider`/`model` à `null` = configuration active du serveur.
+
+- `provider` doit appartenir au registre (`anthropic`, `fake`, `openai`, `openai_compatible`, les valeurs de `GET /ai/providers`). Sinon : `400` `MALFORMED_REQUEST`, `field_path` `body.provider`, et le message liste les valeurs acceptées. Le refus a lieu avant toute construction d'adaptateur ; ce n'est plus un `502`.
+- `model` est un texte libre : chaque hôte publie ses propres identifiants, et le serveur ne peut pas en tenir la liste (ADR-006). Il est borné à 200 caractères, sans espace ni caractère de contrôle. Un identifiant inconnu du fournisseur reste un `502`. `model` est **obligatoire dès que `provider` est renseigné** (`400`, `field_path` `body.model`) : le modèle configuré appartient au fournisseur configuré.
+- `AI_BASE_URL` ne s'applique qu'au fournisseur configuré. Un autre fournisseur choisi par requête utilise le point d'accès par défaut de son adaptateur ; la clé d'un fournisseur ne part jamais vers l'hôte d'un autre. Choisir `openai_compatible` quand il n'est pas le fournisseur configuré donne donc un `502` (pas d'hôte).
+- Une proposition, comme un raffinement (`POST /mappings/proposals/{id}/messages`), doit se terminer en `AI_TOTAL_TIMEOUT_SECONDS` (défaut `540`, sous les 600 s du proxy nginx), toutes itérations et tentatives comprises. Au-delà, l'analyse est interrompue, rien n'est enregistré, et l'API répond `504` `ANALYZER_TIMEOUT` avec `details.total_timeout_seconds`. Comme pour un `502`, le front peut proposer de relancer.
 
 Réponse `200` :
 
