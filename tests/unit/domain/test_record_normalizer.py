@@ -375,9 +375,7 @@ def test_model_reference_request_carries_provider_as_context():
     assert model_request.context == (("provider_name", "anthropic"),)
 
 
-def test_sequence_index_from_a_mapped_string_field_is_cast_to_int():
-    # If a mapping targets 'sequence_index' directly without a cast operator,
-    # the raw string must not silently end up in a field typed int.
+def test_sequence_index_string_without_cast_is_rejected_as_type_mismatch():
     mapping = Mapping(
         id=uuid4(),
         name="test",
@@ -401,11 +399,15 @@ def test_sequence_index_from_a_mapped_string_field_is_cast_to_int():
             ),
         ],
     )
-    expected_index = 7
-    raw = {"id": "sess-1", "tool_uses": [{"name": "Bash", "idx": str(expected_index)}]}
+    raw = {"id": "sess-1", "tool_uses": [{"name": "Bash", "idx": "7"}]}
 
     normalizer = RecordNormalizer()
     result = normalizer.normalize(mapping, raw, data_source_id=DATA_SOURCE_ID)
 
-    assert result.tool_calls[0].sequence_index == expected_index
-    assert isinstance(result.tool_calls[0].sequence_index, int)
+    assert result.tool_calls == ()
+    assert len(result.sessions) == 1
+    assert len(result.issues) == 1
+    assert result.issues[0].code == "TYPE_MISMATCH"
+    assert result.issues[0].field_path == (
+        "entities[target=tool_call].fields[target=sequence_index]"
+    )

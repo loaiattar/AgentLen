@@ -81,7 +81,10 @@ Une valeur inconnue est **`null`**, jamais `0`. Les agrégats sont accompagnés 
   "coverage": { "present": 812, "total": 1000, "ratio": 0.812 } }
 ```
 
-Le front doit afficher un indicateur de couverture partielle lorsque `ratio < 1`.
+`ratio` vaut `null` lorsque le périmètre est vide (`total = 0`) : la couverture
+est alors inconnue, et non nulle. Le front doit tester ce cas avant de comparer,
+puis afficher un indicateur de couverture partielle lorsque `ratio` est non
+`null` et `< 1`.
 
 ---
 
@@ -319,7 +322,10 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
       "coverage": { "present": 1090, "total": 1240, "ratio": 0.879 } },
     { "key": "cache_read_ratio", "value": null, "unit": "ratio",
       "coverage": { "present": 0, "total": 1240, "ratio": 0.0 },
-      "warning": "Indicateur non disponible pour cette source." }
+      "warning": "Indicateur non disponible pour cette source." },
+    { "key": "tool_error_rate", "value": null, "unit": "ratio",
+      "coverage": { "present": 0, "total": 0, "ratio": null },
+      "warning": "Aucun appel d'outil sur ce périmètre." }
   ]
 }
 ```
@@ -351,7 +357,7 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
 ## 9. Points d'attention pour l'équipe frontend
 
 1. **Les imports sont asynchrones.** `POST /imports` renvoie `202` ; l'état s'obtient par polling sur `GET /imports/{id}`.
-2. **`null` n'est pas `0`.** Un indicateur `null` avec `coverage.ratio = 0` signifie *non disponible* et doit s'afficher comme tel, pas comme une valeur nulle.
+2. **`null` n'est pas `0`.** Un indicateur `null` signifie *non disponible* et doit s'afficher comme tel, pas comme une valeur nulle. Distinguer les deux couvertures possibles : `coverage.ratio = 0` signifie *mesuré, et aucune donnée ne porte cet indicateur* ; `coverage.ratio = null` (avec `total = 0`) signifie *rien à mesurer dans ce périmètre*, la couverture elle-même est inconnue.
 3. **`comparability: per_source_only`** interdit l'agrégation multi-sources. L'API renvoie un `warning` que le front doit rendre visible.
 4. **Le drill-down est fourni clé en main** via l'objet `filters` de chaque point.
 5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé de fournisseur IA ne quitte le serveur, aucune n'est livrée au navigateur. La clé `X-API-Key` d'AgentLen est distincte, et n'est pas livrée au navigateur non plus : le proxy du front l'ajoute à chaque appel (§1).

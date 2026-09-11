@@ -234,6 +234,31 @@ def test_hash_unsupported_algorithm_is_rejected():
     assert issues[0].severity == "rejected"
 
 
+def test_hash_returns_none_when_every_source_is_absent():
+    results, issues = TransformationEngine().apply(_hash_mapping(["$.a", "$.b"]), {})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].code == "MISSING_REQUIRED_FIELD"
+
+
+def test_boolean_cast_rejects_an_unknown_string_instead_of_returning_false():
+    mapping = _make_mapping(
+        FieldRule(
+            target="external_id",
+            source="$.value",
+            required=True,
+            operators=[{"op": "cast", "to": "boolean"}],
+        )
+    )
+
+    results, issues = TransformationEngine().apply(mapping, {"value": "perhaps"})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].code == "CAST_FAILED"
+
+
 # ---------------------------------------------------------------------------
 # regex_extract
 # ---------------------------------------------------------------------------
@@ -312,3 +337,63 @@ def test_regex_extract_without_a_configured_extractor_produces_a_clear_issue():
     assert results == []
     assert len(issues) == 1
     assert issues[0].code == "REGEX_EXTRACTOR_NOT_CONFIGURED"
+
+
+# ---------------------------------------------------------------------------
+# unit_convert / empty values
+# ---------------------------------------------------------------------------
+
+
+def test_unit_convert_rounds_instead_of_truncating():
+    """`int()` truncated toward zero, turning float error into an off-by-one.
+
+    `1.005 * 1000` is `1004.9999999999999` in binary floating point, which
+    `int()` stored as 1004 ms.
+    """
+    mapping = _make_mapping(
+        FieldRule(
+            target="duration_ms",
+            source="$.dur",
+            required=True,
+            operators=[{"op": "unit_convert", "from": "s", "to": "ms"}],
+        )
+    )
+
+    results, issues = TransformationEngine().apply(mapping, {"dur": 1.005})
+
+    assert issues == []
+    assert results[0]["data"]["duration_ms"] == 1005
+
+
+def test_empty_source_value_is_unknown_not_a_cast_failure():
+    """A CSV source yields `""` for an empty cell, never `None`.
+
+    Rule 4 of MAPPING_CONTRACT.md: an unknown value stays unknown. On an
+    optional field that means no value and no issue, not a rejected row.
+    """
+    mapping = Mapping(
+        id=uuid4(),
+        name="test",
+        version=1,
+        source_format="csv",
+        entities=[
+            EntityMapping(
+                target="session",
+                natural_key=["external_id"],
+                fields=[
+                    FieldRule(target="external_id", source="$.id", required=True),
+                    FieldRule(
+                        target="duration_ms",
+                        source="$.dur",
+                        operators=[{"op": "cast", "to": "integer"}],
+                    ),
+                ],
+            )
+        ],
+    )
+
+    results, issues = TransformationEngine().apply(mapping, {"id": "s1", "dur": "   "})
+
+    assert issues == []
+    assert len(results) == 1
+    assert "duration_ms" not in results[0]["data"]

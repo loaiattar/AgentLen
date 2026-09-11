@@ -8,49 +8,14 @@ from agentlen.domain.errors import (
     ValidationError,
 )
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
+from agentlen.domain.model.target_schema import TARGET_FIELD_TYPES
 from agentlen.domain.services import json_path
 from agentlen.domain.services.json_path import JsonPath
 
 # Fields accepted per target entity.
 # Only these combinations are valid in a mapping document.
 _SCHEMA: dict[str, frozenset[str]] = {
-    "session": frozenset(
-        {
-            "external_id",
-            "agent_name",
-            "started_at",
-            "ended_at",
-            "duration_ms",
-            "outcome",
-            "repository_url",
-        }
-    ),
-    "model_call": frozenset(
-        {
-            "sequence_index",
-            "model_name",
-            "provider_name",
-            "input_tokens",
-            "output_tokens",
-            "cache_read_tokens",
-            "cache_creation_tokens",
-            "reasoning_tokens",
-            "duration_ms",
-            "stop_reason",
-            "status",
-            "error_code",
-        }
-    ),
-    "tool_call": frozenset(
-        {
-            "sequence_index",
-            "tool_name",
-            "status",
-            "duration_ms",
-            "error_message",
-            "arguments",
-        }
-    ),
+    target: frozenset(fields) for target, fields in TARGET_FIELD_TYPES.items()
 }
 
 #: The entity names a mapping may target. Derived from `_SCHEMA` so the two can

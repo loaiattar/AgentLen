@@ -31,8 +31,8 @@ class Coverage:
     total: int  # total records in scope
 
     @property
-    def ratio(self) -> float:
-        return self.present / self.total if self.total else 0.0
+    def ratio(self) -> float | None:
+        return self.present / self.total if self.total else None
 
 
 @dataclass(frozen=True)

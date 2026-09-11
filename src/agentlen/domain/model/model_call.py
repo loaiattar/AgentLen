@@ -23,13 +23,12 @@ class TokenUsage:
     def total(self) -> int | None:
         """Sum of input and output tokens.
 
-        Returns None if both are unknown (not zero).
-        Returns a partial sum if only one is known.
+        Returns None if either half is unknown: a partial total would silently
+        treat missing usage as zero.
         """
-        parts = [self.input_tokens, self.output_tokens]
-        if all(p is None for p in parts):
-            return None  # unknown ≠ zero
-        return sum(p or 0 for p in parts)
+        if self.input_tokens is None or self.output_tokens is None:
+            return None
+        return self.input_tokens + self.output_tokens
 
 
 @dataclass(frozen=True)

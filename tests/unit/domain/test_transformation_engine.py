@@ -77,7 +77,8 @@ def test_apply_succeeds_with_valid_cast():
     assert len(results) == 1
     assert results[0]["entity"] == "session"
     assert results[0]["data"]["external_id"] == "abc123"
-    assert results[0]["data"]["duration_ms"] == 2500.0
+    assert results[0]["data"]["duration_ms"] == 2500
+    assert isinstance(results[0]["data"]["duration_ms"], int)
 
 
 def test_apply_with_default_operator_fills_missing_value():
@@ -218,6 +219,81 @@ def test_source_index_reflects_position_before_rejection_not_survivor_rank():
     assert results[0]["source_index"] == 0
     assert results[1]["data"]["tool_name"] == "Write"
     assert results[1]["source_index"] == expected_third_row_source_index
+
+
+def test_json_number_on_a_string_field_is_coerced_not_rejected():
+    """The type gate must not refuse what RecordNormalizer would have coerced.
+
+    `analysis.py` teaches the model to map `$.run_id` onto `external_id` with no
+    cast operator, and `RecordNormalizer` does `str(data["external_id"])`. A
+    trace whose `run_id` is a JSON number must keep importing: rejecting it here
+    loses the session, and with it every child row under PARENT_SESSION_MISSING.
+    """
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="session",
+                natural_key=["external_id"],
+                fields=[FieldRule(target="external_id", source="$.run_id", required=True)],
+            )
+        ]
+    )
+    results, issues = engine.apply(mapping, {"run_id": 41823})
+
+    assert issues == []
+    assert len(results) == 1
+    assert results[0]["data"]["external_id"] == "41823"
+
+
+def test_float_on_an_integer_field_is_rounded_not_rejected():
+    """A float on an int field is a unit-conversion artefact, not another value."""
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="session",
+                natural_key=["external_id"],
+                fields=[
+                    FieldRule(target="external_id", source="$.id", required=True),
+                    FieldRule(target="duration_ms", source="$.dur"),
+                ],
+            )
+        ]
+    )
+    results, issues = engine.apply(mapping, {"id": "s1", "dur": 1004.9999999999999})
+
+    assert issues == []
+    assert results[0]["data"]["duration_ms"] == 1005
+
+
+def test_type_mismatch_rejects_the_record_even_on_an_optional_field():
+    """The stricter-than-operators policy this branch introduced, kept as is.
+
+    A failed operator on an optional field only warns, but a declared int that
+    arrives as a string is a broken mapping rather than a missing value, so the
+    record is not trusted. Pinned here and in
+    tests/integration/test_run_import.py.
+    """
+    engine = TransformationEngine()
+    mapping = _make_mapping(
+        [
+            EntityMapping(
+                target="session",
+                natural_key=["external_id"],
+                fields=[
+                    FieldRule(target="external_id", source="$.id", required=True),
+                    FieldRule(target="duration_ms", source="$.dur"),
+                ],
+            )
+        ]
+    )
+    results, issues = engine.apply(mapping, {"id": "s1", "dur": "twelve"})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].severity == "rejected"
+    assert issues[0].code == "TYPE_MISMATCH"
 
 
 # ---------------------------------------------------------------------------

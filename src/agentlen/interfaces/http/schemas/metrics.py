@@ -17,7 +17,12 @@ class CoverageOut(BaseModel):
 
     present: int = Field(description="Records that carried the value.")
     total: int = Field(description="Records in scope.")
-    ratio: float = Field(ge=0.0, le=1.0)
+    ratio: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="null when the scope is empty; absence is not zero coverage.",
+    )
 
 
 class MetricOut(BaseModel):
