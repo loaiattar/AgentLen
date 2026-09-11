@@ -32,6 +32,29 @@ class StoredProposal:
         }
 
 
+#: `get_sample_values` returns at most this many examples, whatever the model asks.
+MAX_SAMPLE_VALUES = 10
+DEFAULT_SAMPLE_VALUES = 3
+
+
+def _sample_limit(value: Any) -> int | None:
+    """The `limit` the model asked for, capped; None when it is not a count.
+
+    `int(tool_input.get("limit", 3))` raised on `"ten"`, `null` or `[]`, and a
+    negative limit sliced from the end instead of being refused. Absent or `null`
+    means the default; `"5"` still reads as 5.
+    """
+    if value is None:
+        return DEFAULT_SAMPLE_VALUES
+    if isinstance(value, bool):
+        return None
+    try:
+        limit = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return min(limit, MAX_SAMPLE_VALUES) if limit >= 0 else None
+
+
 class MappingValidationTools:
     """Provider-neutral tools backed by domain data and validation."""
 
@@ -41,6 +64,11 @@ class MappingValidationTools:
     async def execute(  # noqa: PLR0911 - one explicit branch per closed tool whitelist
         self, tool_name: str, tool_input: dict[str, Any]
     ) -> dict[str, Any]:
+        # The model writes every argument, their types included, whatever the
+        # annotation says. A branch that raises fails the whole proposal with a
+        # 500; an error handed back lets the model correct its call (#152).
+        if not isinstance(tool_input, dict):
+            return {"error": "Tool arguments must be a JSON object."}
         if tool_name == "get_field_profile":
             path = tool_input.get("path")
             field = next((f for f in self._profile.fields if f.path == path), None)
@@ -48,7 +76,9 @@ class MappingValidationTools:
         if tool_name == "get_sample_values":
             path = tool_input.get("path")
             field = next((f for f in self._profile.fields if f.path == path), None)
-            limit = min(int(tool_input.get("limit", 3)), 10)
+            limit = _sample_limit(tool_input.get("limit"))
+            if limit is None:
+                return {"error": f"limit must be an integer from 0 to {MAX_SAMPLE_VALUES}."}
             return (
                 {"values": list(field.examples[:limit])} if field else {"error": "Field not found"}
             )
