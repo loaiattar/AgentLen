@@ -17,7 +17,6 @@ TARGET_FIELD_TYPES: dict[str, dict[str, TargetType]] = {
         "ended_at": datetime,
         "duration_ms": int,
         "outcome": str,
-        "repository_url": str,
     },
     "model_call": {
         "sequence_index": int,
@@ -27,7 +26,6 @@ TARGET_FIELD_TYPES: dict[str, dict[str, TargetType]] = {
         "output_tokens": int,
         "cache_read_tokens": int,
         "cache_creation_tokens": int,
-        "reasoning_tokens": int,
         "duration_ms": int,
         "started_at": datetime,
         "stop_reason": str,
@@ -41,6 +39,5 @@ TARGET_FIELD_TYPES: dict[str, dict[str, TargetType]] = {
         "duration_ms": int,
         "started_at": datetime,
         "error_message": str,
-        "arguments": None,
     },
 }

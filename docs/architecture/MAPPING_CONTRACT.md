@@ -61,7 +61,7 @@ Quatre règles non négociables :
           "operators": [{ "op": "parse_datetime", "format": "unix_seconds",
                           "timezone": "UTC" }] },
 
-        { "target": "repository_url", "source": "$.repo.url", "required": false }
+        { "target": "outcome", "source": "$.outcome", "required": false }
       ]
     },
     {
@@ -71,6 +71,9 @@ Quatre règles non négociables :
       "natural_key": ["session_external_id", "sequence_index"],
       "fields": [
         { "target": "sequence_index", "source": "$.index" },
+        { "target": "started_at",     "source": "$.started_at",
+          "operators": [{ "op": "parse_datetime", "format": "iso8601",
+                          "timezone": "UTC" }] },
         { "target": "model_name",     "source": "$.model" },
         { "target": "provider_name",  "source": "$.provider",
           "operators": [{ "op": "default", "value": "unknown" }] },
@@ -94,8 +97,9 @@ Quatre règles non négociables :
           "operators": [{ "op": "map_values",
                           "table": { "null": "ok" }, "on_unknown": "constant",
                           "constant": "error" }] },
-        { "target": "arguments",      "source": "$.input",
-          "operators": [{ "op": "json_passthrough", "max_bytes": 8192 }] }
+        { "target": "started_at",     "source": "$.started_at",
+          "operators": [{ "op": "parse_datetime", "format": "iso8601",
+                          "timezone": "UTC" }] }
       ]
     }
   ],
@@ -140,7 +144,8 @@ Quatre règles non négociables :
 | `concat` | `sources`, `separator` | Concaténation de chemins |
 | `hash` | `algorithm: sha256`, `sources` | Clé naturelle synthétique ; renvoie `null` si toutes les sources sont absentes |
 | `json_passthrough` | `max_bytes` | Conserve un sous-arbre JSON tel quel (colonnes JSONB) |
-| `split_rows` | `path` | Un enregistrement source produit N lignes cibles |
+
+`split_rows` est réservé mais refusé tant qu'il n'existe pas dans le moteur ; une cardinalité multiple se déclare avec `entity.iterate`.
 
 **Rejeté à la validation :** tout opérateur hors de cette liste, tout paramètre non déclaré, tout champ `target` inconnu du schéma, toute expression libre. `regex_extract` n'accepte que des motifs compilables avec une longueur bornée, pour écarter le *catastrophic backtracking*.
 

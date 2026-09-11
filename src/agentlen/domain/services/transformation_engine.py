@@ -335,8 +335,6 @@ class TransformationEngine:
                 return self._hash(lookup, op["sources"], op.get("algorithm", "sha256"))
             case "regex_extract":
                 return self._regex_extract(value, op["pattern"], op.get("group", 0))
-            case "split_rows":
-                return None  # placeholder
             case _:
                 raise ValueError(f"Unknown operator '{op_name}'")
 
