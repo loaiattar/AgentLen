@@ -1,67 +1,343 @@
+import type { FormEvent } from 'react'
+import { useEffect } from 'react'
+
 import { AiPanel } from '@/components/ui/AiPanel'
 import { Button } from '@/components/ui/Button'
+import { EmptyState } from '@/components/ui/EmptyState'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { GlassSkeleton } from '@/components/ui/Skeleton'
+import { Textarea } from '@/components/ui/Textarea'
+import {
+  usePatchProposalMutation,
+  usePreviewImportMutation,
+  useProposeMappingMutation,
+  useRefineProposalMutation,
+} from '@/features/import-assistant/api/assistant.mutations'
+import {
+  useAiProvidersQuery,
+  useFileProfileQuery,
+  useFileQuery,
+  useProposalQuery,
+} from '@/features/import-assistant/api/assistant.queries'
+import { DatasetColumn } from '@/features/import-assistant/components/DatasetColumn'
+import { FilePicker } from '@/features/import-assistant/components/FilePicker'
+import { MappingColumn } from '@/features/import-assistant/components/MappingColumn'
+import { PreviewPanel } from '@/features/import-assistant/components/PreviewPanel'
+import { useAssistantSearch } from '@/features/import-assistant/hooks/useAssistantSearch'
+import { proposalInsights } from '@/features/import-assistant/lib/insights'
+import { describeProposalChange, updateFieldSource } from '@/features/import-assistant/lib/mapping'
+import { useImportAssistantStore } from '@/features/import-assistant/store/import-assistant.store'
+import { useCreateMappingMutation } from '@/features/mappings/api/mappings.mutations'
 
-const fields = [
-  { name: 'completion_tokens', sample: '1284', type: 'number' },
-  { name: 'model_name', sample: 'gpt-4.1', type: 'string' },
-  { name: 'tool_calls', sample: '[{…}]', type: 'json' },
-  { name: 'latency_ms', sample: '1840', type: 'number' },
-]
-
-const mappings = [
-  { from: 'completion_tokens', to: 'token_usage.completion', transform: 'numeric → integer', confidence: 92 },
-  { from: 'model_name', to: 'model.name', transform: 'trim', confidence: 88 },
-  { from: 'latency_ms', to: 'metrics.duration_ms', transform: 'none', confidence: 61 },
-]
+function errorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback
+}
 
 export function ImportAssistantPage() {
+  const { fileId, proposalId, dataSourceId, setFileId, setProposalId } = useAssistantSearch()
+  const syncProposal = useImportAssistantStore((state) => state.syncProposal)
+  const composer = useImportAssistantStore((state) => state.composer)
+  const turns = useImportAssistantStore((state) => state.turns)
+  const mappingDraft = useImportAssistantStore((state) => state.mappingDraft)
+  const acceptedMappingId = useImportAssistantStore((state) => state.acceptedMappingId)
+  const setComposer = useImportAssistantStore((state) => state.setComposer)
+  const pushTurn = useImportAssistantStore((state) => state.pushTurn)
+  const setMappingDraft = useImportAssistantStore((state) => state.setMappingDraft)
+  const clearMappingDraft = useImportAssistantStore((state) => state.clearMappingDraft)
+  const setAcceptedMappingId = useImportAssistantStore((state) => state.setAcceptedMappingId)
+
+  useEffect(() => {
+    syncProposal(proposalId)
+  }, [proposalId, syncProposal])
+
+  const providers = useAiProvidersQuery()
+  const file = useFileQuery(fileId)
+  const profile = useFileProfileQuery(fileId)
+  const proposal = useProposalQuery(proposalId)
+
+  const propose = useProposeMappingMutation()
+  const refine = useRefineProposalMutation()
+  const patch = usePatchProposalMutation()
+  const accept = useCreateMappingMutation()
+  const preview = usePreviewImportMutation()
+
+  const mapping = mappingDraft ?? proposal.data?.mapping
+  const activeProvider = providers.data?.active
+  const canPropose = fileId != null && !propose.isPending
+  const canAccept =
+    proposal.data != null &&
+    proposal.data.validation.valid &&
+    dataSourceId != null &&
+    mapping != null &&
+    mappingDraft == null &&
+    acceptedMappingId == null &&
+    !accept.isPending
+
+  const askAssistant = () => {
+    if (fileId == null) return
+    propose.mutate(
+      {
+        file_id: fileId,
+        data_source_id: dataSourceId,
+        provider: null,
+        model: null,
+      },
+      {
+        onSuccess: (data) => setProposalId(data.proposal_id),
+      },
+    )
+  }
+
+  const saveEdits = () => {
+    if (proposalId == null || mappingDraft == null) return
+    patch.mutate({ proposalId, mapping: mappingDraft }, { onSuccess: () => clearMappingDraft() })
+  }
+
+  const sendMessage = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    const message = composer.trim()
+    if (!message || proposalId == null || refine.isPending || acceptedMappingId != null) return
+    const previous = proposal.data
+    if (previous == null) return
+    refine.mutate(
+      { proposalId, message },
+      {
+        onSuccess: (next) => {
+          pushTurn({ role: 'user', content: message })
+          pushTurn({ role: 'status', content: describeProposalChange(previous, next) })
+          setComposer('')
+          clearMappingDraft()
+        },
+      },
+    )
+  }
+
+  const acceptMapping = () => {
+    if (mapping == null || dataSourceId == null || proposalId == null) return
+    accept.mutate(
+      {
+        data_source_id: dataSourceId,
+        name: `${mapping.name}-p${proposalId}`,
+        source_format: mapping.source_format,
+        entities: mapping.entities,
+      },
+      {
+        onSuccess: (saved) => setAcceptedMappingId(saved.id),
+      },
+    )
+  }
+
+  const runPreview = () => {
+    if (fileId == null || acceptedMappingId == null) return
+    preview.mutate({ file_id: fileId, mapping_id: acceptedMappingId, sample_size: 20 })
+  }
+
+  const headerAction = (() => {
+    if (fileId == null) return null
+    if (proposalId == null) {
+      return (
+        <Button type="button" onClick={askAssistant} loading={propose.isPending} disabled={!canPropose}>
+          Propose mapping
+        </Button>
+      )
+    }
+    if (acceptedMappingId != null) {
+      return (
+        <Button type="button" variant="secondary" onClick={runPreview} loading={preview.isPending}>
+          Preview import
+        </Button>
+      )
+    }
+    return (
+      <Button type="button" onClick={acceptMapping} disabled={!canAccept} loading={accept.isPending}>
+        Accept mapping
+      </Button>
+    )
+  })()
+
   return (
     <div>
       <PageHeader
         kicker="Import assistant"
         title="Mapping studio"
         description="The assistant proposes. You validate. The engine executes."
-        action={<Button>Accept mapping</Button>}
+        action={headerAction}
       />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(18rem,0.9fr)]">
-        <section className="glass-module p-6">
-          <h2 className="text-meta font-medium tracking-[0.14em] text-foreground-subtle uppercase">Dataset</h2>
-          <ul className="mt-6 grid gap-5">
-            {fields.map((field) => (
-              <li key={field.name}>
-                <p className="text-card text-foreground">{field.name}</p>
-                <p className="text-secondary text-foreground-muted">
-                  {field.type} · {field.sample}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-        <section className="glass-module p-6">
-          <h2 className="text-meta font-medium tracking-[0.14em] text-foreground-subtle uppercase">Mapping</h2>
-          <ul className="mt-6 grid gap-6">
-            {mappings.map((mapping) => (
-              <li key={mapping.from} className="grid gap-2">
-                <p className="text-body text-foreground">{mapping.from}</p>
-                <p className="text-secondary text-primary">↓ {mapping.to}</p>
-                <p className="text-meta text-foreground-subtle">{mapping.transform}</p>
-              </li>
-            ))}
-          </ul>
-        </section>
-        <AiPanel
-          insights={[
-            { title: '3 mappings require review', body: 'One field is ambiguous. Two are high confidence.' },
-            {
-              title: 'Likely mapping',
-              body: 'completion_tokens aligns with token_usage.completion on name, type and sample range.',
-              confidence: 82,
-            },
-            { title: 'Ambiguous field', body: 'latency_ms could be duration or time-to-first-token.' },
-          ]}
+
+      <FilePicker key={fileId ?? 'none'} fileId={fileId} fileName={file.data?.original_name} onSubmit={setFileId} />
+
+      {providers.isError ? (
+        <p role="status" className="mb-[var(--space-3)] text-body text-error">
+          {errorMessage(providers.error, 'Unable to load AI providers.')}
+        </p>
+      ) : activeProvider ? (
+        <p className="mb-[var(--space-3)] text-secondary text-foreground-muted">
+          Server analyzer · {activeProvider.provider}
+          {activeProvider.model ? ` · ${activeProvider.model}` : ''}
+        </p>
+      ) : null}
+
+      {fileId == null ? (
+        <EmptyState
+          title="Select a file"
+          description="The studio maps an already uploaded file. Enter its id — the seed TraceLab sample is 1. Uploading a new file is a separate import step."
         />
-      </div>
+      ) : file.isError || profile.isError ? (
+        <EmptyState
+          title="File unavailable"
+          description={errorMessage(file.error ?? profile.error, 'Unable to load this file profile.')}
+        />
+      ) : file.isPending || profile.isPending ? (
+        <div className="grid gap-bento xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.9fr)]">
+          <GlassSkeleton className="min-h-72" />
+          <GlassSkeleton className="min-h-72" />
+          <GlassSkeleton className="min-h-72" />
+        </div>
+      ) : profile.data == null ? (
+        <EmptyState title="No profile" description="This file could not be profiled." />
+      ) : (
+        <div className="grid gap-bento xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.9fr)]">
+          <DatasetColumn profile={profile.data} alreadySeen={file.data?.already_seen} />
+
+          {proposalId == null ? (
+            <section className="glass-module order-1 flex min-h-72 flex-col justify-between p-6 xl:order-2">
+              <div>
+                <h2 className="text-meta font-medium tracking-[0.14em] text-foreground-subtle uppercase">
+                  Mapping
+                </h2>
+                <p className="mt-4 text-body text-foreground-muted">
+                  No proposal yet. Ask the assistant to map this profile.
+                </p>
+              </div>
+            </section>
+          ) : proposal.isPending ? (
+            <GlassSkeleton className="order-1 min-h-72 xl:order-2" />
+          ) : proposal.isError ? (
+            <EmptyState
+              title="Proposal unavailable"
+              description={errorMessage(proposal.error, 'Unable to load this proposal.')}
+              action={
+                <Button variant="secondary" onClick={() => void proposal.refetch()}>
+                  Retry
+                </Button>
+              }
+            />
+          ) : mapping ? (
+            <MappingColumn
+              mapping={mapping}
+              rationale={proposal.data?.rationale ?? []}
+              dirty={mappingDraft != null}
+              saving={patch.isPending}
+              locked={acceptedMappingId != null}
+              onSaveEdits={saveEdits}
+              onSourceChange={(entity, target, source) => {
+                if (proposalId == null || acceptedMappingId != null) return
+                setMappingDraft(proposalId, updateFieldSource(mapping, entity, target, source))
+              }}
+            />
+          ) : (
+            <EmptyState title="Empty mapping" description="The proposal has no mapping document." />
+          )}
+
+          <AiPanel
+            className="order-2 xl:order-3"
+            insights={
+              proposal.data
+                ? proposalInsights(proposal.data)
+                : [
+                    {
+                      title: 'Ready when you are',
+                      body: 'The assistant never runs in the browser. Propose a mapping from the profile, then you validate.',
+                    },
+                  ]
+            }
+            footer={
+              <div className="grid gap-3">
+                {turns.length > 0 ? (
+                  <ul className="grid max-h-40 gap-2 overflow-auto">
+                    {turns.map((turn, index) => (
+                      <li key={`${turn.role}-${index}`} className="text-secondary text-foreground-muted">
+                        <span className="text-meta uppercase text-foreground-subtle">{turn.role} · </span>
+                        {turn.content}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                {propose.isError ? (
+                  <p role="alert" className="text-secondary text-error">
+                    {errorMessage(propose.error, 'The assistant could not propose a mapping.')}
+                  </p>
+                ) : null}
+                {refine.isError ? (
+                  <p role="alert" className="text-secondary text-error">
+                    {errorMessage(refine.error, 'The assistant could not refine this mapping.')}
+                  </p>
+                ) : null}
+                {patch.isError ? (
+                  <p role="alert" className="text-secondary text-error">
+                    {errorMessage(patch.error, 'Edits could not be saved.')}
+                  </p>
+                ) : null}
+                {accept.isError ? (
+                  <p role="alert" className="text-secondary text-error">
+                    {errorMessage(accept.error, 'The mapping could not be saved.')}
+                  </p>
+                ) : null}
+                {acceptedMappingId != null ? (
+                  <p className="text-secondary text-foreground-muted">
+                    Saved as mapping {acceptedMappingId}. Preview writes nothing.
+                  </p>
+                ) : mappingDraft != null ? (
+                  <p className="text-secondary text-foreground-muted">
+                    Save your edits before accepting. The assistant does not apply a mapping on its own.
+                  </p>
+                ) : dataSourceId == null && proposal.data != null ? (
+                  <p className="text-secondary text-foreground-muted">
+                    Pick a dataset in the top bar before accepting. The assistant does not apply a mapping on its own.
+                  </p>
+                ) : null}
+                <form onSubmit={sendMessage} className="grid gap-2">
+                  <Textarea
+                    value={composer}
+                    disabled={proposalId == null || refine.isPending || acceptedMappingId != null}
+                    placeholder={
+                      acceptedMappingId != null
+                        ? 'Mapping already accepted'
+                        : proposalId == null
+                          ? 'Propose a mapping first'
+                          : 'Ask the assistant to adjust a field'
+                    }
+                    aria-label="Message to the mapping assistant"
+                    onChange={(event) => setComposer(event.target.value)}
+                  />
+                  <Button
+                    type="submit"
+                    variant="ai"
+                    size="sm"
+                    disabled={
+                      proposalId == null ||
+                      proposal.data == null ||
+                      composer.trim().length === 0 ||
+                      acceptedMappingId != null
+                    }
+                    loading={refine.isPending}
+                  >
+                    Send
+                  </Button>
+                </form>
+              </div>
+            }
+          />
+        </div>
+      )}
+
+      {preview.isError ? (
+        <p role="alert" className="mt-[var(--space-3)] text-body text-error">
+          {errorMessage(preview.error, 'Preview failed.')}
+        </p>
+      ) : null}
+
+      {preview.data ? <PreviewPanel preview={preview.data} /> : null}
     </div>
   )
 }

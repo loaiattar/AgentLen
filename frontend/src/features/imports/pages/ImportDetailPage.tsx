@@ -18,7 +18,9 @@ export function ImportDetailPage() {
         title={importId}
         action={
           <Button variant="secondary" asChild>
-            <Link to="/imports">Back</Link>
+            <Link to="/imports" search={(prev) => prev}>
+              Back
+            </Link>
           </Button>
         }
       />

@@ -2,7 +2,7 @@ import { Link } from '@tanstack/react-router'
 
 import { Badge } from '@/components/ui/Badge'
 import { BentoGrid, BentoModule, BentoTitle } from '@/components/ui/Bento'
-import { Button } from '@/components/ui/Button'
+import { buttonVariants } from '@/components/ui/Button'
 import { Kpi } from '@/components/ui/Kpi'
 import { OverflowMenu } from '@/components/ui/OverflowMenu'
 import { PageHeader } from '@/components/ui/PageHeader'
@@ -24,9 +24,9 @@ export function ImportListPage() {
             <BentoTitle>New import</BentoTitle>
             <p className="mt-4 max-w-sm text-body text-foreground-muted">JSONL, CSV or Parquet. The assistant proposes a mapping. You validate.</p>
           </div>
-          <Button asChild>
-            <Link to="/import-assistant">Start import</Link>
-          </Button>
+          <Link to="/import-assistant" search={(prev) => prev} className={buttonVariants()}>
+            Start import
+          </Link>
         </BentoModule>
         <BentoModule cols={2} padding="none">
           <Kpi label="Completed" value="18" />
@@ -54,7 +54,12 @@ export function ImportListPage() {
             {imports.map((item) => (
               <TableRow key={item.id}>
                 <TableCell>
-                  <Link to="/imports/$importId" params={{ importId: item.id }} className="text-foreground">
+                  <Link
+                    to="/imports/$importId"
+                    params={{ importId: item.id }}
+                    search={(prev) => prev}
+                    className="text-foreground"
+                  >
                     {item.filename}
                   </Link>
                 </TableCell>

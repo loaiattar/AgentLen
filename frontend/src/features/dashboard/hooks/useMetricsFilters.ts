@@ -1,4 +1,4 @@
-import { getRouteApi } from '@tanstack/react-router'
+import { getRouteApi, useNavigate } from '@tanstack/react-router'
 
 import {
   DATASET_OPTIONS,
@@ -14,7 +14,7 @@ const appRoute = getRouteApi('/_app')
 
 export function useMetricsFilters() {
   const search = appRoute.useSearch()
-  const navigate = appRoute.useNavigate()
+  const navigate = useNavigate()
   const filters = searchToDashboardFilters(search)
 
   const patchSearch = (patch: (prev: MetricsSearch) => MetricsSearch) => {
