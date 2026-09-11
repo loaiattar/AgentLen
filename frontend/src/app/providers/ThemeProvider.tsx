@@ -29,9 +29,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   })
 
   useEffect(() => {
-    if (hasStoredTheme() || typeof window.matchMedia !== 'function') return
+    if (typeof window.matchMedia !== 'function') return
     const media = window.matchMedia('(prefers-color-scheme: dark)')
     const onChange = () => {
+      // Re-checked on every change, not only at mount: the user may have picked
+      // a theme since. Following the OS here would discard that choice and, as
+      // this path does not persist, leave localStorage disagreeing with the UI
+      // until the next reload flipped it back.
+      if (hasStoredTheme()) return
       const next = media.matches ? 'dark' : 'light'
       setThemeState(next)
       applyTheme(next)
@@ -48,11 +53,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         persistTheme(next)
       },
       toggleTheme: () => {
-        setThemeState((current) => {
-          const next = current === 'dark' ? 'light' : 'dark'
-          persistTheme(next)
-          return next
-        })
+        // `theme` from the closure, not a setState updater: an updater must be
+        // pure. StrictMode runs it twice, and a concurrent render that is later
+        // discarded would still have written the class and localStorage for a
+        // transition that never commits. `setTheme` above already does this.
+        const next = theme === 'dark' ? 'light' : 'dark'
+        setThemeState(next)
+        persistTheme(next)
       },
     }),
     [theme],

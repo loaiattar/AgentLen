@@ -184,6 +184,11 @@
   --on-emphasis: #101618;
   --on-dark: #f5f8f9;
 
+  /* Lifted from the light-mode #008b94: on the dark glass surface
+     (rgb(24 34 40 / 0.55) over --background) that teal contrasts 4.22:1, under
+     the 4.5:1 AA floor for the `text-primary` links in glass modules. This one
+     reaches 5.65:1 there, and 6.08:1 on the flat background. */
+  --primary: #12a3ad;
   --primary-soft: rgb(0 247 255 / 0.16);
   --accent-magenta-soft: rgb(255 0 135 / 0.18);
   --success-soft: rgb(114 242 197 / 0.16);
@@ -277,7 +282,11 @@
 
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Inter", ui-sans-serif, system-ui, sans-serif;
+  /* Inter ships no monospace variant, and `font-mono` is used for tabular and
+     technical data — preview columns, issue codes, field names — where digits
+     must align and l/1/I and 0/O must stay distinguishable. The "Inter
+     everywhere" rule is about UI text, not these. */
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
   --text-display: 3.75rem;
   --text-display--line-height: 1.05;

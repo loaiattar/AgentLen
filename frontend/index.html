@@ -12,9 +12,13 @@
     />
     <title>AgentLen</title>
     <script>
+      // Paints the theme before React boots, so there is no light flash on a
+      // dark preference. Deliberately duplicates THEME_STORAGE_KEY and the
+      // resolution rule from src/app/providers/theme.ts — it has to run before
+      // any module loads. Change one, change the other: nothing checks.
       (function () {
         try {
-          var stored = localStorage.getItem('agentlen-theme')
+          var stored = localStorage.getItem('agentlen-theme') // THEME_STORAGE_KEY
           var theme =
             stored === 'dark' || stored === 'light'
               ? stored

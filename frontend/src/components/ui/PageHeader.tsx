@@ -16,7 +16,12 @@ export function PageHeader({ title, action, className }: PageHeaderProps) {
         className,
       )}
     >
-      <h1 className="font-display text-page text-foreground text-balance">{title}</h1>
+      {/* `min-w-0` so the title can shrink below its min-content width: a flex
+          item does not by default, and a long unbroken filename would widen the
+          header past its container instead of wrapping. */}
+      <h1 className="font-display text-page text-foreground min-w-0 max-w-2xl text-balance break-words">
+        {title}
+      </h1>
       {action ? <div className="flex shrink-0 items-center gap-[var(--space-1)]">{action}</div> : null}
     </header>
   )
