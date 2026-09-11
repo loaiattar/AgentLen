@@ -25,9 +25,12 @@ from agentlen.application.dto.persistence import (
     ModelCallRow,
     SessionRow,
     ToolCallRow,
+    UserRecord,
+    UserSessionRecord,
 )
+from agentlen.application.errors import ConflictError
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
-from agentlen.domain.model.mapping import Mapping
+from agentlen.domain.model.mapping import Mapping, MappingProposal
 from agentlen.domain.model.session import Session
 
 
@@ -57,11 +60,17 @@ class _Store:
     import_runs: dict[int, dict[str, Any]] = field(default_factory=dict)
     reports: dict[int, ImportReport] = field(default_factory=dict)
     issues: list[tuple[int, ImportIssue, int | None]] = field(default_factory=list)
-    mappings: dict[int, tuple[Mapping, int]] = field(default_factory=dict)
+
+    mappings: dict[int, tuple[Mapping, int, str, datetime]] = field(default_factory=dict)
+    mapping_proposals: dict[int, MappingProposal] = field(default_factory=dict)
+    proposal_messages: list[tuple[int, str, str]] = field(default_factory=list)
     data_sources: dict[str, int] = field(default_factory=dict)
     data_source_records: dict[int, DataSourceRecord] = field(default_factory=dict)
     referentials: dict[tuple[str, str, str], int] = field(default_factory=dict)
     file_uploads: dict[str, FileUploadRecord] = field(default_factory=dict)
+    users_by_email: dict[str, UserRecord] = field(default_factory=dict)
+    users_by_id: dict[int, UserRecord] = field(default_factory=dict)
+    user_sessions: dict[str, UserSessionRecord] = field(default_factory=dict)
     ids: _Sequence = field(default_factory=_Sequence)
 
     def snapshot(self) -> dict[str, Any]:
@@ -80,10 +89,15 @@ class _Store:
             "reports": dict(self.reports),
             "issues": list(self.issues),
             "mappings": dict(self.mappings),
+            "mapping_proposals": dict(self.mapping_proposals),
+            "proposal_messages": list(self.proposal_messages),
             "data_sources": dict(self.data_sources),
             "data_source_records": dict(self.data_source_records),
             "referentials": dict(self.referentials),
             "file_uploads": dict(self.file_uploads),
+            "users_by_email": dict(self.users_by_email),
+            "users_by_id": dict(self.users_by_id),
+            "user_sessions": dict(self.user_sessions),
         }
 
     def restore(self, snap: dict[str, Any]) -> None:
@@ -309,15 +323,71 @@ class InMemoryMappingRepository:
 
     async def save(self, mapping: Mapping, *, data_source_id: int) -> int:
         new_id = self._s.ids.take()
-        self._s.mappings[new_id] = (mapping, data_source_id)
+        self._s.mappings[new_id] = (mapping, data_source_id, "active", datetime.now(UTC))
         return new_id
 
     async def list(self, *, data_source_id: int | None = None) -> list[Mapping]:
         return [
             m
-            for m, source in self._s.mappings.values()
+            for m, source, _status, _created_at in self._s.mappings.values()
             if data_source_id is None or source == data_source_id
         ]
+
+    async def get_by_id(self, mapping_id: int) -> dict[str, Any] | None:
+        found = self._s.mappings.get(mapping_id)
+        if found is None:
+            return None
+        return self._to_row(mapping_id, found)
+
+    async def list_records(
+        self,
+        *,
+        data_source_id: int | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        matched = [
+            (mapping_id, entry)
+            for mapping_id, entry in self._s.mappings.items()
+            if (data_source_id is None or entry[1] == data_source_id)
+            and (status is None or entry[2] == status)
+        ]
+        matched.sort(key=lambda item: (item[1][3], item[0]), reverse=True)
+        page = matched[offset : offset + limit]
+        return [self._to_row(mapping_id, entry) for mapping_id, entry in page]
+
+    async def count(self, *, data_source_id: int | None = None, status: str | None = None) -> int:
+        return sum(
+            1
+            for _mapping, source, st, _created_at in self._s.mappings.values()
+            if (data_source_id is None or source == data_source_id)
+            and (status is None or st == status)
+        )
+
+    async def supersede(self, mapping_id: int) -> None:
+        found = self._s.mappings.get(mapping_id)
+        if found is not None:
+            mapping, source, _status, created_at = found
+            self._s.mappings[mapping_id] = (mapping, source, "superseded", created_at)
+
+    @staticmethod
+    def _to_row(mapping_id: int, entry: tuple[Mapping, int, str, datetime]) -> dict[str, Any]:
+        from agentlen.infrastructure.persistence.repositories.mapping_codec import (
+            mapping_to_document,
+        )
+
+        mapping, data_source_id, status, created_at = entry
+        return {
+            "id": mapping_id,
+            "data_source_id": data_source_id,
+            "name": mapping.name,
+            "version": mapping.version,
+            "source_format": mapping.source_format,
+            "status": status,
+            "document": mapping_to_document(mapping),
+            "created_at": created_at,
+        }
 
 
 class InMemoryDataSourceRepository:
@@ -420,6 +490,77 @@ class InMemoryReferentialRepository:
         return self._s.referentials[key]
 
 
+class InMemoryMappingProposalRepository:
+    def __init__(self, store: _Store) -> None:
+        self._s = store
+
+    async def save(
+        self,
+        proposal: MappingProposal,
+        *,
+        file_upload_id: int,
+        data_source_id: int | None = None,
+    ) -> int:
+        proposal_id = self._s.ids.take()
+        self._s.mapping_proposals[proposal_id] = proposal
+        return proposal_id
+
+    async def get(self, proposal_id: int) -> MappingProposal | None:
+        return self._s.mapping_proposals.get(proposal_id)
+
+    async def update(self, proposal_id: int, proposal: MappingProposal) -> None:
+        self._s.mapping_proposals[proposal_id] = proposal
+
+    async def add_message(self, proposal_id: int, *, role: str, content: str) -> None:
+        self._s.proposal_messages.append((proposal_id, role, content))
+
+
+class InMemoryUserRepository:
+    def __init__(self, store: _Store) -> None:
+        self._s = store
+
+    async def get_by_email(self, email: str) -> UserRecord | None:
+        return self._s.users_by_email.get(email)
+
+    async def get_by_id(self, user_id: int) -> UserRecord | None:
+        return self._s.users_by_id.get(user_id)
+
+    async def create(self, *, email: str, password_hash: str) -> UserRecord:
+        if email in self._s.users_by_email:
+            raise ConflictError(
+                f"Un compte existe déjà pour l'adresse '{email}'.", details={"email": email}
+            )
+        record = UserRecord(
+            id=self._s.ids.take(),
+            email=email,
+            password_hash=password_hash,
+            created_at=datetime.now(UTC),
+        )
+        self._s.users_by_email[email] = record
+        self._s.users_by_id[record.id] = record
+        return record
+
+
+class InMemoryUserSessionRepository:
+    def __init__(self, store: _Store) -> None:
+        self._s = store
+
+    async def create(
+        self, *, user_id: int, token: str, expires_at: datetime | None
+    ) -> UserSessionRecord:
+        record = UserSessionRecord(
+            token=token, user_id=user_id, created_at=datetime.now(UTC), expires_at=expires_at
+        )
+        self._s.user_sessions[token] = record
+        return record
+
+    async def get_by_token(self, token: str) -> UserSessionRecord | None:
+        return self._s.user_sessions.get(token)
+
+    async def delete_by_token(self, token: str) -> None:
+        self._s.user_sessions.pop(token, None)
+
+
 class InMemoryUnitOfWork:
     """Real rollback: state is snapshotted on entry and restored unless
     `commit()` was called, so a test can assert that a failure left nothing
@@ -436,9 +577,12 @@ class InMemoryUnitOfWork:
         self.import_runs = InMemoryImportRunRepository(self._store)
         self.import_issues = InMemoryImportIssueRepository(self._store)
         self.mappings = InMemoryMappingRepository(self._store)
+        self.mapping_proposals = InMemoryMappingProposalRepository(self._store)
         self.data_sources = InMemoryDataSourceRepository(self._store)
         self.file_uploads = InMemoryFileUploadRepository(self._store)
         self.referentials = InMemoryReferentialRepository(self._store)
+        self.users = InMemoryUserRepository(self._store)
+        self.user_sessions = InMemoryUserSessionRepository(self._store)
 
     async def __aenter__(self) -> InMemoryUnitOfWork:
         self._snapshot = self._store.snapshot()

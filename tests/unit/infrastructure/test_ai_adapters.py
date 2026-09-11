@@ -114,19 +114,32 @@ def test_each_adapter_reads_tool_calls_out_of_its_own_shape() -> None:
 
 def test_tool_results_are_sent_back_in_each_provider_shape() -> None:
     """Anthropic wants one message holding every result; OpenAI wants one
-    message per result. Getting this backwards breaks the loop silently."""
+    message per result. Getting this backwards breaks the loop silently.
+
+    Both return a *list* of messages: the loop extends `messages` with what it
+    gets, so a provider returning a bare dict would nest it one level down.
+    """
     from agentlen.infrastructure.ai.base import ToolCall
 
-    call = ToolCall(id="t1", name="validate_mapping", arguments={})
-    results = [(call, {"valid": True})]
+    calls = [
+        (ToolCall(id="t1", name="validate_mapping", arguments={}), {"valid": True}),
+        (ToolCall(id="t2", name="validate_mapping", arguments={}), {"valid": False}),
+    ]
 
-    a = anthropic()._tool_results_message(results)
-    o = openai()._tool_results_message(results)
+    a = anthropic()._tool_results_message(calls)
+    o = openai()._tool_results_message(calls)
 
-    assert isinstance(a, dict) and a["role"] == "user"
-    assert a["content"][0]["tool_use_id"] == "t1"
-    assert isinstance(o, list) and o[0]["role"] == "tool"
-    assert o[0]["tool_call_id"] == "t1"
+    assert isinstance(a, list) and isinstance(o, list)
+    assert all(isinstance(m, dict) for m in a + o)
+
+    # Anthropic: the two results travel together in one user message.
+    assert len(a) == 1 and a[0]["role"] == "user"
+    assert [block["tool_use_id"] for block in a[0]["content"]] == ["t1", "t2"]
+
+    # OpenAI: one message each.
+    assert len(o) == 2
+    assert [m["role"] for m in o] == ["tool", "tool"]
+    assert [m["tool_call_id"] for m in o] == ["t1", "t2"]
 
 
 # ---------------------------------------------------------------------------
@@ -235,3 +248,138 @@ async def test_a_mapping_stays_applicable_after_switching_provider() -> None:
     serialised = json.dumps(document).lower()
     for provider in ("anthropic", "openai", "claude", "gpt", "groq", "fake"):
         assert provider not in serialised, f"le mapping mentionne '{provider}'"
+
+
+# ---------------------------------------------------------------------------
+# The real loop, driven end to end against a stubbed provider
+# ---------------------------------------------------------------------------
+
+
+class ReplayTransport:
+    """Stands in for the provider: records each request body, replies in order.
+
+    `FakeAnalyzer` overrides `run_agent_loop` wholesale, so it cannot catch a
+    fault in the shared loop. This drives the loop on the real adapters.
+    """
+
+    def __init__(self, turns: list[dict[str, Any]]) -> None:
+        self._turns = list(turns)
+        self.bodies: list[dict[str, Any]] = []
+
+    async def __call__(self, body: dict[str, Any]) -> dict[str, Any]:
+        self.bodies.append(body)
+        return self._turns.pop(0)
+
+
+ANTHROPIC_TURNS = [
+    {
+        "stop_reason": "tool_use",
+        "content": [
+            {"type": "tool_use", "id": "t1", "name": "validate_mapping", "input": {"mapping": {}}}
+        ],
+    },
+    {"stop_reason": "end_turn", "content": [{"type": "text", "text": PROPOSAL}]},
+]
+
+OPENAI_TURNS = [
+    {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "id": "t1",
+                            "function": {"name": "validate_mapping", "arguments": "{}"},
+                        }
+                    ],
+                }
+            }
+        ]
+    },
+    {"choices": [{"message": {"role": "assistant", "content": PROPOSAL}}]},
+]
+
+
+@pytest.mark.parametrize(
+    ("build", "turns"),
+    [(anthropic, ANTHROPIC_TURNS), (openai, OPENAI_TURNS)],
+    ids=["anthropic", "openai"],
+)
+async def test_the_loop_sends_a_flat_message_list_after_a_tool_call(
+    build: Any, turns: list[dict[str, Any]]
+) -> None:
+    """Regression, #83: the loop used to append the tool-results message, which
+    nested OpenAI's list-of-messages as a single element and drew a 400 from
+    every OpenAI-shaped host on the second request."""
+    analyzer = build()
+    transport = ReplayTransport(turns)
+    analyzer._post = transport  # type: ignore[method-assign]
+
+    proposal = await analyzer.run_agent_loop(profile={}, tool_executor=RecordingExecutor())
+
+    assert isinstance(proposal, MappingProposal)
+    assert len(transport.bodies) == 2, "the tool result should have prompted a second request"
+
+    second = transport.bodies[1]["messages"]
+    assert all(isinstance(message, dict) for message in second), (
+        f"messages must stay flat, got {[type(m).__name__ for m in second]}"
+    )
+    assert all("role" in message for message in second)
+
+
+def test_the_prompt_carries_the_operators_the_validator_accepts() -> None:
+    """Regression, #83: this read a name the validator does not define, behind
+    a getattr default, so every prompt shipped an empty whitelist and the model
+    was left to guess operators that `validate_mapping` then rejected."""
+    from agentlen.domain.services.mapping_validator import OPERATOR_WHITELIST
+    from agentlen.infrastructure.ai.base import _allowed_operators, _target_schema
+
+    assert _allowed_operators() == sorted(OPERATOR_WHITELIST)
+    assert _allowed_operators(), "the whitelist must never reach the prompt empty"
+    assert _target_schema(), "the target schema must never reach the prompt empty"
+
+
+def test_the_recorded_prompt_version_is_the_one_actually_sent() -> None:
+    """Constat de la vérification du 2026-09-10 : le descriptor annonçait
+    `analysis-v1` alors que le builder envoyait `analysis-v2`. Deux littéraux
+    séparés, et la traçabilité que ce champ existe pour offrir — retrouver le
+    prompt derrière une proposition surprenante — ne fonctionnait pas."""
+    from agentlen.infrastructure.ai.prompts.analysis import PROMPT_VERSION
+
+    for adapter in (anthropic(), openai(), FakeAnalyzer()):
+        assert adapter.descriptor["prompt_version"] == PROMPT_VERSION
+
+
+# ---------------------------------------------------------------------------
+# Une réponse malformée est une erreur de fournisseur, jamais un plantage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("document", "raison"),
+    [
+        (
+            {"entities": [{"target": "session", "fields": [{"target": "external_id"}]}]},
+            "source absent",
+        ),
+        ({"entities": [{"natural_key": [], "fields": []}]}, "target absent"),
+        ("une chaîne, pas un objet", "mapping n'est pas un objet"),
+        ({"source_format": "yaml", "entities": []}, "format inventé"),
+        (
+            {"entities": [{"target": "session", "fields": "pas une liste"}]},
+            "fields n'est pas une liste",
+        ),
+    ],
+)
+def test_a_malformed_document_is_an_analyzer_error(document: Any, raison: str) -> None:
+    """Constat #99 : seules les trois clés de premier niveau étaient vérifiées.
+    `_document_to_mapping` indexait ensuite sans garde, et le KeyError nu
+    remontait jusqu'au fourre-tout 500 — alors que la docstring du module
+    annonce un 502 et que le front ne propose un réessai que sur un 502."""
+    payload = json.dumps({"mapping": document, "ambiguities": [], "unmapped_fields": []})
+
+    with pytest.raises(AnalyzerError) as exc:
+        anthropic()._to_proposal(payload)
+
+    assert "MAPPING_CONTRACT" in str(exc.value), raison

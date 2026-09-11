@@ -66,6 +66,8 @@ erDiagram
 | `mapping` | Une version d'une configuration d'import, applicable et réutilisable |
 | `mapping_proposal` | Une proposition produite par un modèle IA pour un fichier donné, avec le descripteur du modèle utilisé |
 | `mapping_proposal_message` | Un tour de conversation entre l'utilisateur et l'agent d'import |
+| `user` | Une personne capable de s'authentifier contre l'API (e-mail + mot de passe) |
+| `user_session` | Une connexion active, identifiée par son jeton de session opaque |
 
 ---
 
@@ -319,6 +321,34 @@ Autres objets de lecture : `v_daily_activity` (sessions/tokens par jour et par s
 
 ---
 
-## 8. Migrations
+## 8. Authentification utilisateur
+
+Orthogonale au reste du modèle : aucune autre table ne référence `user` ou `user_session`, et ces deux-là ne référencent rien d'autre qu'elles-mêmes. C'est une couche distincte de `X-API-Key` (l'application) — voir [ARCHITECTURE.md §10](ARCHITECTURE.md#10-sécurité) et [API.md §10](API.md#10-authentification-utilisateur-comptes).
+
+```sql
+CREATE TABLE "user" (
+    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    email         TEXT        NOT NULL UNIQUE,   -- normalisé en minuscules avant écriture
+    password_hash TEXT        NOT NULL,          -- bcrypt ; jamais le mot de passe en clair
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE user_session (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    token      TEXT        NOT NULL UNIQUE,      -- jeton opaque présenté en Bearer
+    user_id    BIGINT      NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ                       -- fixé à la connexion (30 jours)
+);
+CREATE INDEX ON user_session (user_id);
+```
+
+**Le mot de passe n'est jamais stocké en clair.** `password_hash` est un hash bcrypt (salé automatiquement, une chaîne auto-suffisante) produit par l'adaptateur `BcryptPasswordHasher`, derrière le port `PasswordHasher` — remplaçable sans toucher aux use cases, comme `Clock` ou `StructureAnalyzer`.
+
+**Le jeton de session est opaque, pas un JWT.** Il est généré côté serveur (`secrets.token_urlsafe`), stocké dans `user_session`, et présenté par le client en `Authorization: Bearer <token>`. La révocation (`/auth/logout`) est un `DELETE` sur cette table plutôt qu'une liste de blocage à gérer en plus d'un mécanisme de signature.
+
+---
+
+## 9. Migrations
 
 Alembic, une révision par PR structurante. Les migrations sont **testées à l'aller et au retour** (`upgrade head` puis `downgrade base`) dans la CI sur un Postgres jetable. Les scripts SQL générés sont versionnés dans le dépôt, comme l'exige le sujet.

@@ -19,6 +19,7 @@ from agentlen.domain.errors import (
     UnknownTargetFieldError,
 )
 from agentlen.interfaces.http.app import create_app
+from tests.conftest import AUTH_HEADERS
 
 from .conftest import UNREACHABLE_URL
 
@@ -66,7 +67,7 @@ async def raising_client() -> AsyncIterator[AsyncClient]:
         app.router.add_api_route(path, handler, methods=["GET"])
 
     transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with AsyncClient(transport=transport, base_url="http://test", headers=AUTH_HEADERS) as c:
         yield c
 
 
@@ -84,7 +85,7 @@ def assert_envelope(payload: dict[str, object]) -> dict[str, object]:
 @pytest.mark.parametrize(
     ("path", "expected_status", "expected_code"),
     [
-        ("/boom/unknown-target", 422, "UNKNOWN_TARGET_FIELD"),
+        ("/boom/unknown-target", 422, "MAPPING_UNKNOWN_TARGET"),
         ("/boom/domain-rule", 422, "DOMAIN_RULE_VIOLATED"),
         ("/boom/not-found", 404, "NOT_FOUND"),
         ("/boom/conflict", 409, "CONFLICT"),

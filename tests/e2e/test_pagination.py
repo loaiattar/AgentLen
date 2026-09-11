@@ -5,14 +5,13 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.interfaces.http.app import create_app
 from agentlen.interfaces.http.pagination import MAX_LIMIT, Paginated, paginate
 from agentlen.interfaces.http.schemas.common import Page
-
-from .conftest import UNREACHABLE_URL
+from tests.e2e.conftest import UNREACHABLE_URL, asgi_client
 
 ROWS = [f"row-{i}" for i in range(500)]
 
@@ -26,8 +25,7 @@ async def paged_client() -> AsyncIterator[AsyncClient]:
         return paginate(window, total=len(ROWS), params=params)
 
     app.router.add_api_route("/things", listing, methods=["GET"])
-    transport = ASGITransport(app=app, raise_app_exceptions=False)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
+    async with asgi_client(app, raise_app_exceptions=False) as c:
         yield c
 
 

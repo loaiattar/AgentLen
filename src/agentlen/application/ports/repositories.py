@@ -16,7 +16,7 @@ UUID → id mapping; reads take the database id. See ADR-012.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Protocol
 
 from agentlen.application.dto.persistence import (
@@ -26,6 +26,8 @@ from agentlen.application.dto.persistence import (
     ModelCallRow,
     SessionRow,
     ToolCallRow,
+    UserRecord,
+    UserSessionRecord,
 )
 from agentlen.domain.model.import_run import ImportIssue, ImportReport
 from agentlen.domain.model.mapping import Mapping, MappingProposal
@@ -118,6 +120,35 @@ class ImportIssueRepository(Protocol):
 
 
 class MappingRepository(Protocol):
+    # get_by_id/list_records/count/supersede are declared before `get`/`list`
+    # below: a method named `list` in this class shadows the builtin `list[...]`
+    # in every annotation that follows it (mypy resolves the bare name against
+    # the class's own namespace), so anything using a bare `list[...]` return
+    # type has to come first.
+    async def get_by_id(self, mapping_id: int) -> dict[str, Any] | None:
+        """The full stored row: status, data_source_id, timestamps, and the raw
+        document — API.md §4 surfaces more than the transformation-engine's
+        `Mapping` carries."""
+        ...
+
+    async def list_records(
+        self,
+        *,
+        data_source_id: int | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]: ...
+
+    async def count(
+        self, *, data_source_id: int | None = None, status: str | None = None
+    ) -> int: ...
+
+    async def supersede(self, mapping_id: int) -> None:
+        """Marks a mapping 'superseded' — called when a PUT creates its
+        successor (MAPPING_CONTRACT.md §6)."""
+        ...
+
     async def get(self, mapping_id: int) -> Mapping | None: ...
     async def save(self, mapping: Mapping, *, data_source_id: int) -> int: ...
     async def list(self, *, data_source_id: int | None = None) -> list[Mapping]: ...
@@ -159,6 +190,10 @@ class MappingProposalRepository(Protocol):
 
     async def get(self, proposal_id: int) -> MappingProposal | None: ...
 
+    async def update(self, proposal_id: int, proposal: MappingProposal) -> None: ...
+
+    async def add_message(self, proposal_id: int, *, role: str, content: str) -> None: ...
+
 
 class DataSourceRepository(Protocol):
     async def get_by_slug(self, slug: str) -> int | None: ...
@@ -180,6 +215,30 @@ class DataSourceRepository(Protocol):
         dataset_version: str | None = None,
         retrieved_at: date | None = None,
     ) -> int: ...
+
+
+class UserRepository(Protocol):
+    async def get_by_email(self, email: str) -> UserRecord | None: ...
+
+    async def get_by_id(self, user_id: int) -> UserRecord | None: ...
+
+    async def create(self, *, email: str, password_hash: str) -> UserRecord:
+        """Raises on a duplicate e-mail; the use case checks first so it can
+        raise the application-level `ConflictError` with a clean message
+        instead of surfacing a raw integrity error."""
+        ...
+
+
+class UserSessionRepository(Protocol):
+    async def create(
+        self, *, user_id: int, token: str, expires_at: datetime | None
+    ) -> UserSessionRecord: ...
+
+    async def get_by_token(self, token: str) -> UserSessionRecord | None: ...
+
+    async def delete_by_token(self, token: str) -> None:
+        """No-op if the token is already gone — logout is idempotent."""
+        ...
 
 
 class ReferentialRepository(Protocol):

@@ -47,6 +47,12 @@ _KEY_FOR: dict[str, str] = {
     "fake": "",
 }
 
+#: Fournisseurs pour lesquels une clé absente n'est pas une erreur. Ollama,
+#: LM Studio et vLLM — les cibles que la docstring de l'adaptateur nomme — n'en
+#: demandent aucune, et exiger une valeur bidon pour les joindre transformait
+#: leur cas d'usage principal en échec de configuration.
+_KEY_OPTIONAL = frozenset({"openai_compatible"})
+
 
 def supported_providers() -> list[str]:
     return sorted(_REGISTRY)
@@ -65,7 +71,7 @@ def build_structure_analyzer(
 
     attribute = _KEY_FOR.get(settings.provider, "")
     api_key = getattr(keys, attribute, "") if attribute else ""
-    if attribute and not api_key:
+    if attribute and not api_key and settings.provider not in _KEY_OPTIONAL:
         raise AnalyzerError(
             f"Aucune clé configurée pour '{settings.provider}'. Renseigner {attribute.upper()}.",
             details={"provider": settings.provider},
@@ -90,7 +96,11 @@ def provider_status(
         "available": [
             {
                 "provider": name,
-                "configured": not _KEY_FOR.get(name) or bool(getattr(keys, _KEY_FOR[name], "")),
+                "configured": (
+                    not _KEY_FOR.get(name)
+                    or name in _KEY_OPTIONAL
+                    or bool(getattr(keys, _KEY_FOR[name], ""))
+                ),
             }
             for name in supported_providers()
         ],

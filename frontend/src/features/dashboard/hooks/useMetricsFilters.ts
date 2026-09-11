@@ -29,6 +29,7 @@ export function useMetricsFilters() {
     setDataSourceId: (dataSourceId: number | undefined) => {
       patchSearch((prev) => {
         const next: MetricsSearch = { ...prev }
+        delete next.offset
         if (dataSourceId == null) delete next.data_source_id
         else next.data_source_id = dataSourceId
         return next
@@ -37,6 +38,9 @@ export function useMetricsFilters() {
     setPeriod: (period: MetricsPeriod | undefined) => {
       patchSearch((prev) => {
         const next: MetricsSearch = { ...prev }
+        delete next.date_from
+        delete next.date_to
+        delete next.offset
         if (period == null) delete next.period
         else next.period = period
         return next

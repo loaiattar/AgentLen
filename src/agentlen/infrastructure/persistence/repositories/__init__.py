@@ -5,12 +5,15 @@ from agentlen.infrastructure.persistence.repositories.sql import (
     SqlAlchemyFileUploadRepository,
     SqlAlchemyImportIssueRepository,
     SqlAlchemyImportRunRepository,
+    SqlAlchemyMappingProposalRepository,
     SqlAlchemyMappingRepository,
     SqlAlchemyModelCallRepository,
     SqlAlchemyRawRecordRepository,
     SqlAlchemyReferentialRepository,
     SqlAlchemySessionRepository,
     SqlAlchemyToolCallRepository,
+    SqlAlchemyUserRepository,
+    SqlAlchemyUserSessionRepository,
 )
 
 __all__ = [
@@ -19,9 +22,12 @@ __all__ = [
     "SqlAlchemyImportIssueRepository",
     "SqlAlchemyImportRunRepository",
     "SqlAlchemyMappingRepository",
+    "SqlAlchemyMappingProposalRepository",
     "SqlAlchemyModelCallRepository",
     "SqlAlchemyRawRecordRepository",
     "SqlAlchemyReferentialRepository",
     "SqlAlchemySessionRepository",
     "SqlAlchemyToolCallRepository",
+    "SqlAlchemyUserRepository",
+    "SqlAlchemyUserSessionRepository",
 ]

@@ -136,3 +136,61 @@ def test_the_descriptor_carries_no_key() -> None:
     analyzer = build_structure_analyzer(AISettings(provider="anthropic", model="m"), KEYS)
     assert set(analyzer.descriptor) == {"provider", "model", "prompt_version"}
     assert "sk-ant-test" not in str(analyzer.descriptor)
+
+
+def test_openai_compatible_reaches_a_keyless_host() -> None:
+    """Constat #99 : la factory exigeait une clé pour `openai_compatible`,
+    alors que la docstring de l'adaptateur désigne Ollama, LM Studio et vLLM
+    comme cas d'usage visé — et qu'aucun n'en demande. Le cas d'usage principal
+    échouait donc avant le moindre appel."""
+    from agentlen.infrastructure.ai.factory import build_structure_analyzer
+
+    analyzer = build_structure_analyzer(
+        AISettings(
+            provider="openai_compatible", model="llama3.2", base_url="http://localhost:11434/v1"
+        ),
+        ProviderKeys(),
+    )
+
+    assert analyzer.provider_name == "openai_compatible"
+    # Un `Bearer ` sans jeton derrière : certains hôtes locaux le rejettent
+    # plutôt que de l'ignorer.
+    assert "Authorization" not in analyzer._headers()
+
+
+def test_a_key_is_still_sent_when_there_is_one() -> None:
+    from agentlen.infrastructure.ai.factory import build_structure_analyzer
+
+    analyzer = build_structure_analyzer(
+        AISettings(
+            provider="openai_compatible", model="m", base_url="https://api.groq.com/openai/v1"
+        ),
+        ProviderKeys(ai_api_key="gsk-xyz"),
+    )
+
+    assert analyzer._headers()["Authorization"] == "Bearer gsk-xyz"
+
+
+def test_the_providers_still_requiring_a_key_still_refuse_without_one() -> None:
+    """L'assouplissement vise les hôtes sans clé, pas les fournisseurs payants."""
+    from agentlen.application.errors import AnalyzerError
+    from agentlen.infrastructure.ai.factory import build_structure_analyzer
+
+    for provider in ("anthropic", "openai"):
+        with pytest.raises(AnalyzerError) as exc:
+            build_structure_analyzer(AISettings(provider=provider, model="m"), ProviderKeys())
+        assert "Aucune clé" in str(exc.value)
+
+
+def test_the_output_bound_parameter_follows_the_configuration() -> None:
+    """Constat #99 : les modèles de raisonnement (o1, o3, gpt-5…) refusent
+    `max_tokens` en 400 et exigent `max_completion_tokens`. Le modèle vient de
+    la configuration (ADR-006), le paramètre qu'il accepte aussi — plutôt
+    qu'une liste de préfixes qui se périme à chaque sortie."""
+    from agentlen.infrastructure.ai.openai_adapter import OpenAIAnalyzer
+
+    for parameter in ("max_tokens", "max_completion_tokens"):
+        settings = AISettings(provider="openai", model="o3-mini", max_tokens_parameter=parameter)
+        body = OpenAIAnalyzer(settings, "k")._build_request([])
+        assert parameter in body
+        assert len([key for key in body if key.endswith("tokens")]) == 1

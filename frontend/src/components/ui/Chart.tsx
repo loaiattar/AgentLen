@@ -1,4 +1,4 @@
-import { useId } from 'react'
+import { useId, type ReactNode } from 'react'
 
 import { cn } from '@/lib/utils/cn'
 
@@ -90,33 +90,42 @@ export interface BarRow {
   tone?: SeriesTone
 }
 
-export interface BarListProps {
-  items: BarRow[]
+export interface BarListProps<T extends BarRow = BarRow> {
+  items: T[]
   className?: string
+  wrapItem?: (item: T, content: ReactNode) => ReactNode
 }
 
-export function BarList({ items, className }: BarListProps) {
+export function BarList<T extends BarRow>({ items, className, wrapItem }: BarListProps<T>) {
   const max = Math.max(...items.map((item) => item.value), 1)
 
   return (
     <ul className={cn('grid gap-4', className)}>
-      {items.map((item) => (
-        <li key={item.label} className="grid gap-1.5">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="text-secondary text-foreground-muted">{item.label}</span>
-            <span className="text-meta text-foreground">{item.value}</span>
-          </div>
-          <div className="h-1 overflow-hidden rounded-pill bg-surface-sunken">
-            <div
-              className="h-full rounded-pill"
-              style={{
-                width: `${(item.value / max) * 100}%`,
-                background: seriesColors[item.tone ?? 'cyan'],
-              }}
-            />
-          </div>
-        </li>
-      ))}
+      {items.map((item, index) => {
+        const content = (
+          <>
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-secondary text-foreground-muted">{item.label}</span>
+              <span className="text-meta text-foreground">{item.value}</span>
+            </div>
+            <div className="h-1 overflow-hidden rounded-pill bg-surface-sunken">
+              <div
+                className="h-full rounded-pill"
+                style={{
+                  width: `${(item.value / max) * 100}%`,
+                  background: seriesColors[item.tone ?? 'cyan'],
+                }}
+              />
+            </div>
+          </>
+        )
+
+        return (
+          <li key={`${item.label}-${index}`} className="grid gap-1.5">
+            {wrapItem ? wrapItem(item, content) : content}
+          </li>
+        )
+      })}
     </ul>
   )
 }
@@ -127,34 +136,43 @@ export interface MixSlice {
   tone: SeriesTone
 }
 
-export interface MixLegendProps {
-  items: MixSlice[]
+export interface MixLegendProps<T extends MixSlice = MixSlice> {
+  items: T[]
   className?: string
+  wrapItem?: (item: T, content: ReactNode) => ReactNode
 }
 
-export function MixLegend({ items, className }: MixLegendProps) {
+export function MixLegend<T extends MixSlice>({ items, className, wrapItem }: MixLegendProps<T>) {
   const total = items.reduce((sum, item) => sum + item.value, 0) || 1
 
   return (
     <div className={cn('flex h-full flex-col justify-between gap-6', className)}>
       <div className="flex h-2 overflow-hidden rounded-pill">
-        {items.map((item) => (
+        {items.map((item, index) => (
           <div
-            key={item.label}
+            key={`${item.label}-${index}`}
             style={{ width: `${(item.value / total) * 100}%`, background: seriesColors[item.tone] }}
           />
         ))}
       </div>
       <ul className="grid gap-3">
-        {items.map((item) => (
-          <li key={item.label} className="flex items-center justify-between gap-3 text-secondary">
-            <span className="flex items-center gap-2 text-foreground-muted">
-              <span className="size-1.5 rounded-full" style={{ background: seriesColors[item.tone] }} />
-              {item.label}
-            </span>
-            <span className="text-foreground">{Math.round((item.value / total) * 100)}%</span>
-          </li>
-        ))}
+        {items.map((item, index) => {
+          const content = (
+            <>
+              <span className="flex items-center gap-2 text-foreground-muted">
+                <span className="size-1.5 rounded-full" style={{ background: seriesColors[item.tone] }} />
+                {item.label}
+              </span>
+              <span className="text-foreground">{Math.round((item.value / total) * 100)}%</span>
+            </>
+          )
+
+          return (
+            <li key={`${item.label}-${index}`} className="flex items-center justify-between gap-3 text-secondary">
+              {wrapItem ? wrapItem(item, content) : content}
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

@@ -26,7 +26,9 @@ from agentlen.application.errors import (
     AnalyzerError,
     ApplicationError,
     ConflictError,
+    InvalidCredentialsError,
     NotFoundError,
+    UnauthenticatedError,
 )
 from agentlen.application.ports.file_storage import FileStorageError
 from agentlen.domain.errors import AgentMaxIterationsError, DomainError, ValidationError
@@ -41,6 +43,8 @@ _APPLICATION_STATUS: tuple[tuple[type[ApplicationError], int], ...] = (
     (NotFoundError, status.HTTP_404_NOT_FOUND),
     (ConflictError, status.HTTP_409_CONFLICT),
     (AnalyzerError, status.HTTP_502_BAD_GATEWAY),
+    (InvalidCredentialsError, status.HTTP_401_UNAUTHORIZED),
+    (UnauthenticatedError, status.HTTP_401_UNAUTHORIZED),
 )
 
 GENERIC_500_MESSAGE = "Une erreur interne est survenue. L'incident a été journalisé côté serveur."

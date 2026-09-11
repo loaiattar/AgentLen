@@ -70,3 +70,31 @@ class AnalyzerError(ApplicationError):
     """
 
     code = "ANALYZER_FAILED"
+
+
+class InvalidCredentialsError(ApplicationError):
+    """Login failed. -> 401
+
+    Raised identically whether the e-mail is unknown or the password is
+    wrong — the two cases must not be distinguishable from the response, or
+    the endpoint becomes an oracle for which e-mails have an account.
+    """
+
+    code = "INVALID_CREDENTIALS"
+
+    def __init__(self) -> None:
+        super().__init__("Adresse e-mail ou mot de passe incorrect.")
+
+
+class UnauthenticatedError(ApplicationError):
+    """No valid session on a route that requires one. -> 401
+
+    Distinct from the app-wide `X-API-Key` gate (interfaces/http/auth.py):
+    that key authenticates the front-end application, this authenticates the
+    person using it.
+    """
+
+    code = "UNAUTHENTICATED"
+
+    def __init__(self) -> None:
+        super().__init__("Authentification requise.")

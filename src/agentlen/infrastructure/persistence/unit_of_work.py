@@ -27,18 +27,23 @@ from agentlen.application.ports.repositories import (
     ReferentialRepository,
     SessionRepository,
     ToolCallRepository,
+    UserRepository,
+    UserSessionRepository,
 )
 from agentlen.infrastructure.persistence.repositories import (
     SqlAlchemyDataSourceRepository,
     SqlAlchemyFileUploadRepository,
     SqlAlchemyImportIssueRepository,
     SqlAlchemyImportRunRepository,
+    SqlAlchemyMappingProposalRepository,
     SqlAlchemyMappingRepository,
     SqlAlchemyModelCallRepository,
     SqlAlchemyRawRecordRepository,
     SqlAlchemyReferentialRepository,
     SqlAlchemySessionRepository,
     SqlAlchemyToolCallRepository,
+    SqlAlchemyUserRepository,
+    SqlAlchemyUserSessionRepository,
 )
 
 
@@ -57,6 +62,8 @@ class SqlAlchemyUnitOfWork:
     data_sources: DataSourceRepository
     file_uploads: FileUploadRepository
     referentials: ReferentialRepository
+    users: UserRepository
+    user_sessions: UserSessionRepository
 
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
@@ -76,9 +83,12 @@ class SqlAlchemyUnitOfWork:
         self.import_runs = SqlAlchemyImportRunRepository(conn)
         self.import_issues = SqlAlchemyImportIssueRepository(conn)
         self.mappings = SqlAlchemyMappingRepository(conn)
+        self.mapping_proposals = SqlAlchemyMappingProposalRepository(conn)
         self.data_sources = SqlAlchemyDataSourceRepository(conn)
         self.file_uploads = SqlAlchemyFileUploadRepository(conn)
         self.referentials = SqlAlchemyReferentialRepository(conn)
+        self.users = SqlAlchemyUserRepository(conn)
+        self.user_sessions = SqlAlchemyUserSessionRepository(conn)
         return self
 
     async def __aexit__(

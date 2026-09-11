@@ -18,12 +18,15 @@ from agentlen.application.ports.repositories import (
     FileUploadRepository,
     ImportIssueRepository,
     ImportRunRepository,
+    MappingProposalRepository,
     MappingRepository,
     ModelCallRepository,
     RawRecordRepository,
     ReferentialRepository,
     SessionRepository,
     ToolCallRepository,
+    UserRepository,
+    UserSessionRepository,
 )
 
 
@@ -41,9 +44,12 @@ class UnitOfWork(Protocol):
     import_runs: ImportRunRepository
     import_issues: ImportIssueRepository
     mappings: MappingRepository
+    mapping_proposals: MappingProposalRepository
     data_sources: DataSourceRepository
     file_uploads: FileUploadRepository
     referentials: ReferentialRepository
+    users: UserRepository
+    user_sessions: UserSessionRepository
 
     async def __aenter__(self) -> UnitOfWork: ...
 

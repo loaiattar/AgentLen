@@ -17,7 +17,7 @@ class UnsupportedOperatorError(ValidationError):
 
     def __init__(self, operator: str, field_path: str) -> None:
         super().__init__(
-            code="UNSUPPORTED_OPERATOR",
+            code="MAPPING_UNKNOWN_OPERATOR",
             field_path=field_path,
             message=f"Operator '{operator}' is not in the allowed whitelist.",
         )
@@ -28,9 +28,21 @@ class UnknownTargetFieldError(ValidationError):
 
     def __init__(self, target: str, field_path: str) -> None:
         super().__init__(
-            code="UNKNOWN_TARGET_FIELD",
+            code="MAPPING_UNKNOWN_TARGET",
             field_path=field_path,
             message=f"Target field '{target}' does not exist in the schema.",
+        )
+
+
+class MissingNaturalKeyError(ValidationError):
+    """Raised when an entity declares no natural_key (MAPPING_CONTRACT.md §4:
+    structural check — deduplication has nothing to key off)."""
+
+    def __init__(self, target: str, field_path: str) -> None:
+        super().__init__(
+            code="MAPPING_MISSING_NATURAL_KEY",
+            field_path=field_path,
+            message=f"Entity '{target}' declares no natural_key.",
         )
 
 
@@ -39,6 +51,24 @@ class InvalidOperatorParamError(ValidationError):
 
     def __init__(self, field_path: str, message: str) -> None:
         super().__init__(code="INVALID_OPERATOR_PARAM", field_path=field_path, message=message)
+
+
+class InvalidEmailError(ValidationError):
+    """Raised when a user-supplied e-mail address fails the format check."""
+
+    def __init__(self, email: str) -> None:
+        super().__init__(
+            code="INVALID_EMAIL",
+            field_path="email",
+            message=f"'{email}' n'est pas une adresse e-mail valide.",
+        )
+
+
+class WeakPasswordError(ValidationError):
+    """Raised when a password fails the minimum-strength policy."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(code="WEAK_PASSWORD", field_path="password", message=message)
 
 
 class OperatorFailedError(DomainError):
