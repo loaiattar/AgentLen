@@ -14,6 +14,7 @@ import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppImportAssistantIndexRouteImport } from './routes/_app.import-assistant.index'
 import { Route as AppImportsIndexRouteImport } from './routes/_app.imports.index'
 import { Route as AppImportsImportIdRouteImport } from './routes/_app.imports.$importId'
+import { Route as AppImportsNewRouteImport } from './routes/_app.imports.new'
 import { Route as AppMappingsIndexRouteImport } from './routes/_app.mappings.index'
 import { Route as AppQualityIndexRouteImport } from './routes/_app.quality.index'
 import { Route as AppSessionsIndexRouteImport } from './routes/_app.sessions.index'
@@ -42,6 +43,11 @@ const AppImportsIndexRoute = AppImportsIndexRouteImport.update({
 const AppImportsImportIdRoute = AppImportsImportIdRouteImport.update({
   id: '/imports/$importId',
   path: '/imports/$importId',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppImportsNewRoute = AppImportsNewRouteImport.update({
+  id: '/imports/new',
+  path: '/imports/new',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMappingsIndexRoute = AppMappingsIndexRouteImport.update({
@@ -73,6 +79,7 @@ const AppSourcesIndexRoute = AppSourcesIndexRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/imports/$importId': typeof AppImportsImportIdRoute
+  '/imports/new': typeof AppImportsNewRoute
   '/sessions/$sessionId': typeof AppSessionsSessionIdRoute
   '/import-assistant/': typeof AppImportAssistantIndexRoute
   '/imports/': typeof AppImportsIndexRoute
@@ -84,6 +91,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof AppIndexRoute
   '/imports/$importId': typeof AppImportsImportIdRoute
+  '/imports/new': typeof AppImportsNewRoute
   '/sessions/$sessionId': typeof AppSessionsSessionIdRoute
   '/import-assistant': typeof AppImportAssistantIndexRoute
   '/imports': typeof AppImportsIndexRoute
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/_app/': typeof AppIndexRoute
   '/_app/imports/$importId': typeof AppImportsImportIdRoute
+  '/_app/imports/new': typeof AppImportsNewRoute
   '/_app/sessions/$sessionId': typeof AppSessionsSessionIdRoute
   '/_app/import-assistant/': typeof AppImportAssistantIndexRoute
   '/_app/imports/': typeof AppImportsIndexRoute
@@ -110,6 +119,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/imports/$importId'
+    | '/imports/new'
     | '/sessions/$sessionId'
     | '/import-assistant/'
     | '/imports/'
@@ -121,6 +131,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/imports/$importId'
+    | '/imports/new'
     | '/sessions/$sessionId'
     | '/import-assistant'
     | '/imports'
@@ -133,6 +144,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/_app/'
     | '/_app/imports/$importId'
+    | '/_app/imports/new'
     | '/_app/sessions/$sessionId'
     | '/_app/import-assistant/'
     | '/_app/imports/'
@@ -183,6 +195,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppImportsImportIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/imports/new': {
+      id: '/_app/imports/new'
+      path: '/imports/new'
+      fullPath: '/imports/new'
+      preLoaderRoute: typeof AppImportsNewRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/mappings/': {
       id: '/_app/mappings/'
       path: '/mappings'
@@ -224,6 +243,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppIndexRoute: typeof AppIndexRoute
   AppImportsImportIdRoute: typeof AppImportsImportIdRoute
+  AppImportsNewRoute: typeof AppImportsNewRoute
   AppSessionsSessionIdRoute: typeof AppSessionsSessionIdRoute
   AppImportAssistantIndexRoute: typeof AppImportAssistantIndexRoute
   AppImportsIndexRoute: typeof AppImportsIndexRoute
@@ -236,6 +256,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppIndexRoute: AppIndexRoute,
   AppImportsImportIdRoute: AppImportsImportIdRoute,
+  AppImportsNewRoute: AppImportsNewRoute,
   AppSessionsSessionIdRoute: AppSessionsSessionIdRoute,
   AppImportAssistantIndexRoute: AppImportAssistantIndexRoute,
   AppImportsIndexRoute: AppImportsIndexRoute,
