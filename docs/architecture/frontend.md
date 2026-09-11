@@ -266,6 +266,7 @@ Un élément reste dans sa feature tant qu'il n'est utilisé que par elle. Il n'
 | `quality/` | Intégrité des données importées, issues expliquées. |
 | `landing/` | Page d'accueil publique. |
 | `auth/` | Connexion et inscription (session Bearer, distincte de `X-API-Key`). |
+| `system/` | État du serveur affiché par le shell : fournisseur et modèle IA actifs (`GET /ai/providers`), disponibilité de l'API (`GET /health/ready`). Chargé dans `AppLayout`, passé en props à `AppSidebar`. |
 
 #### Cas particulier : `import-assistant/` vs `mappings/`
 

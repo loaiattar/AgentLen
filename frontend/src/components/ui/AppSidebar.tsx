@@ -1,11 +1,28 @@
 import { Link, useRouterState } from '@tanstack/react-router'
 
 import { cn } from '@/lib/utils/cn'
-import { StatusDot } from '@/components/ui/StatusDot'
+import { StatusDot, type StatusDotProps } from '@/components/ui/StatusDot'
 import { Wordmark } from '@/components/ui/Wordmark'
 import { isShellNavActive, SHELL_NAV_ITEMS, shellNavItemVariants } from '@/components/ui/shell-nav'
 
-export function AppSidebar() {
+export interface AppSidebarDetail {
+  label: string
+  value: string
+  /** The value is a placeholder (loading, unavailable, missing), not data. */
+  muted?: boolean
+}
+
+export interface AppSidebarStatus {
+  tone: NonNullable<StatusDotProps['tone']>
+  label: string
+}
+
+export interface AppSidebarProps {
+  details?: AppSidebarDetail[]
+  status?: AppSidebarStatus
+}
+
+export function AppSidebar({ details = [], status }: AppSidebarProps) {
   const pathname = useRouterState({ select: (state) => state.location.pathname })
 
   return (
@@ -44,21 +61,27 @@ export function AppSidebar() {
         })}
       </nav>
 
-      <div className="grid gap-[var(--space-1)] border-t border-border px-[var(--space-3)] py-[var(--space-2)] text-secondary text-foreground-muted">
-        <p className="flex items-center justify-between gap-[var(--space-1)]">
-          <span>Provider</span>
-          <span className="text-foreground">OpenAI</span>
-        </p>
-        <p className="flex items-center justify-between gap-[var(--space-1)]">
-          <span>Model</span>
-          <span className="text-foreground">gpt-4.1</span>
-        </p>
-        <p className="flex items-center gap-[var(--space-1)]">
-          <StatusDot tone="live" label="System operational" />
-          <span>Operational</span>
-        </p>
-        <p className="text-meta uppercase text-foreground-subtle">Workspace · HETIC</p>
-      </div>
+      {details.length > 0 || status ? (
+        <div className="grid gap-[var(--space-1)] border-t border-border px-[var(--space-3)] py-[var(--space-2)] text-secondary text-foreground-muted">
+          {details.map((detail) => (
+            <p key={detail.label} className="flex items-center justify-between gap-[var(--space-1)]">
+              <span className="shrink-0">{detail.label}</span>
+              <span
+                title={detail.value}
+                className={cn('min-w-0 truncate', detail.muted ? 'text-foreground-subtle' : 'text-foreground')}
+              >
+                {detail.value}
+              </span>
+            </p>
+          ))}
+          {status ? (
+            <p role="status" className="flex items-center gap-[var(--space-1)]">
+              <StatusDot tone={status.tone} label={status.label} aria-hidden />
+              <span>{status.label}</span>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </aside>
   )
 }
