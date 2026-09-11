@@ -21,6 +21,8 @@ export interface MetricsSearch {
   period?: MetricsPeriod
   limit?: number
   offset?: number
+  file_id?: number
+  proposal_id?: number
 }
 
 /** Seed source from `make seed`. No `GET /data-sources` yet — do not invent others. */
@@ -58,6 +60,8 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   const modelId = parseIntParam(search.model_id, { min: 1 })
   const toolId = parseIntParam(search.tool_id, { min: 1 })
   const importRunId = parseIntParam(search.import_run_id, { min: 1 })
+  const fileId = parseIntParam(search.file_id, { min: 1 })
+  const proposalId = parseIntParam(search.proposal_id, { min: 1 })
   const limit = parseIntParam(search.limit, { min: 1, max: SESSION_PAGE_SIZE_MAX })
   const offset = parseIntParam(search.offset, { min: 0 })
 
@@ -66,6 +70,8 @@ export function parseMetricsSearch(search: Record<string, unknown>): MetricsSear
   if (modelId != null) parsed.model_id = modelId
   if (toolId != null) parsed.tool_id = toolId
   if (importRunId != null) parsed.import_run_id = importRunId
+  if (fileId != null) parsed.file_id = fileId
+  if (proposalId != null) parsed.proposal_id = proposalId
   if (typeof search.date_from === 'string' && search.date_from.length > 0) parsed.date_from = search.date_from
   if (typeof search.date_to === 'string' && search.date_to.length > 0) parsed.date_to = search.date_to
   if (typeof search.status === 'string' && SESSION_STATUSES.includes(search.status as SessionStatus)) {
