@@ -38,6 +38,23 @@ class NotFoundError(ApplicationError):
         )
 
 
+class ImportRequestInvalidError(ApplicationError):
+    """The three resources of an import request do not go together. -> 422
+
+    Distinct from `MappingInvalidError`, which is about a document failing its
+    own validation. Here every resource is individually valid; what is refused
+    is the combination — a mapping belonging to another source, a superseded
+    one, or one written for another file format.
+
+    The code is per reason rather than a single catch-all: the caller has to
+    know which of the three to fix, and "the request is invalid" does not say.
+    """
+
+    def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
+        self.code = code
+        super().__init__(message, details=details)
+
+
 class ConflictError(ApplicationError):
     """The request conflicts with stored state. -> 409"""
 

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Query, status
 
 from agentlen.application.errors import NotFoundError
 from agentlen.application.ports.unit_of_work import UnitOfWork
+from agentlen.application.use_cases.create_import import CreateImport
 from agentlen.application.use_cases.preview_import import PreviewImport
 from agentlen.interfaces.http.dependencies import FileReaderDep, UnitOfWorkDep
 from agentlen.interfaces.http.pagination import Paginated, paginate
@@ -103,21 +104,11 @@ async def preview_import(
     summary="Launch an import (asynchronous — poll GET /imports/{id})",
 )
 async def create_import(body: ImportCreateIn, uow: UnitOfWorkDep) -> ImportCreateOut:
-    async with uow:
-        if await uow.data_sources.get_by_id(body.data_source_id) is None:
-            raise NotFoundError("DataSource", body.data_source_id)
-        if await uow.file_uploads.get_by_id(body.file_upload_id) is None:
-            raise NotFoundError("FileUpload", body.file_upload_id)
-        if await uow.mappings.get(body.mapping_id) is None:
-            raise NotFoundError("Mapping", body.mapping_id)
-
-        run_id = await uow.import_runs.create(
-            data_source_id=body.data_source_id,
-            file_upload_id=body.file_upload_id,
-            mapping_id=body.mapping_id,
-        )
-        await uow.commit()
-
+    run_id = await CreateImport(uow).execute(
+        data_source_id=body.data_source_id,
+        file_upload_id=body.file_upload_id,
+        mapping_id=body.mapping_id,
+    )
     return ImportCreateOut(import_run_id=run_id, status="pending")
 
 

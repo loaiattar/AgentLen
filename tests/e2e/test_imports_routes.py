@@ -13,7 +13,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agentlen.application.use_cases.run_import import RunImport
-from agentlen.domain.model.import_run import ImportIssue
+from agentlen.domain.model.import_run import ImportIssue, ImportReport
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
 from tests.fakes.file_reader import InMemoryFileReader
@@ -105,6 +105,153 @@ async def test_creating_an_import_with_a_missing_field_is_400(client: AsyncClien
 
 
 @requires_postgres
+async def test_a_mapping_from_another_source_is_422(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    """Each resource is valid on its own; the combination is not.
+
+    `session` is unique on `(data_source_id, external_id)`, so the source is
+    part of a session's identity. Importing under the wrong one deduplicates in
+    the wrong namespace and stamps the rows with a provenance that is false.
+    """
+    mine = await _seed(live_engine)
+    other = await _seed(live_engine)
+
+    response = await live_client.post(
+        "/api/v1/imports",
+        json={
+            "data_source_id": mine["source_id"],
+            "file_upload_id": mine["file_id"],
+            "mapping_id": other["mapping_id"],
+        },
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "MAPPING_SOURCE_MISMATCH"
+    assert error["details"]["data_source_id"] == mine["source_id"]
+    assert error["details"]["mapping_data_source_id"] == other["source_id"]
+
+
+@requires_postgres
+async def test_a_superseded_mapping_is_422(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    """A replaced version must not start a new import.
+
+    It stays readable so past runs can be explained, but it is no longer what
+    this source says its files mean.
+    """
+    seed = await _seed(live_engine)
+    async with SqlAlchemyUnitOfWork(live_engine) as uow:
+        await uow.mappings.supersede(seed["mapping_id"])
+        await uow.commit()
+
+    response = await live_client.post(
+        "/api/v1/imports",
+        json={
+            "data_source_id": seed["source_id"],
+            "file_upload_id": seed["file_id"],
+            "mapping_id": seed["mapping_id"],
+        },
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "MAPPING_NOT_ACTIVE"
+    assert error["details"]["status"] == "superseded"
+
+
+@requires_postgres
+async def test_a_mapping_for_another_format_is_422(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    """A JSONL mapping read over a CSV file produces nothing useful."""
+    seed = await _seed(live_engine)
+    async with SqlAlchemyUnitOfWork(live_engine) as uow:
+        csv_file = await uow.file_uploads.create(
+            original_name="traces.csv",
+            storage_path="unused/traces.csv",
+            format="csv",
+            size_bytes=10,
+            content_hash=uuid4().hex.rjust(64, "f"),
+        )
+        await uow.commit()
+
+    response = await live_client.post(
+        "/api/v1/imports",
+        json={
+            "data_source_id": seed["source_id"],
+            "file_upload_id": csv_file.id,
+            "mapping_id": seed["mapping_id"],
+        },
+    )
+
+    assert response.status_code == 422
+    error = response.json()["error"]
+    assert error["code"] == "MAPPING_FORMAT_MISMATCH"
+    assert error["details"] == {"mapping_format": "jsonl", "file_format": "csv"}
+
+
+@requires_postgres
+async def test_the_same_body_twice_is_409_not_a_second_queued_run(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    """API.md §1 reserves 409 for exactly this, and nothing applied it.
+
+    Sending the same body twice queued two runs — the second of which can only
+    report everything as a duplicate.
+    """
+    seed = await _seed(live_engine)
+    body = {
+        "data_source_id": seed["source_id"],
+        "file_upload_id": seed["file_id"],
+        "mapping_id": seed["mapping_id"],
+    }
+
+    first = await live_client.post("/api/v1/imports", json=body)
+    second = await live_client.post("/api/v1/imports", json=body)
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    error = second.json()["error"]
+    assert error["code"] == "CONFLICT"
+    assert error["details"]["import_run_id"] == first.json()["import_run_id"]
+
+
+@requires_postgres
+async def test_a_failed_run_can_be_launched_again(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    """The recovery path, which a blanket 409 would have removed.
+
+    A worker killed mid-import leaves the run `failed`. Refusing to launch it
+    again would leave the operator with no way forward, and the import engine
+    is idempotent anyway.
+    """
+    seed = await _seed(live_engine)
+    body = {
+        "data_source_id": seed["source_id"],
+        "file_upload_id": seed["file_id"],
+        "mapping_id": seed["mapping_id"],
+    }
+    first = await live_client.post("/api/v1/imports", json=body)
+    async with SqlAlchemyUnitOfWork(live_engine) as uow:
+        await uow.import_runs.save_report(
+            first.json()["import_run_id"],
+            ImportReport(
+                records_read=0, records_imported=0, records_duplicate=0, records_rejected=0
+            ),
+            status="failed",
+        )
+        await uow.commit()
+
+    again = await live_client.post("/api/v1/imports", json=body)
+
+    assert again.status_code == 202, "un run échoué doit pouvoir être relancé"
+
+
+@requires_postgres
 async def test_creating_an_import_returns_202_pending(
     live_client: AsyncClient, live_engine: AsyncEngine
 ) -> None:
@@ -183,9 +330,12 @@ async def test_get_unknown_import_is_404(live_client: AsyncClient) -> None:
 async def test_list_imports_returns_the_history_paginated(
     live_client: AsyncClient, live_engine: AsyncEngine
 ) -> None:
-    seed = await _seed(live_engine)
+    # Deux imports *distincts* : poster deux fois le même corps est désormais
+    # un 409, et un historique fait de la même paire répétée ne ressemblait de
+    # toute façon à rien de réel.
     for _ in range(2):
-        await live_client.post(
+        seed = await _seed(live_engine)
+        response = await live_client.post(
             "/api/v1/imports",
             json={
                 "data_source_id": seed["source_id"],
@@ -193,6 +343,7 @@ async def test_list_imports_returns_the_history_paginated(
                 "mapping_id": seed["mapping_id"],
             },
         )
+        assert response.status_code == 202
 
     response = await live_client.get("/api/v1/imports?limit=1&offset=0")
 
