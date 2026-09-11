@@ -87,6 +87,12 @@ class RawRecordRepository(Protocol):
 class ImportRunRepository(Protocol):
     async def create(self, *, data_source_id: int, file_upload_id: int, mapping_id: int) -> int: ...
 
+    async def get_by_file_and_mapping(
+        self, *, file_upload_id: int, mapping_id: int
+    ) -> dict[str, Any] | None:
+        """An existing run for the idempotence key, newest first."""
+        ...
+
     async def get(self, import_run_id: int) -> dict[str, Any] | None:
         """The run's identifying columns: source, file, mapping, status."""
         ...

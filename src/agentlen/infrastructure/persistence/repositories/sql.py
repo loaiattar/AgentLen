@@ -367,6 +367,21 @@ class SqlAlchemyImportRunRepository(_Base):
         )
         return int((await self._conn.execute(statement)).scalar_one())
 
+    async def get_by_file_and_mapping(
+        self, *, file_upload_id: int, mapping_id: int
+    ) -> dict[str, Any] | None:
+        query = (
+            select(t.import_run)
+            .where(
+                t.import_run.c.file_upload_id == file_upload_id,
+                t.import_run.c.mapping_id == mapping_id,
+            )
+            .order_by(t.import_run.c.created_at.desc(), t.import_run.c.id.desc())
+            .limit(1)
+        )
+        row = (await self._conn.execute(query)).mappings().one_or_none()
+        return dict(row) if row else None
+
     async def get(self, import_run_id: int) -> dict[str, Any] | None:
         row = (
             (

@@ -218,6 +218,9 @@ Réponse `200` :
 
 **`POST /imports` → `202`** : `{ "import_run_id": 88, "status": "pending" }`.
 Le front interroge ensuite `GET /imports/{id}` (intervalle suggéré : 1 s).
+Le mapping doit appartenir à la source demandée, être actif et avoir le même format que le
+fichier. Le même couple `file_upload_id` / `mapping_id` ne peut être lancé qu'une fois (`409`) ;
+choisir un autre mapping constitue un réimport explicite autorisé.
 
 **`GET /imports/{id}` → `200`**
 

@@ -144,6 +144,111 @@ async def test_creating_an_import_for_unknown_mapping_is_404(
 
 
 @requires_postgres
+async def test_creating_an_import_rejects_a_mapping_from_another_source(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    seed = await _seed(live_engine)
+    async with SqlAlchemyUnitOfWork(live_engine) as uow:
+        other_source = await uow.data_sources.create(
+            slug=f"other-{uuid4().hex[:8]}", name="Other source"
+        )
+        other_mapping = await uow.mappings.save(
+            _valid_mapping(name=f"other-{uuid4().hex}"), data_source_id=other_source
+        )
+        await uow.commit()
+
+    response = await live_client.post(
+        "/api/v1/imports",
+        json={
+            "data_source_id": seed["source_id"],
+            "file_upload_id": seed["file_id"],
+            "mapping_id": other_mapping,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "IMPORT_INVALID"
+    assert "autre source" in response.json()["error"]["message"]
+
+
+@requires_postgres
+async def test_creating_an_import_rejects_a_superseded_mapping(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    seed = await _seed(live_engine)
+    async with SqlAlchemyUnitOfWork(live_engine) as uow:
+        await uow.mappings.supersede(int(seed["mapping_id"]))
+        await uow.commit()
+
+    response = await live_client.post(
+        "/api/v1/imports",
+        json={
+            "data_source_id": seed["source_id"],
+            "file_upload_id": seed["file_id"],
+            "mapping_id": seed["mapping_id"],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["details"]["status"] == "superseded"
+
+
+@requires_postgres
+async def test_creating_an_import_rejects_a_different_mapping_format(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    seed = await _seed(live_engine)
+    async with SqlAlchemyUnitOfWork(live_engine) as uow:
+        csv_mapping = await uow.mappings.save(
+            Mapping(
+                id=uuid4(),
+                name=f"csv-{uuid4().hex}",
+                version=1,
+                source_format="csv",
+                entities=_valid_mapping().entities,
+            ),
+            data_source_id=int(seed["source_id"]),
+        )
+        await uow.commit()
+
+    response = await live_client.post(
+        "/api/v1/imports",
+        json={
+            "data_source_id": seed["source_id"],
+            "file_upload_id": seed["file_id"],
+            "mapping_id": csv_mapping,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["details"] == {
+        "mapping_id": csv_mapping,
+        "mapping_format": "csv",
+        "file_upload_id": seed["file_id"],
+        "file_format": "jsonl",
+    }
+
+
+@requires_postgres
+async def test_same_file_and_mapping_cannot_be_enqueued_twice(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    seed = await _seed(live_engine)
+    request = {
+        "data_source_id": seed["source_id"],
+        "file_upload_id": seed["file_id"],
+        "mapping_id": seed["mapping_id"],
+    }
+
+    first = await live_client.post("/api/v1/imports", json=request)
+    second = await live_client.post("/api/v1/imports", json=request)
+
+    assert first.status_code == 202
+    assert second.status_code == 409
+    assert second.json()["error"]["details"]["import_run_id"] == first.json()["import_run_id"]
+
+
+@requires_postgres
 async def test_get_import_returns_full_status_with_joined_refs(
     live_client: AsyncClient, live_engine: AsyncEngine
 ) -> None:
@@ -184,13 +289,19 @@ async def test_list_imports_returns_the_history_paginated(
     live_client: AsyncClient, live_engine: AsyncEngine
 ) -> None:
     seed = await _seed(live_engine)
-    for _ in range(2):
+    async with SqlAlchemyUnitOfWork(live_engine) as uow:
+        second_mapping = await uow.mappings.save(
+            _valid_mapping(name=f"history-{uuid4().hex}"),
+            data_source_id=int(seed["source_id"]),
+        )
+        await uow.commit()
+    for mapping_id in (seed["mapping_id"], second_mapping):
         await live_client.post(
             "/api/v1/imports",
             json={
                 "data_source_id": seed["source_id"],
                 "file_upload_id": seed["file_id"],
-                "mapping_id": seed["mapping_id"],
+                "mapping_id": mapping_id,
             },
         )
 

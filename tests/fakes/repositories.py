@@ -277,6 +277,19 @@ class InMemoryImportRunRepository:
         }
         return new_id
 
+    async def get_by_file_and_mapping(
+        self, *, file_upload_id: int, mapping_id: int
+    ) -> dict[str, Any] | None:
+        matching = [
+            (run_id, run)
+            for run_id, run in self._s.import_runs.items()
+            if run["file_upload_id"] == file_upload_id and run["mapping_id"] == mapping_id
+        ]
+        if not matching:
+            return None
+        run_id, run = max(matching, key=lambda item: (item[1]["created_at"], item[0]))
+        return dict(run, id=run_id)
+
     async def get(self, import_run_id: int) -> dict[str, Any] | None:
         run = self._s.import_runs.get(import_run_id)
         return dict(run, id=import_run_id) if run else None

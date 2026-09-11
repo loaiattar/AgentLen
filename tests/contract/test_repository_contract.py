@@ -92,7 +92,13 @@ async def _provenance(uow: Any) -> dict[str, int]:
         data_source_id=source_id, file_upload_id=file_id, mapping_id=mapping_id
     )
     raw = await uow.raw_records.add_many(import_run_id=run_id, records=[(1, {"sid": "a"})])
-    return {"source": source_id, "run": run_id, "raw": raw[1]}
+    return {
+        "source": source_id,
+        "file": file_id,
+        "mapping": mapping_id,
+        "run": run_id,
+        "raw": raw[1],
+    }
 
 
 def _session(source_id: int, external_id: str) -> Session:
@@ -548,6 +554,25 @@ async def test_import_run_list_returns_most_recent_first_and_count_matches(uow: 
     ids = [row["id"] for row in history]
     assert ids.index(second_run) < ids.index(p["run"])
     assert total == len(history)
+
+
+async def test_import_run_can_be_found_by_file_and_mapping(uow: Any) -> None:
+    async with uow:
+        provenance = await _provenance(uow)
+        found = await uow.import_runs.get_by_file_and_mapping(
+            file_upload_id=provenance["file"], mapping_id=provenance["mapping"]
+        )
+
+    assert found is not None
+    assert found["id"] == provenance["run"]
+
+
+async def test_unknown_file_and_mapping_pair_returns_none(uow: Any) -> None:
+    async with uow:
+        assert (
+            await uow.import_runs.get_by_file_and_mapping(file_upload_id=999999, mapping_id=999999)
+            is None
+        )
 
 
 async def test_import_run_list_is_paginated(uow: Any) -> None:

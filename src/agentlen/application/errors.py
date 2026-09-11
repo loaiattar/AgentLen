@@ -62,6 +62,12 @@ class MappingInvalidError(ApplicationError):
         self.errors = errors
 
 
+class ImportInvalidError(ApplicationError):
+    """The selected source, file and mapping cannot form a coherent import. -> 422"""
+
+    code = "IMPORT_INVALID"
+
+
 class AnalyzerError(ApplicationError):
     """The AI provider failed or returned a non-conforming response. -> 502
 
