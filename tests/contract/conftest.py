@@ -10,6 +10,7 @@ own session-scoped fixture, and two containers start per run.
 from tests.integration.conftest import (  # noqa: F401
     clean_db,
     database_url,
+    empty_database,
     engine,
     requires_postgres,
 )

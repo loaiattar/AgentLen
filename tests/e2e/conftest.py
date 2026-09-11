@@ -23,6 +23,7 @@ from tests.conftest import AUTH_HEADERS
 # instead of a second one being started for this package.
 from tests.integration.conftest import (  # noqa: F401
     database_url,
+    empty_database,
     engine,
     requires_postgres,
 )
@@ -58,16 +59,15 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 
 @pytest.fixture
-async def live_engine(database_url: str) -> AsyncIterator[AsyncEngine]:  # noqa: F811
-    """An async engine on the migrated test database."""
-    from alembic.config import Config
+async def live_engine(
+    database_url: str,  # noqa: F811
+    empty_database: None,  # noqa: F811
+) -> AsyncIterator[AsyncEngine]:
+    """An async engine on the migrated test database, emptied before the test.
 
-    from alembic import command
-
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", database_url)
-    command.upgrade(cfg, "head")
-
+    The cleanup is `empty_database`, the same one `clean_db` uses, so no test
+    has to truncate after itself and none depends on what ran before it.
+    """
     eng = create_async_engine(to_async_url(database_url))
     yield eng
     await eng.dispose()

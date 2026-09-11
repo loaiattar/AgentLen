@@ -63,8 +63,13 @@ where = ["src"]
 pythonpath = ["src", "."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# A misspelt marker is an error, not a new marker that silently selects nothing.
+addopts = ["--strict-markers"]
 markers = [
-    "integration: needs a real Postgres (skipped when Docker is unavailable)",
+    # Added automatically to any test whose fixtures reach `database_url`
+    # (tests/conftest.py). Skipped only when neither TEST_DATABASE_URL nor
+    # Docker is available; `-m "not integration"` runs the rest.
+    "integration: needs a real Postgres",
 ]
 
 # ---------------------------------------------------------------------------

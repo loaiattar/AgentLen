@@ -43,9 +43,9 @@ format:
 	ruff format .
 	ruff check . --fix
 
-## test: unit tests only — no database, no Docker, no API key
+## test: unit tests and the in-memory half of the contract suite — no database, no Docker, no API key
 test:
-	pytest tests/unit -q
+	pytest tests/unit tests/contract -q -m "not integration"
 
 ## test-all: every test, including integration and e2e (needs Docker)
 test-all:

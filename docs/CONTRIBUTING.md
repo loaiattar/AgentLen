@@ -250,7 +250,7 @@ git push -u origin feat/12-import-jsonl
 | Format et lint | `ruff format --check`, `ruff check` | oui |
 | Typage | `mypy --strict` sur `domain/` et `application/` | oui |
 | **Règle de dépendance** | `import-linter` | **oui** |
-| Tests | `pytest` (unit + intégration + e2e) | oui |
+| Tests | `pytest` (unit + intégration + e2e + contrat, aucun test sauté) | oui |
 | Secrets | scan de secrets | oui |
 
 `import-linter` est notre garde-fou architectural : il fait échouer toute PR où `domain/` importerait `sqlalchemy`, `fastapi`, `polars` ou un SDK IA. **Si tu es tenté de désactiver cette règle, ouvre une discussion — ne la contourne pas.**
@@ -259,8 +259,11 @@ git push -u origin feat/12-import-jsonl
 
 ```bash
 make lint     # ruff + mypy + import-linter
-make test     # pytest
+make test     # tests unitaires + moitié en mémoire de tests/contract, sans base
+make test-all # tout, y compris intégration, e2e et contrat SQL (Docker ou TEST_DATABASE_URL)
 ```
+
+Un test qui touche la base (fixture `database_url`, directement ou via `clean_db` / `live_engine`) reçoit automatiquement la marque `integration`. Il n'est sauté que si ni `TEST_DATABASE_URL` ni Docker ne sont disponibles ; la CI refuse tout saut. La base est vidée **avant** chaque test par la fixture commune `empty_database` : pas de `TRUNCATE` à la main dans un test, et aucun test ne doit dépendre de l'ordre d'exécution.
 
 ---
 

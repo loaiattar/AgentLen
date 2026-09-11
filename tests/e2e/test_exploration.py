@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, text, update
+from sqlalchemy import select, update
 
 from agentlen.infrastructure.persistence import tables as t
 from agentlen.interfaces.http.app import create_app
@@ -29,24 +29,11 @@ async def test_invalid_requests(client, path):
     assert response.json()["error"]["code"] == "MALFORMED_REQUEST"
 
 
-@pytest.fixture
-async def exploration_dataset(dataset, live_engine):  # noqa: F811
-    try:
-        yield dataset
-    finally:
-        # Other HTTP tests expect an empty database; the imported fixture commits.
-        async with live_engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "TRUNCATE data_source, file_upload, provider, agent, tool, repository "
-                    "RESTART IDENTITY CASCADE"
-                )
-            )
-
-
 @requires_postgres
-async def test_exploration_and_drill_down(exploration_dataset, live_engine):
-    ref, sources = exploration_dataset
+async def test_exploration_and_drill_down(dataset, live_engine):  # noqa: F811
+    # `dataset` and `live_engine` share one `empty_database` run, so the rows
+    # seeded here survive; the next test starts from an empty database anyway.
+    ref, sources = dataset
     app = create_app(engine=live_engine)
     async with asgi_client(app, base_url="http://test/api/v1") as client:
         response = await client.get(

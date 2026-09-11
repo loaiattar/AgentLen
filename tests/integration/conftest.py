@@ -5,14 +5,16 @@ being checked here — IDENTITY columns, partial indexes, JSONB, CHECK
 constraints, deferred FK ordering — either behave differently on SQLite or do
 not exist there, so a SQLite pass would prove nothing about production.
 
-The whole module skips if Docker is unavailable, so `pytest tests/unit` on a
-machine without Docker stays green.
+A test that needs this database is marked `integration`. It runs when
+`TEST_DATABASE_URL` names a database or Docker can start one, and skips
+otherwise, so `pytest tests/unit` on a bare machine stays green. The marking
+and the skip live in `tests/conftest.py`.
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 
 import pytest
 from sqlalchemy import Connection, Engine, create_engine, text
@@ -47,10 +49,24 @@ def _docker_available() -> bool:
     )
 
 
-requires_postgres = pytest.mark.skipif(
-    not _docker_available(),
-    reason="Docker unavailable — integration tests need a throwaway Postgres",
-)
+def database_available(
+    env: Mapping[str, str] = os.environ,
+    docker_available: Callable[[], bool] = _docker_available,
+) -> bool:
+    """Whether `database_url` can yield a database.
+
+    The two sources the fixture itself uses, in the same order: a preset
+    `TEST_DATABASE_URL` needs no Docker at all, so Docker is only probed
+    when that variable is absent.
+    """
+    return bool(env.get("TEST_DATABASE_URL")) or docker_available()
+
+
+#: The explicit spelling of the `integration` marker, kept for the modules and
+#: parameters that already use it. `tests/conftest.py` also adds the marker to
+#: any test whose fixtures reach `database_url` (a forgotten marker used to
+#: turn a skip into an error) and skips marked tests when no database exists.
+requires_postgres = pytest.mark.integration
 
 
 @pytest.fixture(scope="session")
@@ -77,8 +93,15 @@ def engine(database_url: str) -> Iterator[Engine]:
 
 
 @pytest.fixture
-def clean_db(engine: Engine) -> Iterator[Connection]:
-    """A connection to a database migrated to head, emptied between tests.
+def empty_database(engine: Engine) -> None:
+    """The test database migrated to head, with every table emptied.
+
+    The one cleanup every database test goes through: `clean_db` here and
+    `live_engine` in the e2e suite both depend on it. It runs before the test
+    rather than after, so a test starts from an empty database whatever ran
+    before it, including a test that crashed half-way. Being function-scoped,
+    it runs once per test even when a test asks for both fixtures, so data
+    seeded through one of them is not wiped by the other.
 
     TRUNCATE ... RESTART IDENTITY CASCADE rather than re-running the
     migrations for every test: same isolation, a fraction of the runtime.
@@ -104,5 +127,9 @@ def clean_db(engine: Engine) -> Iterator[Connection]:
         if names:
             conn.execute(text(f"TRUNCATE {', '.join(names)} RESTART IDENTITY CASCADE"))
 
+
+@pytest.fixture
+def clean_db(engine: Engine, empty_database: None) -> Iterator[Connection]:
+    """A connection to the migrated, emptied test database."""
     with engine.begin() as conn:
         yield conn
