@@ -57,7 +57,7 @@ Une clé absente ou invalide renvoie `401` :
 }
 ```
 
-Le front envoie ce header sur chaque appel (voir `VITE_API_KEY`). Les origines autorisées pour le CORS sont `ALLOWED_ORIGINS` (liste séparée par des virgules, `http://localhost:5173` en développement).
+Le navigateur n'envoie pas ce header et ne connaît pas la clé : le proxy placé devant l'API l'ajoute à chaque appel `/api` — nginx dans la stack Docker, le proxy Vite avec `npm run dev`, tous deux depuis `API_KEY` (ADR-013). Un client qui appelle l'API directement, sans ce proxy, fournit la clé lui-même. Les origines autorisées pour le CORS sont `ALLOWED_ORIGINS` (liste séparée par des virgules, `http://localhost:5173` en développement).
 
 ### Pagination
 
@@ -330,9 +330,9 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
 2. **`null` n'est pas `0`.** Un indicateur `null` avec `coverage.ratio = 0` signifie *non disponible* et doit s'afficher comme tel, pas comme une valeur nulle.
 3. **`comparability: per_source_only`** interdit l'agrégation multi-sources. L'API renvoie un `warning` que le front doit rendre visible.
 4. **Le drill-down est fourni clé en main** via l'objet `filters` de chaque point.
-5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé de fournisseur IA ne quitte le serveur, aucune n'est livrée au navigateur. La clé `X-API-Key` d'AgentLen est distincte : c'est elle que le front envoie à l'API.
+5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé de fournisseur IA ne quitte le serveur, aucune n'est livrée au navigateur. La clé `X-API-Key` d'AgentLen est distincte, et n'est pas livrée au navigateur non plus : le proxy du front l'ajoute à chaque appel (§1).
 6. **Toujours proposer la prévisualisation avant l'import.** `POST /imports/preview` n'écrit rien et sert de garde-fou avant validation.
-7. **Chaque requête authentifiée porte `X-API-Key`.** Seuls `/health` et `/version` en sont exemptés.
+7. **Chaque requête authentifiée porte `X-API-Key`.** Seuls `/health` et `/version` en sont exemptés. Le code du front ne l'ajoute jamais : c'est le proxy (nginx ou Vite) qui s'en charge.
 
 ---
 
