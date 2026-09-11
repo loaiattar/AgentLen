@@ -1,3 +1,5 @@
+import type { MetricsPeriod } from '@/features/dashboard/lib/filters'
+
 export interface DashboardFilters {
   data_source_id?: number
   agent_id?: number
@@ -7,12 +9,14 @@ export interface DashboardFilters {
   date_from?: string
   date_to?: string
   status?: string
+  /** Kept as a period, not as dates, until a request is sent (`resolvePeriod`). */
+  period?: MetricsPeriod
 }
 
 export interface Coverage {
   present: number
   total: number
-  ratio: number
+  ratio: number | null
 }
 
 export interface Metric {

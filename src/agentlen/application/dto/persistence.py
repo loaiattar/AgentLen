@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from uuid import UUID
 
+from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.model_call import ModelCall
 from agentlen.domain.model.session import Session
 from agentlen.domain.model.tool_call import ToolCall
@@ -48,16 +49,33 @@ class ToolCallRow:
 class InsertOutcome:
     """What an insertion actually did.
 
-    `assigned` maps each entity's in-batch UUID to the id the database gave it,
-    so children can be linked to the parent that was just written.
+    `assigned` maps each entity this call wrote to the id the database gave it —
+    one row per natural key, however many times the batch repeats that key.
 
-    `duplicates` lists entities the database already had, recognised by their
-    natural key. They are not an error: re-importing a file is a normal act, and
-    the import report counts them separately from rejections (DATA_MODEL.md §6).
+    `existing` maps every other entity to the id of the row that already holds
+    its natural key: written earlier in the same batch, earlier in the same
+    import run, or by a previous import. Children need that id to attach to a
+    parent they did not create, which is why `ids` merges the two.
+
+    `duplicates` lists the entities the report counts as already imported. It is
+    a subset of `existing` and not an error: re-importing a file is a normal act,
+    counted apart from rejections (DATA_MODEL.md §6). A session that several
+    lines of one import describe is the same session, not a duplicate.
+
+    `unlinked` lists children that could not be written because their parent is
+    unknown. They are neither imported nor duplicates: the caller must say so
+    rather than let them disappear.
     """
 
     assigned: dict[UUID, int] = field(default_factory=dict)
     duplicates: tuple[UUID, ...] = ()
+    existing: dict[UUID, int] = field(default_factory=dict)
+    unlinked: tuple[UUID, ...] = ()
+
+    @property
+    def ids(self) -> dict[UUID, int]:
+        """Every entity's database id, whether written by this call or already stored."""
+        return {**self.existing, **self.assigned}
 
     @property
     def inserted_count(self) -> int:
@@ -66,6 +84,21 @@ class InsertOutcome:
     @property
     def duplicate_count(self) -> int:
         return len(self.duplicates)
+
+
+@dataclass(frozen=True)
+class ImportIssueRecord:
+    """A stored import issue and the source record it points at.
+
+    `import_issue` has no line number of its own: `issue.line_number` is read
+    back from the linked `raw_record`, and stays `None` when there is none (a
+    run-level issue such as `ALREADY_IMPORTED`). `raw_record_id` is storage
+    provenance, so it lives here rather than on the domain `ImportIssue`; it
+    is what lets a client open `GET /records/{raw_record_id}`.
+    """
+
+    issue: ImportIssue
+    raw_record_id: int | None = None
 
 
 @dataclass(frozen=True)

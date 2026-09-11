@@ -34,6 +34,13 @@ export default defineConfig(({ command, mode }) => {
         '@': path.resolve(dirname, './src'),
       },
     },
+    build: {
+      // Lowered, not raised. The single 514 kB bundle sat just above Vite's
+      // 500 kB default, so the warning had become background noise. The entry
+      // chunk is ~370 kB once the routes are split; 400 leaves room to breathe
+      // and trips again well before the old size comes back.
+      chunkSizeWarningLimit: 400,
+    },
     test: {
       // jsdom rather than the default node environment: every hook under test
       // renders, and Testing Library needs a DOM to render into.

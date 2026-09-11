@@ -148,6 +148,21 @@ def test_duplicate_sequence_index_within_a_session_is_rejected(clean_db: Connect
     assert "uq_model_call_session_sequence" in str(exc.value)
 
 
+def test_same_agent_without_version_twice_is_rejected(clean_db: Connection) -> None:
+    """UNIQUE NULLS NOT DISTINCT (name, version): an unknown version is one value.
+
+    With the default NULLS DISTINCT the second ('claude-code', NULL) row was
+    accepted, the referential upsert never conflicted, and every import created
+    the agent again (issue #137). A known version remains a separate agent.
+    """
+    clean_db.execute(insert(t.agent).values(name="claude-code"))
+    clean_db.execute(insert(t.agent).values(name="claude-code", version="1.0"))
+
+    with pytest.raises(IntegrityError) as exc:
+        clean_db.execute(insert(t.agent).values(name="claude-code"))
+    assert "uq_agent_name_version" in str(exc.value)
+
+
 def test_same_file_content_cannot_be_stored_twice(clean_db: Connection) -> None:
     """file_upload.content_hash is the first idempotence barrier."""
     row = {

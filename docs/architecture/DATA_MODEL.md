@@ -109,7 +109,7 @@ CREATE TABLE import_run (
     records_duplicate INTEGER    NOT NULL DEFAULT 0,
     records_rejected INTEGER     NOT NULL DEFAULT 0,
     fields_missing   JSONB,                        -- {champ_cible: nb_absents}
-    error_summary    TEXT,
+    error_summary    TEXT,                         -- classes d'exception, jamais leur message
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at       TIMESTAMPTZ,
     finished_at      TIMESTAMPTZ,
@@ -175,8 +175,8 @@ CREATE TABLE model (
 CREATE TABLE agent (
     id      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name    TEXT NOT NULL,                         -- 'claude-code', 'codex'
-    version TEXT,
-    UNIQUE (name, version)
+    version TEXT,                                  -- NULL : la source ne la donne pas
+    UNIQUE NULLS NOT DISTINCT (name, version)      -- une version inconnue compte pour une seule valeur
 );
 
 CREATE TABLE tool (
@@ -195,6 +195,8 @@ CREATE TABLE repository (
 ```
 
 Ces tables sont alimentées en **upsert** pendant l'import (`INSERT … ON CONFLICT DO NOTHING RETURNING id`). L'agent d'import n'a pas à les connaître : il fournit un *nom*, le normaliseur résout ou crée la référence.
+
+`agent` est la seule clé composite à colonne nullable : aucun mapping ne fournit de version aujourd'hui. Avec le `UNIQUE` par défaut, PostgreSQL tient deux `NULL` pour distincts, `ON CONFLICT` ne se déclenche jamais et chaque import recréait le même agent. D'où `NULLS NOT DISTINCT` (PostgreSQL 15+, migration 0004, qui fusionne aussi les doublons déjà stockés). Les clés de `provider`, `model`, `tool` et `repository` ne portent que des colonnes `NOT NULL` et ne sont pas concernées.
 
 ---
 
@@ -280,7 +282,7 @@ CREATE INDEX ON tool_call (model_call_id);
 Trois barrières successives :
 
 1. **Niveau fichier** — `file_upload.content_hash` unique. Le même fichier redéposé est reconnu ; l'API le signale (`already_seen: true`).
-2. **Niveau enregistrement métier** — clés naturelles `UNIQUE (data_source_id, external_id)` sur `session` et `UNIQUE (session_id, sequence_index)` sur les appels. L'insertion utilise `ON CONFLICT DO NOTHING RETURNING id` : un conflit incrémente `records_duplicate` et produit un `import_issue` de sévérité `duplicate`.
+2. **Niveau enregistrement métier** — clés naturelles `UNIQUE (data_source_id, external_id)` sur `session` et `UNIQUE (session_id, sequence_index)` sur les appels. L'insertion utilise `ON CONFLICT DO NOTHING RETURNING id`, puis relit l'identifiant des clés déjà présentes : les appels d'une session existante — lot suivant, second fichier — lui sont rattachés au lieu d'être perdus. Une clé stockée par un import précédent incrémente `records_duplicate` (une fois par session pour tout l'import, une fois par appel) et produit un `import_issue` de sévérité `duplicate`. Une session que plusieurs lignes du même import décrivent — TraceLab la répète à chaque round — reste **une** session : une insertion, aucun doublon. Un appel dont la session n'a pas pu être rattachée n'est compté ni comme importé ni comme doublon ; il produit un avertissement `PARENT_SESSION_MISSING`.
 3. **Niveau contenu** — quand une source ne fournit aucun identifiant stable, l'`external_id` est un **hash déterministe** des champs identifiants déclarés dans le mapping (`natural_key`). Deux exécutions du même contenu produisent la même clé.
 
 > Un réimport reste tracé : un nouvel `import_run` est créé avec `records_imported = 0` et `records_duplicate = n`. **L'historique des imports n'est jamais perdu**, seules les données de faits ne sont pas dupliquées.

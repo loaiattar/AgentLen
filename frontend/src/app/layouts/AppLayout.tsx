@@ -5,16 +5,21 @@ import { useLogoutMutation } from '@/features/auth/api/auth.mutations'
 import { useMeQuery } from '@/features/auth/api/auth.queries'
 import { initialsFromEmail } from '@/features/auth/lib/initials'
 import { useMetricsFilters } from '@/features/dashboard/hooks/useMetricsFilters'
+import { useAiProvidersQuery, useReadinessQuery } from '@/features/system/api/system.queries'
+import { providerDetails, readinessStatus } from '@/features/system/lib/shell-runtime'
 
 export function AppLayout() {
   const { datasetLabel, periodLabel, datasetOptions, periodOptions, setDataSourceId, setPeriod } =
     useMetricsFilters()
   const me = useMeQuery()
   const logout = useLogoutMutation()
+  const aiProviders = useAiProvidersQuery()
+  const readiness = useReadinessQuery()
   const accountLabel = me.data?.email ? initialsFromEmail(me.data.email) : 'AS'
 
   return (
     <Shell
+      sidebar={{ details: providerDetails(aiProviders), status: readinessStatus(readiness) }}
       datasetLabel={datasetLabel}
       periodLabel={periodLabel}
       datasetItems={datasetOptions.map((option) => ({

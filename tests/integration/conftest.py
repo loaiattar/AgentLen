@@ -47,9 +47,28 @@ def _docker_available() -> bool:
     )
 
 
+def _database_configured() -> bool:
+    """An operator-supplied database counts, whatever Docker is doing.
+
+    `TEST_DATABASE_URL` is what the `database_url` fixture honours before it
+    reaches for testcontainers, so the skip condition has to ask the same
+    question. It did not: gating on Docker alone skipped 120 tests in silence
+    inside a container that had no Docker socket but a perfectly good Postgres
+    — measured, not supposed.
+
+    Reachability is deliberately not probed here. A URL that is set but broken
+    must fail loudly when the fixture connects; turning that into a skip is how
+    a suite reports success having tested nothing.
+    """
+    return bool(os.environ.get("TEST_DATABASE_URL"))
+
+
 requires_postgres = pytest.mark.skipif(
-    not _docker_available(),
-    reason="Docker unavailable — integration tests need a throwaway Postgres",
+    not (_database_configured() or _docker_available()),
+    reason=(
+        "No database available — set TEST_DATABASE_URL or start Docker "
+        "so a throwaway Postgres can be created"
+    ),
 )
 
 

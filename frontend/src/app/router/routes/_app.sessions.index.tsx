@@ -1,7 +1,5 @@
-import { createFileRoute } from '@tanstack/react-router'
-
-import { SessionsListPage } from '@/features/sessions/pages/SessionsListPage'
+import { createFileRoute, lazyRouteComponent } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_app/sessions/')({
-  component: SessionsListPage,
+  component: lazyRouteComponent(() => import('@/features/sessions/pages/SessionsListPage'), 'SessionsListPage'),
 })

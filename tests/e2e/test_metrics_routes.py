@@ -122,6 +122,17 @@ async def test_missing_data_is_null_with_partial_coverage_never_zero(
     assert metrics["tool_error_rate"]["coverage"]["total"] == 3
 
 
+async def test_empty_scope_has_null_coverage_ratios() -> None:
+    app = create_app(engine=create_async_engine(UNREACHABLE_URL))
+    app.dependency_overrides[get_dashboard_queries] = lambda: InMemoryDashboardQueries()
+    async with asgi_client(app) as client:
+        response = await client.get("/api/v1/metrics/overview")
+
+    assert response.status_code == 200
+    metrics = by_key(response.json())
+    assert all(metric["coverage"]["ratio"] is None for metric in metrics.values())
+
+
 async def test_filters_are_echoed_for_drill_down(stub_client: AsyncClient) -> None:
     """API.md §6: the echoed filters must be replayable on GET /sessions."""
     body = (await stub_client.get("/api/v1/metrics/overview?data_source_id=1")).json()

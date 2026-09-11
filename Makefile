@@ -43,11 +43,11 @@ format:
 	ruff format .
 	ruff check . --fix
 
-## test: unit tests only — no database, no Docker, no API key
+## test: unit tests and the contract suite — the SQL half needs a database, and skips without one
 test:
-	pytest tests/unit -q
+	pytest tests/unit tests/contract -q
 
-## test-all: every test, including integration and e2e (needs Docker)
+## test-all: every test, including integration and e2e (needs Docker or TEST_DATABASE_URL)
 test-all:
 	pytest -q
 

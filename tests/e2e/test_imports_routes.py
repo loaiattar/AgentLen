@@ -12,9 +12,11 @@ from uuid import uuid4
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from agentlen.application.use_cases.run_import import RunImport
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.infrastructure.persistence.unit_of_work import SqlAlchemyUnitOfWork
+from tests.fakes.file_reader import InMemoryFileReader
 from tests.integration.conftest import requires_postgres
 
 
@@ -85,6 +87,7 @@ async def _seed(live_engine: AsyncEngine) -> dict[str, int | str]:
         "source_id": source_id,
         "slug": slug,
         "file_id": file_record.id,
+        "storage_path": file_record.storage_path,
         "mapping_id": mapping_id,
         "mapping_name": mapping_name,
     }
@@ -232,6 +235,47 @@ async def test_import_issues_are_listed_and_filterable_by_severity(
     rejected_only = await live_client.get(f"/api/v1/imports/{run_id}/issues?severity=rejected")
     assert rejected_only.json()["total"] == 1
     assert rejected_only.json()["items"][0]["code"] == "CAST_FAILED"
+    # Seeded with no raw_record: nothing to point at, and no line invented.
+    assert all(i["line_number"] is None for i in everything.json()["items"])
+    assert all(i["raw_record_id"] is None for i in everything.json()["items"])
+
+
+@requires_postgres
+async def test_import_issues_point_at_the_rejected_line_and_its_raw_record(
+    live_client: AsyncClient, live_engine: AsyncEngine
+) -> None:
+    """A rejection is only explained if the client can find the line: the route
+    returns its number and the raw_record id that `GET /records/{id}` opens.
+
+    Every line is rejected on purpose: this database is shared by the whole e2e
+    run without truncation, and an imported session would break the metrics
+    tests that expect an empty one.
+    """
+    seed = await _seed(live_engine)
+    created = await live_client.post(
+        "/api/v1/imports",
+        json={
+            "data_source_id": seed["source_id"],
+            "file_upload_id": seed["file_id"],
+            "mapping_id": seed["mapping_id"],
+        },
+    )
+    run_id = created.json()["import_run_id"]
+    records = [{"not_sid": "line one"}, {"not_sid": "line two"}]
+    reader = InMemoryFileReader({str(seed["storage_path"]): records})
+    await RunImport(SqlAlchemyUnitOfWork(live_engine), reader).execute(run_id)
+
+    response = await live_client.get(f"/api/v1/imports/{run_id}/issues?severity=rejected")
+
+    assert response.status_code == 200
+    items = response.json()["items"]
+    assert [i["line_number"] for i in items] == [1, 2]
+    for item in items:
+        assert isinstance(item["raw_record_id"], int)
+        source = await live_client.get(f"/api/v1/records/{item['raw_record_id']}")
+        assert source.status_code == 200
+        assert source.json()["line_number"] == item["line_number"]
+        assert source.json()["payload"] == records[item["line_number"] - 1]
 
 
 @requires_postgres

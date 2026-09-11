@@ -8,11 +8,7 @@ import polars as pl
 
 from agentlen.domain.model.profile import FieldProfile, FileProfile
 from agentlen.infrastructure.ai.sanitizer import sanitize_value
-from agentlen.infrastructure.files.polars_reader import (
-    DEFAULT_INFER_SCHEMA_LENGTH,
-    infer_format,
-    scan_file,
-)
+from agentlen.infrastructure.files.polars_reader import infer_format, scan_file
 
 _MAX_EXAMPLES = 3
 
@@ -175,14 +171,10 @@ class PolarsFileProfiler:
                 file_id=0, format=format_, record_count=0, sampled_records=0, fields=()
             )
 
-        # Schema inference must see at least as many rows as we're about to
-        # sample, or a field that only appears later silently vanishes from
-        # the profile (see infra/files/polars_reader.py). Floored at Polars'
-        # own default so a deliberately tiny sample_size (tests, previews)
-        # can't narrow the window enough to make the full-file record_count
-        # scan below choke on a field it never saw.
-        infer_schema_length = max(sample_size, DEFAULT_INFER_SCHEMA_LENGTH)
-        lazy = scan_file(path, format=format_, infer_schema_length=infer_schema_length)
+        # scan_file's default schema inference is the one the import reader
+        # uses too (polars_reader.INFER_SCHEMA_LENGTH): a field or a type the
+        # profile shows is one the import reads, wherever it first appears.
+        lazy = scan_file(path, format=format_)
 
         # Both collect() calls are synchronous and CPU/IO-bound; run off the
         # event loop so one profile request doesn't stall every other

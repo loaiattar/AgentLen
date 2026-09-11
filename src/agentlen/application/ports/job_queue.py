@@ -35,5 +35,9 @@ class JobQueue(Protocol):
 
         The lock is dropped either way — a failed job holding a lock forever is
         indistinguishable from a crashed worker.
+
+        `error` is stored and shown to people, so it must never carry trace
+        content: no exception text, which can embed SQL parameters or a
+        failing row (ARCHITECTURE §10).
         """
         ...

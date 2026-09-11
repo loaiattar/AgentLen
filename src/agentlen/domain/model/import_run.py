@@ -41,7 +41,7 @@ class ImportReport:
         object.__setattr__(self, "issues", tuple(self.issues))
 
     @property
-    def success_rate(self) -> float:
+    def success_rate(self) -> float | None:
         if self.records_read == 0:
-            return 0.0
+            return None
         return self.records_imported / self.records_read

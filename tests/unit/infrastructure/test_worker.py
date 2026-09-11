@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
+import pytest
+
 from agentlen.domain.model.import_run import ImportReport
-from agentlen.infrastructure.jobs.worker import ImportWorker
+from agentlen.infrastructure.jobs.worker import ImportWorker, failure_summary
 
 
 class FakeQueue:
@@ -79,8 +82,69 @@ async def test_a_failing_job_is_released_not_left_locked() -> None:
     assert await worker.run_once() is True
     assert queue.succeeded == []
     assert len(queue.failed) == 1
-    assert "boom" in queue.failed[0][1]
+    assert "ValueError" in queue.failed[0][1]
     assert queue.released == {1}
+
+
+async def test_a_failure_keeps_class_names_and_never_the_exception_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#153. An exception's text can embed SQL parameters or the failing row,
+    so neither the log nor error_summary may contain it — only what an operator
+    needs to know what kind of failure it was, and on which run."""
+    marker = "TRACE-CONTENT-4b1d"
+    try:
+        try:
+            raise KeyError(marker)
+        except KeyError as inner:
+            raise RuntimeError(f"insert failed: {{'payload': '{marker}'}}") from inner
+    except RuntimeError as exc:
+        failure = exc
+    queue = FakeQueue([7])
+    worker = ImportWorker(queue, FakeImporter({7: failure}), worker_id="w1")
+    caplog.set_level(logging.DEBUG)
+
+    await worker.run_once()
+
+    [(run_id, summary)] = queue.failed
+    assert run_id == 7
+    assert "Import 7" in summary
+    assert "RuntimeError <- KeyError" in summary
+    assert marker not in summary
+    assert marker not in caplog.text
+    assert "RuntimeError <- KeyError" in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_the_failure_summary_follows_an_implicit_context() -> None:
+    try:
+        try:
+            raise ValueError("secret")
+        except ValueError:
+            raise KeyError("secret")  # noqa: B904 - the implicit context is the point
+    except KeyError as exc:
+        summary = failure_summary(3, exc)
+
+    assert "Import 3 en échec : KeyError <- ValueError (" in summary
+    assert "secret" not in summary
+
+
+def test_the_failure_summary_prefers_the_explicit_cause_and_collapses_repeats() -> None:
+    class IntegrityError(Exception):
+        pass
+
+    try:
+        try:
+            raise ValueError("secret")
+        except ValueError:
+            raise IntegrityError("secret") from IntegrityError("secret")
+    except IntegrityError as exc:
+        summary = failure_summary(3, exc)
+
+    # The SQLAlchemy error and the driver adapter's share a class name: it reads once.
+    assert "en échec : IntegrityError (" in summary
+    assert "ValueError" not in summary
+    assert "secret" not in summary
 
 
 async def test_one_bad_job_does_not_stop_the_loop() -> None:

@@ -166,12 +166,13 @@ async def list_import_issues(
 
     items = [
         ImportIssueOut(
-            line_number=i.line_number,
-            severity=i.severity,
-            code=i.code,
-            message=i.message,
-            field_path=i.field_path,
+            line_number=r.issue.line_number,
+            raw_record_id=r.raw_record_id,
+            severity=r.issue.severity,
+            code=r.issue.code,
+            message=r.issue.message,
+            field_path=r.issue.field_path,
         )
-        for i in issues
+        for r in issues
     ]
     return paginate(items, total, params)

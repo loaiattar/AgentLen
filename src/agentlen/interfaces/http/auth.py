@@ -20,12 +20,18 @@ from agentlen.interfaces.http.errors import error_response
 logger = logging.getLogger("agentlen.http.auth")
 
 #: Probes and the version endpoint stay public (prefixed and unprefixed).
+#: So do the interactive docs and the schema they load: a browser navigating
+#: to /docs cannot attach a header, and the document only describes routes
+#: that all still require the key.
 PUBLIC_PATHS = frozenset(
     {
         "/health",
         "/version",
         "/api/v1/health",
         "/api/v1/version",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
     }
 )
 

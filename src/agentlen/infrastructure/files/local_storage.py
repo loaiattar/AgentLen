@@ -18,10 +18,11 @@ the magic bytes are evidence. Both are checked, and the evidence wins.
 
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 from agentlen.application.ports.file_storage import (
@@ -34,13 +35,20 @@ from agentlen.application.ports.file_storage import (
 #: hostile upload cannot make one chunk expensive.
 CHUNK_SIZE = 1024 * 1024
 
-#: Enough to hold a first line and the Parquet marker; format detection needs
-#: no more than that, and keeping it small bounds what a hostile first "line"
-#: can make us buffer.
-_HEAD_BYTES = 64 * 1024
+#: What format detection reads first: enough for the Parquet marker, a CSV
+#: header, and the first record of a typical JSONL.
+HEAD_BYTES = 64 * 1024
+
+#: How far detection keeps reading when the head opens a JSON line it does not
+#: finish. A trace that embeds tool output can easily put 80 KB on one line, so
+#: the head alone is not enough; the bound keeps a hostile newline-free "line"
+#: from making us buffer the whole upload.
+MAX_FIRST_LINE_BYTES = 8 * CHUNK_SIZE
 
 ALLOWED_EXTENSIONS = {".jsonl", ".ndjson", ".csv", ".parquet"}
 DEFAULT_MAX_UPLOAD_MB = 512
+
+_JSONL_SUFFIXES = {".jsonl", ".ndjson"}
 
 #: Parquet brackets its payload with this marker at both ends.
 _PARQUET_MAGIC = b"PAR1"
@@ -50,21 +58,76 @@ def max_upload_bytes() -> int:
     return int(os.environ.get("MAX_UPLOAD_SIZE_MB", DEFAULT_MAX_UPLOAD_MB)) * 1024 * 1024
 
 
-def detect_format(head: bytes, original_name: str) -> str:
+def detect_file_format(read: Callable[[int], bytes], original_name: str) -> str:
+    """Identify the format of a file readable through `read` (a binary
+    `file.read`), from its leading bytes.
+
+    Shared by the real storage and its in-memory test double, so both read
+    exactly the same bytes before deciding.
+
+    The first JSON line is read to its end, up to `MAX_FIRST_LINE_BYTES`,
+    rather than guessed from its opening brace: the line is then really parsed,
+    so a broken JSONL is still refused at upload instead of surfacing later as
+    an import where every record fails. Reading further only happens for a line
+    that opens with `{` and is longer than the head, so Parquet and CSV files
+    cost the same `HEAD_BYTES` as before.
+    """
+    head = read(HEAD_BYTES)
+    stripped = head.lstrip()
+    if stripped.startswith(b"{") and b"\n" not in stripped:
+        parts = [head]
+        total = len(head)
+        while total < MAX_FIRST_LINE_BYTES:
+            piece = read(min(CHUNK_SIZE, MAX_FIRST_LINE_BYTES - total))
+            if not piece:
+                break
+            parts.append(piece)
+            total += len(piece)
+            if b"\n" in piece:
+                break
+        head = b"".join(parts)
+    truncated = read(1) != b""
+    return detect_format(head, original_name, truncated=truncated)
+
+
+def detect_format(head: bytes, original_name: str, *, truncated: bool = False) -> str:
     """Identify the format from the leading bytes, using the name only to
-    disambiguate between two text formats that both look plausible."""
+    disambiguate between two text formats that both look plausible.
+
+    `truncated` says the file goes on past `head`: its last character or its
+    first line may then be cut, which is not a defect of the file.
+    """
     if head.startswith(_PARQUET_MAGIC):
         return "parquet"
 
     try:
-        text = head.decode("utf-8")
+        # A head cut mid-file can end inside a multi-byte character (an accent,
+        # an emoji). The incremental decoder holds such a trailing fragment back
+        # instead of failing, and still refuses invalid bytes anywhere else.
+        text = codecs.getincrementaldecoder("utf-8")().decode(head, final=not truncated)
     except UnicodeDecodeError:
         raise UnsupportedFileFormatError(
             "Le contenu n'est ni du Parquet ni du texte UTF-8."
         ) from None
 
-    first_line = next((line for line in text.splitlines() if line.strip()), "")
+    suffix = Path(original_name).suffix.lower()
+    # Split on "\n" only, as JSONL does: `str.splitlines` also breaks on
+    # characters such as U+2028 that JSON allows raw inside a string.
+    lines = text.split("\n")
+    index, first_line = next(
+        ((i, line) for i, line in enumerate(lines) if line.strip()), (len(lines), "")
+    )
     if first_line.startswith("{"):
+        if truncated and index == len(lines) - 1:
+            # Still no end of line after MAX_FIRST_LINE_BYTES: the record cannot
+            # be parsed here. It opens like JSON and, if the name says JSONL too,
+            # the two claims agree; the record reader explains any bad record.
+            if suffix in _JSONL_SUFFIXES:
+                return "jsonl"
+            raise UnsupportedFileFormatError(
+                f"La première ligne dépasse {MAX_FIRST_LINE_BYTES // (1024 * 1024)} Mo "
+                "et le fichier n'est pas nommé '.jsonl' : format non vérifiable."
+            )
         try:
             json.loads(first_line)
             return "jsonl"
@@ -75,8 +138,7 @@ def detect_format(head: bytes, original_name: str) -> str:
                 "La première ligne ressemble à du JSON mais ne parse pas."
             ) from None
 
-    suffix = Path(original_name).suffix.lower()
-    if suffix in {".jsonl", ".ndjson"}:
+    if suffix in _JSONL_SUFFIXES:
         raise UnsupportedFileFormatError(
             f"Le fichier est nommé '{suffix}' mais son contenu n'est pas du JSONL."
         )
@@ -106,11 +168,6 @@ class LocalFileStorage:
 
         digest = hashlib.sha256()
         size = 0
-        # Collected then joined once: repeatedly concatenating bytes would copy
-        # the accumulated head on every chunk, which is quadratic and shows up
-        # as a memory spike on small chunk sizes.
-        head_parts: list[bytes] = []
-        head_len = 0
         try:
             with staging.open("wb") as out:
                 async for chunk in chunks:
@@ -122,14 +179,14 @@ class LocalFileStorage:
                             f"Fichier trop volumineux : limite "
                             f"{self._max_bytes // (1024 * 1024)} Mo."
                         )
-                    if head_len < _HEAD_BYTES:
-                        piece = chunk[: _HEAD_BYTES - head_len]
-                        head_parts.append(piece)
-                        head_len += len(piece)
                     digest.update(chunk)
                     out.write(chunk)
 
-            detected = detect_format(b"".join(head_parts), original_name)
+            # Read back from the staged file rather than captured in flight:
+            # detection may need more than the head when the first JSON line is
+            # long, and the bytes are already on disk.
+            with staging.open("rb") as written:
+                detected = detect_file_format(written.read, original_name)
             content_hash = digest.hexdigest()
 
             final = self._root / content_hash[:2] / content_hash
