@@ -247,9 +247,10 @@ class BaseAnalyzerAdapter:
         """Apply an operator's correction and re-validate through the tools."""
         from agentlen.infrastructure.ai.prompts.analysis import build_refinement_prompt
 
-        instruction = _build_refinement_instruction(history, user_message)
         prompt = build_refinement_prompt(
-            mapping=_mapping_payload(proposal.mapping), instruction=instruction
+            mapping=_mapping_payload(proposal.mapping),
+            instruction=user_message,
+            history=_history_payload(history),
         )
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
 
@@ -320,26 +321,19 @@ class BaseAnalyzerAdapter:
 MAX_HISTORY_MESSAGE_LENGTH = 500
 
 
-def _build_refinement_instruction(
-    history: tuple[dict[str, str | int], ...], user_message: str
-) -> str:
-    """Prefix the operator's instruction with the recent conversation, if any.
+def _history_payload(history: tuple[dict[str, str | int], ...]) -> str | None:
+    """The recent conversation as one JSON payload, or None when there is none.
 
-    `json.dumps(())` is `"[]"`, which is truthy — testing the serialized text
-    made the no-history branch unreachable and sent `Conversation récente :\n[]`
-    on every first refinement. The emptiness test belongs on `history` itself.
+    Returned separately from the operator's instruction so the prompt builder
+    can fence it as data — see `build_refinement_prompt`. `None` rather than
+    `"[]"`: `json.dumps(())` is truthy, and testing the serialized text made
+    the no-history branch unreachable, prefixing every first refinement with an
+    empty conversation.
     """
     if not history:
-        return user_message
-    turns = [
-        {
-            **turn,
-            "content": _truncate(str(turn.get("content", ""))),
-        }
-        for turn in history
-    ]
-    history_text = json.dumps(turns, ensure_ascii=False)
-    return f"Conversation récente :\n{history_text}\n\nNouvelle instruction :\n{user_message}"
+        return None
+    turns = [{**turn, "content": _truncate(str(turn.get("content", "")))} for turn in history]
+    return json.dumps(turns, ensure_ascii=False)
 
 
 def _truncate(text: str, limit: int = MAX_HISTORY_MESSAGE_LENGTH) -> str:

@@ -181,6 +181,27 @@ async def test_invalid_analyzer_proposal_is_an_editable_200(ai_client):
 
 
 @requires_postgres
+async def test_an_unknown_file_is_404_even_when_the_provider_cannot_be_built(ai_client):
+    """The 404 must win over the factory's 502.
+
+    `analyzer_factory` used to run before anything resolved `file_id`, so an
+    unknown file on a host with no provider key answered 502 — the caller was
+    told the provider was broken when the real answer was that the file does
+    not exist.
+    """
+    client, _, _, _, app = ai_client
+
+    def refuse(provider, model):
+        raise AnalyzerError("Aucune clé pour ce fournisseur")
+
+    app.dependency_overrides[get_analyzer_factory] = lambda: refuse
+    response = await client.post("mappings/proposals", json={"file_id": 999999})
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+@requires_postgres
 async def test_unknown_proposal_is_404(ai_client):
     client, *_ = ai_client
     response = await client.get("mappings/proposals/999999")

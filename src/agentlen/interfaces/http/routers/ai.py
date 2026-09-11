@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from agentlen.application.dto.mapping_document import document_to_mapping, mapping_to_document
+from agentlen.application.errors import NotFoundError
+from agentlen.application.ports.unit_of_work import UnitOfWork
 from agentlen.application.use_cases.propose_mapping import (
     GetMappingProposal,
     PatchMappingProposal,
@@ -49,6 +51,21 @@ def _response(stored: StoredProposal) -> ProposalResponse:
     )
 
 
+async def _require_file(file_id: int, uow: UnitOfWork) -> None:
+    """404 for an unknown file before the analyzer is built.
+
+    `analyzer_factory` raises `UnsupportedProviderError` / `AnalyzerError` — a
+    502 — for an unknown provider or a missing key. Building it first meant an
+    unknown `file_id` on a host with no provider key answered 502 instead of
+    the 404 the caller is owed. `refine` below already resolves the proposal
+    first for the same reason; `ProposeMapping` still re-checks inside its own
+    write transaction.
+    """
+    async with uow as transaction:
+        if await transaction.file_uploads.get_by_id(file_id) is None:
+            raise NotFoundError("File", file_id)
+
+
 @router.post("/mappings/proposals", response_model=ProposalResponse)
 async def propose(
     body: ProposalRequest,
@@ -57,6 +74,7 @@ async def propose(
     sanitizer: ProfileSanitizerDep,
     analyzer_factory: AnalyzerFactoryDep,
 ) -> ProposalResponse:
+    await _require_file(body.file_id, uow)
     analyzer = analyzer_factory(body.provider, body.model)
     result = await ProposeMapping(uow, analyzer, profiler, sanitizer).execute(
         file_id=body.file_id,
