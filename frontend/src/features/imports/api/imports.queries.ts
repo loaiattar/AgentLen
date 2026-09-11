@@ -1,6 +1,7 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { apiClient } from '@/lib/api/client'
+import { loadAllPages, withWindow } from '@/lib/api/pagination'
 import { dashboardKeys } from '@/features/dashboard/api/dashboard.keys'
 import { dataSourceKeys, fileKeys, importKeys } from '@/features/imports/api/imports.keys'
 import {
@@ -101,11 +102,20 @@ export function useProfileFileMutation() {
 // --- Data sources ------------------------------------------------------------
 
 export const dataSourceQueries = {
-  /** `GET /data-sources` returns a bare array, not a paginated envelope. */
+  /**
+   * `GET /data-sources` returns a bare array of 200 at most, its total in
+   * `X-Total-Count`: every page is read so the select offers every source.
+   */
   list: () =>
     queryOptions({
       queryKey: dataSourceKeys.list(),
-      queryFn: () => apiClient.get<DataSource[]>('/data-sources'),
+      queryFn: () =>
+        loadAllPages(async (limit, offset) => {
+          const { data, total } = await apiClient.getWithTotal<DataSource[]>(
+            withWindow('/data-sources', limit, offset),
+          )
+          return { items: data, total }
+        }),
     }),
 }
 

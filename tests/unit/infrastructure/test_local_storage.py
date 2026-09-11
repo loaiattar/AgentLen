@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import io
+import threading
 import tracemalloc
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +21,7 @@ from agentlen.application.ports.file_storage import (
     FileTooLargeError,
     UnsupportedFileFormatError,
 )
+from agentlen.infrastructure.files import local_storage
 from agentlen.infrastructure.files.local_storage import (
     HEAD_BYTES,
     MAX_FIRST_LINE_BYTES,
@@ -121,6 +124,33 @@ async def test_a_refused_upload_leaves_nothing_behind(tmp_path: Path) -> None:
         await storage.store(stream(b'{"a":1}\n' * 100), original_name="big.jsonl")
 
     assert [p for p in tmp_path.rglob("*") if p.is_file()] == []
+
+
+async def test_disk_work_runs_off_the_event_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Writing, hashing, format detection and the final rename are blocking:
+    on the event loop, one large upload would stall every other request."""
+    loop_thread = threading.get_ident()
+    calls: list[tuple[str, bool]] = []
+
+    def spy(name: str, target: Callable[..., Any]) -> Callable[..., Any]:
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            calls.append((name, threading.get_ident() != loop_thread))
+            return target(*args, **kwargs)
+
+        return wrapped
+
+    monkeypatch.setattr(local_storage, "_append", spy("write", local_storage._append))
+    monkeypatch.setattr(
+        local_storage, "detect_file_format", spy("detect", local_storage.detect_file_format)
+    )
+    monkeypatch.setattr(Path, "replace", spy("rename", Path.replace))
+
+    await LocalFileStorage(tmp_path).store(stream(JSONL), original_name="t.jsonl")
+
+    assert {name for name, _ in calls} == {"write", "detect", "rename"}
+    assert all(off_loop for _, off_loop in calls), calls
 
 
 @pytest.mark.parametrize("name", ["x.exe", "x.txt", "x.zip", "x"])

@@ -60,7 +60,7 @@ export function SessionsListPage() {
   if (sessions.isPending) {
     return (
       <div>
-        <PageHeader kicker="Sessions" title="Explorer" />
+        <PageHeader title="Sessions" />
         <BentoGrid>
           {Array.from({ length: 3 }, (_, index) => (
             <BentoModule key={index} cols={index === 0 ? 2 : 1} padding="none">
@@ -75,7 +75,7 @@ export function SessionsListPage() {
   if (sessions.isError) {
     return (
       <div>
-        <PageHeader kicker="Sessions" title="Explorer" />
+        <PageHeader title="Sessions" />
         <EmptyState
           title="Sessions unavailable"
           description={sessions.error?.message ?? 'Unable to load sessions.'}
@@ -100,7 +100,7 @@ export function SessionsListPage() {
 
   return (
     <div>
-      <PageHeader kicker="Sessions" title="Explorer" />
+      <PageHeader title="Sessions" />
       <BentoGrid className="mb-8">
         <BentoModule cols={2} padding="none">
           <Kpi label="Matching sessions" value={formatCount(total)} />

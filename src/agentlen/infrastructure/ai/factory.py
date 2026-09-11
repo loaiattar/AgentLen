@@ -58,6 +58,29 @@ def supported_providers() -> list[str]:
     return sorted(_REGISTRY)
 
 
+def settings_for_request(
+    configured: AISettings, provider: str | None, model: str | None
+) -> AISettings:
+    """The settings one request runs with, when it picks its provider or model.
+
+    `AI_BASE_URL` names the host of the **configured** provider. When a
+    request picks another provider, the adapters would build their URL from it
+    all the same. With `AI_PROVIDER=openai_compatible` pointing at a third-party
+    host, a request asking for `anthropic` then sent `ANTHROPIC_API_KEY` to
+    that host. So the host follows the configured provider only: another
+    provider gets its adapter's default endpoint. `max_tokens_parameter` is kept
+    because it describes the model's dialect, not a host, and carries no secret.
+    """
+    selected = provider or configured.provider
+    update: dict[str, object] = {
+        "provider": selected,
+        "model": model if model is not None else configured.model,
+    }
+    if selected != configured.provider:
+        update["base_url"] = ""
+    return configured.model_copy(update=update)
+
+
 def build_structure_analyzer(
     settings: AISettings | None = None, keys: ProviderKeys | None = None
 ) -> StructureAnalyzer:

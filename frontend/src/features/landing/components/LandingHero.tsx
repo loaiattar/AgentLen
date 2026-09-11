@@ -19,7 +19,7 @@ export function LandingHero({ authenticated }: LandingHeroProps) {
           See what your AI agents actually do
         </h1>
         <p className="mt-[var(--space-2)] max-w-xl text-body text-foreground-muted">
-          AgentScope normalizes traces from heterogeneous sources into one calm window — sessions,
+          AgentLen normalizes traces from heterogeneous sources into one calm window — sessions,
           tokens, tools, and data quality.
         </p>
         <div className="mt-[var(--space-3)] flex flex-wrap items-center gap-[var(--space-2)]">
