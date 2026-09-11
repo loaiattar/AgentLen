@@ -242,3 +242,5 @@ Pour chaque enregistrement source, le moteur :
 6. incrémente les compteurs du bilan.
 
 Le moteur est **pur** : il prend un mapping et un dictionnaire, il rend des entités ou des issues. Aucune I/O, aucune base, aucun réseau — donc entièrement testable unitairement, comme l'exige le sujet.
+
+**Noms de référentiels.** Un nom d'agent, de fournisseur, de modèle ou d'outil est résolu et stocké comme texte. Un nombre JSON devient son texte (`123` → `"123"`) ; une chaîne vide ou faite d'espaces est un nom absent ; un booléen ou une structure est rejeté (`TYPE_MISMATCH` par le moteur, `REFERENCE_NAME_INVALID` par le normaliseur si la valeur lui parvient malgré tout). Un appel d'outil sans nom utilisable ne peut pas pointer vers une ligne `tool` : il est rejeté avec `REFERENCE_NAME_INVALID`. À l'import, un nom qui n'a pas pu être résolu produit `REFERENCE_UNRESOLVED`, avec le `field_path` du nom et la ligne source : rejet pour un appel d'outil, qui n'est pas enregistré ; avertissement pour une session ou un appel de modèle, enregistrés sans ce lien. Aucun appel n'est écarté sans issue.

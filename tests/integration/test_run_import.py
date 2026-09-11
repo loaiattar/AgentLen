@@ -430,6 +430,97 @@ async def test_the_report_records_which_fields_the_source_never_provided(
 
 
 # ---------------------------------------------------------------------------
+# Referential names (#141)
+# ---------------------------------------------------------------------------
+
+# Every name the import resolves to a referential row: agent, provider, model, tool.
+NAMES = Mapping(
+    id=uuid4(),
+    name="names",
+    version=1,
+    source_format="jsonl",
+    entities=(
+        EntityMapping(
+            target="session",
+            natural_key=("external_id",),
+            fields=(
+                FieldRule(target="external_id", source="$.sid", required=True),
+                FieldRule(target="agent_name", source="$.agent"),
+            ),
+        ),
+        EntityMapping(
+            target="model_call",
+            natural_key=("sequence_index",),
+            iterate="$.calls",
+            parent={"entity": "session", "via": "external_id"},
+            fields=(
+                FieldRule(target="model_name", source="$.model"),
+                FieldRule(target="provider_name", source="$.provider"),
+            ),
+        ),
+        EntityMapping(
+            target="tool_call",
+            natural_key=("sequence_index",),
+            iterate="$.tools",
+            parent={"entity": "session", "via": "external_id"},
+            fields=(FieldRule(target="tool_name", source="$.name", required=True),),
+        ),
+    ),
+)
+
+
+@pytest.fixture
+def named(clean_db: Connection) -> dict[str, Any]:
+    return _seed(clean_db, NAMES)
+
+
+async def test_numeric_referential_names_are_stored_as_text(
+    named: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    """A JSON number used as a name must not reach asyncpg as an int and fail the run."""
+    run_import, uow = importer(
+        [
+            {
+                "sid": "s1",
+                "agent": 42,
+                "calls": [{"model": 7.5, "provider": 3}],
+                "tools": [{"name": 123}],
+            }
+        ]
+    )
+
+    report = await run_import.execute(await _new_run(uow, named))
+
+    assert report.records_rejected == 0
+    assert report.records_imported == 3  # the session, its model call and its tool call
+    with engine.connect() as conn:
+        for table, name in ((t.agent, "42"), (t.provider, "3"), (t.model, "7.5"), (t.tool, "123")):
+            assert conn.execute(select(table.c.name)).scalars().all() == [name]
+
+
+async def test_a_tool_call_without_a_usable_name_is_explained_and_the_rest_imports(
+    named: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    """It used to vanish: no issue, no rejection, no duplicate."""
+    run_import, uow = importer([{"sid": "s1", "tools": [{"name": "Bash"}, {"name": ""}]}])
+
+    report = await run_import.execute(await _new_run(uow, named))
+
+    assert report.records_rejected == 1
+    assert any(
+        issue.code == "REFERENCE_NAME_INVALID"
+        and issue.severity == "rejected"
+        and issue.field_path == "entities[target=tool_call].fields[target=tool_name]"
+        and issue.line_number == 1
+        for issue in report.issues
+    )
+    with engine.connect() as conn:
+        assert _count(conn, t.session) == 1
+        assert conn.execute(select(t.tool.c.name)).scalars().all() == ["Bash"]
+        assert _count(conn, t.tool_call) == 1
+
+
+# ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
 
