@@ -411,12 +411,12 @@ async def test_the_seed_sample_keeps_all_nineteen_tool_calls_once(
     """TraceLab restarts `tool_index` on every round: 14 of the 19 calls were lost (#188)."""
     monkeypatch.setenv("IMPORT_BATCH_SIZE", "4")  # the sessions also cross batches
     ids = _seed(clean_db, _tracelab_mapping())
-    clean_db.execute(
-        update(t.file_upload)
-        .where(t.file_upload.c.id == ids["file_id"])
-        .values(storage_path=str(SAMPLE_FILE))
-    )
-    clean_db.commit()
+    with engine.begin() as conn:
+        conn.execute(
+            update(t.file_upload)
+            .where(t.file_upload.c.id == ids["file_id"])
+            .values(storage_path=str(SAMPLE_FILE))
+        )
     async_engine = create_async_engine(to_async_url(database_url))
     uow = SqlAlchemyUnitOfWork(async_engine)
     run_import = RunImport(uow, PolarsRecordReader())
