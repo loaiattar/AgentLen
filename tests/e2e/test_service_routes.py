@@ -67,14 +67,13 @@ async def test_ready_returns_200_against_a_migrated_database(
 
 
 @requires_postgres
-async def test_version_reports_the_revision_applied_to_the_database(
+async def test_ready_reports_the_revision_applied_to_the_database(
     live_client: AsyncClient,
 ) -> None:
     """Read from alembic_version, not assumed from disk: the point is to know
     which schema is actually live."""
-    body = (await live_client.get("/api/v1/version")).json()
+    body = (await live_client.get("/api/v1/health/ready")).json()
 
-    assert body["version"] == "0.1.0"
     # Asserted against head rather than a literal: pinning "0001" here made
     # this test fail the moment a second migration landed, which says nothing
     # about the endpoint.
@@ -82,17 +81,37 @@ async def test_version_reports_the_revision_applied_to_the_database(
     assert body["alembic_revision"] == body["alembic_head"]
 
 
-async def test_version_reports_null_revision_when_database_is_down(
+async def test_ready_reports_null_revision_when_database_is_down(
     client: AsyncClient,
 ) -> None:
-    """Still answers — you often ask for the version *because* something is
-    wrong — but does not invent a revision it could not read."""
-    body = (await client.get("/api/v1/version")).json()
+    """Does not invent a revision it could not read."""
+    body = (await client.get("/api/v1/health/ready")).json()
 
-    assert body["version"] == "0.1.0"
     assert body["alembic_revision"] is None
-    # head still comes from disk, so it is known even with no database.
+    # head comes from disk, so it is known even with no database.
     assert body["alembic_head"] is not None
+
+
+class _NoDatabase:
+    """An engine that fails the test the moment anything tries to use it."""
+
+    def connect(self) -> None:
+        raise AssertionError("/version must not touch the database")
+
+    begin = connect
+
+
+async def test_version_never_touches_the_database() -> None:
+    """Public and hit by probes: it must cost nothing and disclose no schema."""
+    from agentlen.interfaces.http.app import create_app
+    from tests.e2e.conftest import asgi_client
+
+    app = create_app(engine=_NoDatabase())  # type: ignore[arg-type]
+    async with asgi_client(app) as c:
+        response = await c.get("/api/v1/version")
+
+    assert response.status_code == 200
+    assert response.json() == {"version": "0.1.0"}
 
 
 @requires_postgres

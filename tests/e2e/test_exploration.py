@@ -21,6 +21,8 @@ from tests.integration.test_read_models import dataset  # noqa: F401
         "sessions?status=invalid",
         "sessions/nope",
         "records/nope",
+        "sessions/1/timeline?limit=201",
+        "sessions/1/timeline?offset=-1",
     ],
 )
 async def test_invalid_requests(client, path):
@@ -91,6 +93,10 @@ async def test_exploration_and_drill_down(exploration_dataset, live_engine):
         events = (await client.get(f"sessions/{sid}/timeline")).json()
         assert [e["type"] for e in events[:3]] == ["tool_call", "model_call", "model_call"]
         assert len(events) == 8
+        # A bounded bare array: windowed after ordering, full count in a header.
+        windowed = await client.get(f"sessions/{sid}/timeline", params={"limit": 3, "offset": 2})
+        assert windowed.json() == events[2:5]
+        assert windowed.headers["x-total-count"] == "8"
         assert all(e["event"]["started_at"] is None for e in events[3:])
         assert [(e["event"]["sequence_index"], e["type"]) for e in events[3:]] == [
             (1, "tool_call"),

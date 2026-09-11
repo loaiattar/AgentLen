@@ -203,3 +203,5 @@ Les ports d'écriture prennent donc des entités et renvoient un `InsertOutcome`
 
 **Conséquences.** Le front envoie `X-API-Key` (variable `VITE_API_KEY`). Un oubli de `API_KEY` en production ferme toute l'API (401), ce qui est le comportement voulu.
 
+**Amendement (#162).** `/docs`, `/redoc` et `/openapi.json` rejoignent les chemins publics : un navigateur qui ouvre `/docs` ne peut pas joindre de header, et le document ne décrit que des routes qui exigent toujours la clé. Le middleware restant hors du graphe de dépendances de FastAPI, `interfaces/http/openapi.py` déclare la clé et l'enveloppe d'erreur dans le schéma généré, sans rien appliquer. `/version` ne renvoie plus que la version applicative ; les révisions de schéma passent sur `/health/ready`, derrière la clé.
+

@@ -1,7 +1,7 @@
 # AgentLen — Contrat d'API v1
 
 > **Ce document est le contrat avec l'équipe frontend.** Toute évolution passe par une PR sur ce fichier, relue par les deux équipes, **avant** implémentation.
-> L'OpenAPI généré par FastAPI est disponible sur `/docs` et `/openapi.json` et doit rester conforme à ce document.
+> L'OpenAPI généré par FastAPI est disponible **sans clé** sur `/docs`, `/redoc` et `/openapi.json` et doit rester conforme à ce document (voir [Authentification](#authentification)).
 
 Préfixe : `/api/v1` · Format : JSON · Horodatages : ISO 8601 UTC · Durées : millisecondes
 
@@ -39,10 +39,13 @@ Toutes les routes exigent le header `X-API-Key`, dont la valeur est celle de la 
 
 L'authentification **par personne** (compte e-mail/mot de passe, jeton de session) est une couche distincte, ajoutée par-dessus — voir [§10 Authentification utilisateur](#10-authentification-utilisateur-comptes). `X-API-Key` reste exigé sur `/auth/*` comme sur toute autre route.
 
-Exceptions (sondes d'orchestration, sans clé) :
+Exceptions (sans clé) :
 
-- `GET /health` et `GET /api/v1/health`
-- `GET /version` et `GET /api/v1/version`
+- `GET /health` et `GET /api/v1/health` — sonde de vivacité
+- `GET /version` et `GET /api/v1/version` — version applicative seule, sans accès à la base
+- `GET /docs`, `GET /redoc` et `GET /openapi.json` — documentation interactive et schéma
+
+La documentation est publique par choix : un navigateur qui ouvre `/docs` ne peut pas joindre de header, donc une documentation protégée serait inutilisable ; elle ne décrit que des routes qui exigent toujours la clé, et la clé du front est de toute façon livrée au navigateur. Le schéma déclare les deux mécanismes, sans rien changer à leur application : `ApiKeyAuth` (header `X-API-Key`, exigé partout sauf ci-dessus) et `BearerAuth` (en plus de la clé, sur les routes qui exigent un jeton de session, §10). Chaque opération y documente l'enveloppe d'erreur pour `401`, `500` et, selon la route, `400`, `404`, `409`, `422` et `502`.
 
 Une clé absente ou invalide renvoie `401` :
 
@@ -61,7 +64,13 @@ Le front envoie ce header sur chaque appel (voir `VITE_API_KEY`). Les origines a
 
 ### Pagination
 
-`?limit=50&offset=0` — réponses enveloppées : `{ "items": [...], "total": 1240, "limit": 50, "offset": 0 }`
+`?limit=50&offset=0` — réponses enveloppées : `{ "items": [...], "total": 1240, "limit": 50, "offset": 0 }`. `limit` va de 1 à 200.
+
+**Exceptions : tableaux nus bornés.** `GET /data-sources` et `GET /sessions/{id}/timeline` renvoient un tableau JSON, pas l'enveloppe, pour ne pas casser les écrans qui les consomment déjà. Ils restent bornés : mêmes paramètres `limit` (1 à 200, **200 par défaut**) et `offset`, et l'en-tête `X-Total-Count` donne le total avant fenêtrage. Le front sait ainsi qu'une réponse a été tronquée lorsque `X-Total-Count` dépasse la longueur du tableau.
+
+### Identifiants
+
+Les identifiants de chemin (`/files/{id}`, `/sessions/{id}`, `/records/{raw_record_id}`…) et de filtre (`data_source_id`, `agent_id`, `model_id`, `tool_id`, `import_run_id`) sont des entiers de `1` à `2^63 - 1` (BIGINT). Hors de cette plage, la réponse est `400` `MALFORMED_REQUEST`, jamais `500`.
 
 ### Valeurs absentes
 
@@ -319,8 +328,8 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
 | Méthode | Chemin | Description |
 |---|---|---|
 | `GET` | `/health` | Vivacité |
-| `GET` | `/health/ready` | Base accessible, migrations à jour, worker actif |
-| `GET` | `/version` | Version applicative et révision Alembic |
+| `GET` | `/health/ready` | Base accessible, migrations à jour, worker actif ; révisions `alembic_revision` (appliquée) et `alembic_head` (livrée). Protégée par la clé |
+| `GET` | `/version` | Version applicative seule (`{"version": "0.1.0"}`) : publique, sans accès à la base ni révision de schéma |
 
 ---
 
@@ -332,7 +341,7 @@ Filtres communs à `/sessions` et à toutes les routes de métriques :
 4. **Le drill-down est fourni clé en main** via l'objet `filters` de chaque point.
 5. **Le front n'appelle jamais un fournisseur IA directement.** Aucune clé de fournisseur IA ne quitte le serveur, aucune n'est livrée au navigateur. La clé `X-API-Key` d'AgentLen est distincte : c'est elle que le front envoie à l'API.
 6. **Toujours proposer la prévisualisation avant l'import.** `POST /imports/preview` n'écrit rien et sert de garde-fou avant validation.
-7. **Chaque requête authentifiée porte `X-API-Key`.** Seuls `/health` et `/version` en sont exemptés.
+7. **Chaque requête authentifiée porte `X-API-Key`.** Seuls `/health`, `/version` et la documentation (`/docs`, `/redoc`, `/openapi.json`) en sont exemptés.
 
 ---
 
