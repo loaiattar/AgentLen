@@ -91,7 +91,7 @@ export function SessionDetailPage() {
   if (!Number.isInteger(id) || id <= 0) {
     return (
       <div>
-        <PageHeader kicker="Session" title={sessionId} action={<BackButton />} />
+        <PageHeader title={sessionId} action={<BackButton />} />
         <EmptyState title="Invalid session id" description="This session id isn't a valid number." />
       </div>
     )
@@ -100,7 +100,7 @@ export function SessionDetailPage() {
   if (session.isPending || timeline.isPending) {
     return (
       <div>
-        <PageHeader kicker="Session" title={sessionId} action={<BackButton />} />
+        <PageHeader title={sessionId} action={<BackButton />} />
         <BentoGrid>
           {Array.from({ length: 4 }, (_, index) => (
             <BentoModule key={index} cols={index < 2 ? 2 : 1} padding="none">
@@ -115,7 +115,7 @@ export function SessionDetailPage() {
   if (session.isError || timeline.isError) {
     return (
       <div>
-        <PageHeader kicker="Session" title={sessionId} action={<BackButton />} />
+        <PageHeader title={sessionId} action={<BackButton />} />
         <EmptyState
           title="Session unavailable"
           description={
@@ -153,12 +153,7 @@ export function SessionDetailPage() {
 
   return (
     <div>
-      <PageHeader
-        kicker="Session"
-        title={info.external_id || String(info.id)}
-        description={`Sourced from raw record #${info.raw_record_id}`}
-        action={<BackButton />}
-      />
+      <PageHeader title={info.external_id || String(info.id)} action={<BackButton />} />
 
       <BentoGrid className="mb-8">
         <BentoModule cols={1} padding="none">

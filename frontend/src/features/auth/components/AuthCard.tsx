@@ -96,7 +96,7 @@ export function AuthCard({ mode, redirect }: AuthCardProps) {
       <p className="mt-[var(--space-1)] text-body text-foreground-muted">
         {isSignup
           ? 'One email, one password. Then the dashboard.'
-          : 'Continue to AgentScope.'}
+          : 'Continue to AgentLen.'}
       </p>
 
       <form className="mt-[var(--space-4)] grid gap-[var(--space-3)]" onSubmit={onSubmit} noValidate>
@@ -172,7 +172,7 @@ export function AuthCard({ mode, redirect }: AuthCardProps) {
 
         {success ? (
           <p role="status" className="text-secondary text-primary">
-            {isSignup ? 'Account created. Opening AgentScope…' : 'Signed in. Opening AgentScope…'}
+            {isSignup ? 'Account created. Opening AgentLen…' : 'Signed in. Opening AgentLen…'}
           </p>
         ) : null}
 

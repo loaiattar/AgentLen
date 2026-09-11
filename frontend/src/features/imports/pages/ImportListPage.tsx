@@ -44,7 +44,7 @@ export function ImportListPage() {
   if (imports.isError) {
     return (
       <div>
-        <PageHeader kicker="Imports" title="Datasets" action={startImport} />
+        <PageHeader title="Imports" action={startImport} />
         <EmptyState
           title="The import history is unavailable"
           description={imports.error.message}
@@ -60,7 +60,7 @@ export function ImportListPage() {
 
   return (
     <div>
-      <PageHeader kicker="Imports" title="Datasets" action={startImport} />
+      <PageHeader title="Imports" action={startImport} />
 
       <BentoGrid className="mb-8">
         <BentoModule cols={2} rows={2} className="flex min-h-56 flex-col justify-between">

@@ -63,7 +63,7 @@ export function DashboardPage() {
   if (isPending) {
     return (
       <div>
-        <PageHeader kicker="Overview" title="Agent activity" />
+        <PageHeader title="Overview" />
         <BentoGrid>
           {Array.from({ length: 6 }, (_, index) => (
             <BentoModule key={index} cols={index < 2 ? 2 : 1} padding="none">
@@ -85,7 +85,7 @@ export function DashboardPage() {
 
     return (
       <div>
-        <PageHeader kicker="Overview" title="Agent activity" />
+        <PageHeader title="Overview" />
         <EmptyState
           title="Metrics unavailable"
           description={message}
@@ -137,7 +137,7 @@ export function DashboardPage() {
 
   return (
     <div>
-      <PageHeader kicker="Overview" title="Agent activity" description="A calm window into traces, tokens and failures." />
+      <PageHeader title="Overview" />
       {dashboardWarnings.length > 0 ? (
         <ul
           role="status"

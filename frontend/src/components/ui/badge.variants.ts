@@ -14,7 +14,7 @@ export const badgeVariants = cva(
     variants: {
       tone: {
         neutral: 'bg-surface-sunken text-foreground-muted',
-        cyan: 'bg-primary-soft text-primary',
+        cyan: 'bg-primary-soft text-foreground',
         mint: 'bg-success-soft text-foreground',
         magenta: 'bg-accent-magenta-soft text-foreground',
         pink: 'bg-error-soft text-foreground',

@@ -11,7 +11,7 @@ const mappings = [
 export function MappingsListPage() {
   return (
     <div>
-      <PageHeader kicker="Mappings" title="Library" />
+      <PageHeader title="Mappings" />
       <div className="glass-surface rounded-xl p-2">
         <Table>
           <TableHeader>
