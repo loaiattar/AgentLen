@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+import pytest
+
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
 from agentlen.domain.services.transformation_engine import TransformationEngine
@@ -216,3 +218,82 @@ def test_source_index_reflects_position_before_rejection_not_survivor_rank():
     assert results[0]["source_index"] == 0
     assert results[1]["data"]["tool_name"] == "Write"
     assert results[1]["source_index"] == expected_third_row_source_index
+
+
+# ---------------------------------------------------------------------------
+# Path notation (#121): the one PolarsFileProfiler writes and the prompt teaches
+# ---------------------------------------------------------------------------
+
+
+def _calls(iterate: str, source: str) -> Mapping:
+    entity = EntityMapping(
+        target="model_call",
+        natural_key=["model_name"],
+        iterate=iterate,
+        fields=[FieldRule(target="model_name", source=source)],
+    )
+    return _make_mapping([entity])
+
+
+@pytest.mark.parametrize(
+    ("source", "raw"),
+    [
+        ("$.run.id", {"run": {"id": "r1"}}),
+        ('$["run.id"]', {"run.id": "r1", "run": {"id": "wrong"}}),
+        ('$["say \\"hi\\""]["back\\\\slash"]', {'say "hi"': {"back\\slash": "r1"}}),
+    ],
+)
+def test_source_notation_reads_the_member_it_names(source, raw):
+    rule = FieldRule(target="external_id", source=source)
+    mapping = _make_mapping(
+        [EntityMapping(target="session", natural_key=["external_id"], fields=[rule])]
+    )
+
+    results, issues = TransformationEngine().apply(mapping, raw)
+
+    assert issues == []
+    assert results[0]["data"] == {"external_id": "r1"}
+
+
+CALLS = {"name": "top-level", "calls": [{"name": "a"}, {"name": "b"}]}
+
+
+@pytest.mark.parametrize(
+    ("iterate", "source", "raw"),
+    [
+        ("$.calls[]", "$.name", CALLS),
+        ("$.calls", "$.name", CALLS),
+        ("$.calls[]", "$.calls[].name", CALLS),  # the form the profile shows
+        ("$.turns[].calls[]", "$.name", {"turns": [CALLS, {"calls": []}]}),
+    ],
+)
+def test_iterate_notation_yields_one_row_per_list_element(iterate, source, raw):
+    results, issues = TransformationEngine().apply(_calls(iterate, source), raw)
+
+    assert issues == []
+    assert [r["data"]["model_name"] for r in results] == ["a", "b"]
+
+
+def test_iterate_on_a_value_that_is_not_a_list_is_explained_not_silent():
+    results, issues = TransformationEngine().apply(
+        _calls("$.calls[]", "$.name"), {"calls": "oops"}, line_number=7
+    )
+
+    assert results == []
+    assert [(i.severity, i.code, i.field_path, i.line_number) for i in issues] == [
+        ("rejected", "ITERATE_NOT_A_LIST", "entities[target=model_call].iterate", 7)
+    ]
+    assert "a string where a list was expected" in issues[0].message
+
+
+@pytest.mark.parametrize("raw", [{}, {"calls": None}, {"calls": []}])
+def test_iterate_on_an_absent_or_empty_list_yields_no_row_and_no_issue(raw):
+    assert TransformationEngine().apply(_calls("$.calls[]", "$.name"), raw) == ([], [])
+
+
+def test_unsupported_path_in_an_unvalidated_mapping_is_an_issue_not_an_exception():
+    _, issues = TransformationEngine().apply(_calls("$.calls[]", "$.x[0]"), CALLS)
+
+    assert {(i.code, i.field_path) for i in issues} == {
+        ("MAPPING_UNSUPPORTED_PATH", "entities[target=model_call].fields[target=model_name].source")
+    }
