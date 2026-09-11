@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -195,6 +196,127 @@ async def test_no_job_is_ever_left_claimed_but_unreleased() -> None:
     await worker.run_forever(stop_when_idle=True)
 
     assert set(queue.claimed) == queue.released
+
+
+# ---------------------------------------------------------------------------
+# The queue itself fails (#194)
+# ---------------------------------------------------------------------------
+
+
+class DatabaseDown(ConnectionError):
+    """Stands in for a driver error: its text is not ours to log."""
+
+
+class FlakyQueue(FakeQueue):
+    """`claim_next` and `mark_failed` follow a script: an exception is raised,
+    anything else means "behave normally". Every call is recorded in order."""
+
+    def __init__(
+        self,
+        jobs: list[int],
+        *,
+        claims: list[Exception | None] | None = None,
+        releases: list[Exception | None] | None = None,
+    ) -> None:
+        super().__init__(jobs)
+        self.claims = list(claims or [])
+        self.releases = list(releases or [])
+        self.calls: list[str] = []
+
+    async def claim_next(self, *, worker_id: str) -> int | None:
+        self.calls.append("claim")
+        if self.claims and (error := self.claims.pop(0)) is not None:
+            raise error
+        return await super().claim_next(worker_id=worker_id)
+
+    async def mark_failed(self, import_run_id: int, *, error: str) -> None:
+        self.calls.append(f"release {import_run_id}")
+        if self.releases and (failure := self.releases.pop(0)) is not None:
+            raise failure
+        await super().mark_failed(import_run_id, error=error)
+
+
+def recording_pauses(worker: ImportWorker, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """Replaces the wait itself, so a test sees the delays without sleeping."""
+    pauses: list[float] = []
+
+    async def pause(seconds: float) -> None:
+        pauses.append(seconds)
+
+    monkeypatch.setattr(worker, "_pause", pause)
+    return pauses
+
+
+async def test_a_claim_error_is_retried_with_a_growing_bounded_delay(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "TRACE-CONTENT-9c2e"
+    down = DatabaseDown(marker)
+    queue = FlakyQueue([1], claims=[down, down, down, down, None])
+    importer = FakeImporter()
+    worker = ImportWorker(queue, importer, worker_id="w1", error_backoff=(1, 4))
+    pauses = recording_pauses(worker, monkeypatch)
+    caplog.set_level(logging.DEBUG)
+
+    await worker.run_forever(stop_when_idle=True)
+
+    assert pauses == [1, 2, 4, 4]
+    assert importer.ran == [1]
+    assert queue.released == {1}
+    assert "DatabaseDown" in caplog.text
+    assert marker not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
+
+
+async def test_the_delay_starts_over_after_a_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    down = DatabaseDown("x")
+    queue = FlakyQueue([1, 2], claims=[down, down, None, down, None])
+    worker = ImportWorker(queue, FakeImporter(), worker_id="w1", error_backoff=(1, 30))
+    pauses = recording_pauses(worker, monkeypatch)
+
+    await worker.run_forever(stop_when_idle=True)
+
+    assert pauses == [1, 2, 1]
+    assert queue.released == {1, 2}
+
+
+async def test_a_failed_release_is_retried_before_anything_else_is_claimed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Otherwise the job stays `running` with nobody behind it."""
+    queue = FlakyQueue([1, 2], releases=[DatabaseDown("x"), DatabaseDown("x"), None])
+    importer = FakeImporter({1: ValueError("boom")})
+    worker = ImportWorker(queue, importer, worker_id="w1", error_backoff=(1, 30))
+    pauses = recording_pauses(worker, monkeypatch)
+
+    await worker.run_forever(stop_when_idle=True)
+
+    assert queue.calls[:4] == ["claim", "release 1", "release 1", "release 1"]
+    assert queue.calls[4] == "claim"
+    assert pauses == [1, 2]
+    assert importer.ran == [1, 2]
+    assert queue.released == {1, 2}
+    assert [run_id for run_id, _ in queue.failed] == [1]
+
+
+async def test_a_stop_during_the_backoff_ends_the_loop_at_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SIGTERM must not wait out the delay, and must not be swallowed by it."""
+    queue = FlakyQueue([1], releases=[DatabaseDown("x")] * 100)
+    worker = ImportWorker(
+        queue, FakeImporter({1: ValueError("boom")}), worker_id="w1", error_backoff=(60, 60)
+    )
+    caplog.set_level(logging.INFO)
+
+    task = asyncio.create_task(worker.run_forever())
+    while "release 1" not in queue.calls:
+        await asyncio.sleep(0)
+    worker.request_stop()
+    await asyncio.wait_for(task, timeout=2)
+
+    assert queue.calls == ["claim", "release 1"]
+    assert "Import 1 toujours verrouillé" in caplog.text
 
 
 def test_the_worker_id_identifies_the_lock_holder() -> None:

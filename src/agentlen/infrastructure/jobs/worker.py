@@ -11,11 +11,16 @@ where the process dies outright and cannot release anything.)
 **SIGTERM finishes the job in flight.** Container orchestrators send SIGTERM
 before SIGKILL. Stopping mid-import would leave a partially written run; the
 worker instead stops *claiming* new work and lets the current job complete.
+
+**A database outage is waited out, not fatal.** When the queue itself fails —
+Postgres restarting, a network cut — the loop logs it, waits, and tries again.
+A worker that exited instead would leave every later import `pending` for good.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import signal
@@ -27,6 +32,12 @@ logger = logging.getLogger("agentlen.worker")
 #: How long to wait when the queue is empty. Short enough that a queued import
 #: starts promptly, long enough not to hammer the database while idle.
 IDLE_SLEEP_SECONDS = 1.0
+
+#: Wait after the queue fails, doubled on each consecutive failure up to the
+#: maximum and reset by the first success: a blip costs a second, and a long
+#: outage is retried at a steady pace instead of hammered or given up on.
+ERROR_BACKOFF_SECONDS = 1.0
+MAX_ERROR_BACKOFF_SECONDS = 30.0
 
 #: How far down a `raise ... from` chain the failure summary looks. A SQLAlchemy
 #: error wraps the driver adapter's, which wraps the driver's own: that is
@@ -92,21 +103,35 @@ class ImportWorker:
         *,
         worker_id: str | None = None,
         idle_sleep: float = IDLE_SLEEP_SECONDS,
+        error_backoff: tuple[float, float] = (ERROR_BACKOFF_SECONDS, MAX_ERROR_BACKOFF_SECONDS),
     ) -> None:
         self._queue = queue
         self._importer = importer
         self._worker_id = worker_id or default_worker_id()
         self._idle_sleep = idle_sleep
+        # First and longest wait after a queue failure.
+        self._error_backoff, self._max_error_backoff = error_backoff
         self._stopping = False
+        self._stop_requested = asyncio.Event()
+        # A failed job whose release did not reach the database: released
+        # before anything else is claimed, so it does not stay locked.
+        self._unreleased: tuple[int, str] | None = None
         self.processed = 0
 
     def request_stop(self) -> None:
         """Stop after the current job. Never interrupts one in flight."""
         logger.info("Arrêt demandé ; le job en cours va être terminé.")
         self._stopping = True
+        self._stop_requested.set()
 
     async def run_once(self) -> bool:
-        """Claim and run one job. Returns False when the queue was empty."""
+        """Claim and run one job. Returns False when the queue was empty.
+
+        Raises when the queue itself fails (`claim_next`, `mark_failed`):
+        waiting and retrying is `run_forever`'s job, not a single step's.
+        """
+        if self._unreleased is not None:
+            await self._release_as_failed(*self._unreleased)
         import_run_id = await self._queue.claim_next(worker_id=self._worker_id)
         if import_run_id is None:
             return False
@@ -121,10 +146,17 @@ class ImportWorker:
             # indistinguishable from a crashed worker, and nobody retries it.
             summary = failure_summary(import_run_id, exc)
             logger.error("%s", summary)
-            await self._queue.mark_failed(import_run_id, error=summary)
+            await self._release_as_failed(import_run_id, summary)
         finally:
             self.processed += 1
         return True
+
+    async def _release_as_failed(self, import_run_id: int, summary: str) -> None:
+        # Remembered until `mark_failed` succeeds: if the database is gone as
+        # well, the next `run_once` retries the release before claiming.
+        self._unreleased = (import_run_id, summary)
+        await self._queue.mark_failed(import_run_id, error=summary)
+        self._unreleased = None
 
     async def run_forever(self, *, stop_when_idle: bool = False) -> None:
         """Consume until asked to stop.
@@ -135,14 +167,54 @@ class ImportWorker:
         can only run forever is awkward to use any other way.
         """
         logger.info("Worker %s démarré.", self._worker_id)
+        delay = self._error_backoff
         while not self._stopping:
-            worked = await self.run_once()
+            try:
+                worked = await self.run_once()
+            except Exception as exc:  # noqa: BLE001 - a database outage must not end the process
+                # Class names only, like `failure_summary`: a driver error's
+                # text can carry the statement's parameters.
+                logger.error(
+                    "File d'imports indisponible (%s) ; nouvel essai dans %.1f s.",
+                    self._exception_classes(exc),
+                    delay,
+                )
+                await self._pause(delay)
+                delay = min(delay * 2, self._max_error_backoff)
+                continue
+            delay = self._error_backoff
             if worked:
                 continue
             if stop_when_idle:
                 break
-            await asyncio.sleep(self._idle_sleep)
+            await self._pause(self._idle_sleep)
+        if self._unreleased is not None:
+            logger.error(
+                "Import %s toujours verrouillé : sa libération n'a pas abouti avant l'arrêt.",
+                self._unreleased[0],
+            )
         logger.info("Worker %s arrêté après %d job(s).", self._worker_id, self.processed)
+
+    async def _pause(self, seconds: float) -> None:
+        """Sleep, but wake as soon as a stop is requested: SIGTERM must not wait
+        out a 30-second backoff before the container can exit."""
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._stop_requested.wait(), timeout=seconds)
+
+    @staticmethod
+    def _exception_classes(exc: BaseException) -> str:
+        """`OperationalError <- ConnectionRefusedError`: the cause chain, by name."""
+        names: list[str] = []
+        current: BaseException | None = exc
+        for _ in range(_MAX_CAUSE_DEPTH):
+            if current is None:
+                break
+            if not names or names[-1] != type(current).__name__:
+                names.append(type(current).__name__)
+            current = current.__cause__ or (
+                None if current.__suppress_context__ else current.__context__
+            )
+        return " <- ".join(names)
 
     def install_signal_handlers(self, loop: asyncio.AbstractEventLoop) -> None:
         for sig in (signal.SIGTERM, signal.SIGINT):
