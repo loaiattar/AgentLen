@@ -101,10 +101,26 @@ Les quatre indicateurs sont `/metrics/activity`, `/metrics/tools`,
 ## Lancer les tests
 
 ```bash
-make test        # unitaires + contrat — quelques secondes, aucune base requise
-make test-all    # tout : intégration et bout-en-bout sur un vrai PostgreSQL
-make lint        # ruff, mypy --strict, import-linter — exactement ce que fait la CI
+make test              # unitaires + contrat — quelques secondes, aucune base requise
+make test-acceptance   # les six tests exigés par le sujet, nommés d'après les exigences
+make test-all          # tout : intégration et bout-en-bout sur un vrai PostgreSQL
+make lint              # ruff, mypy --strict, import-linter — ce que fait la CI
 ```
+
+`make test-acceptance` est la commande à lancer pour vérifier d'un coup d'œil ce
+que le sujet exige. Sa sortie se lit comme la liste des exigences :
+
+```
+test_reimport_is_idempotent                        PASSED
+test_relations_are_preserved                       PASSED
+test_metric_matches_reference_computation          PASSED
+test_invalid_mapping_is_rejected_with_explanation  PASSED
+test_mapping_is_portable_across_providers          PASSED
+test_missing_value_is_never_zero                   PASSED
+```
+
+Ces six tests ont besoin d'une base — Docker ou `TEST_DATABASE_URL` — mais
+d'aucune clé d'API.
 
 `make test-all` démarre un PostgreSQL jetable via testcontainers. Si Docker n'est
 pas disponible, fournissez une base avec `TEST_DATABASE_URL` ; sans l'un ni
