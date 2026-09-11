@@ -68,10 +68,35 @@ class SaveMapping:
                             "expected_data_source_id": current_data_source_id,
                         },
                     )
+                name = str(current["name"])
+                current_version = int(current["version"])
+                # The version is derived from the highest one stored under this
+                # name, never from the row the caller happened to name. Two PUTs
+                # against v1 both computed v1 + 1 and the second violated
+                # `uq_mapping_name_version` — an unhandled IntegrityError, so a
+                # 500 on an ordinary double click.
+                #
+                # Naming a superseded version is refused rather than quietly
+                # rebased onto the newest one: the caller was editing a document
+                # that someone has since replaced, and silently versioning it
+                # would overwrite that work without anyone noticing.
+                latest = await uow.mappings.latest_version(
+                    data_source_id=current_data_source_id, name=name
+                )
+                if latest is not None and latest != current_version:
+                    raise ConflictError(
+                        f"La version {current_version} de '{name}' a déjà été remplacée "
+                        f"par la version {latest}.",
+                        details={
+                            "name": name,
+                            "version": current_version,
+                            "latest_version": latest,
+                        },
+                    )
                 next_mapping = replace(
                     mapping,
-                    name=str(current["name"]),
-                    version=int(current["version"]) + 1,
+                    name=name,
+                    version=current_version + 1,
                 )
                 # Validated only now, and on `next_mapping`. The caller cannot
                 # know the name or the version of the version it is creating,
