@@ -12,7 +12,7 @@ export interface DashboardFilters {
 export interface Coverage {
   present: number
   total: number
-  ratio: number
+  ratio: number | null
 }
 
 export interface Metric {

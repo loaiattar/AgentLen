@@ -7,7 +7,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import Connection, func, insert, select
+from sqlalchemy import Connection, func, insert, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from agentlen.application.use_cases.run_import import RunImport
@@ -203,6 +203,52 @@ async def test_a_few_bad_rows_do_not_stop_the_rest(
             .where(t.import_issue.c.severity == "rejected")
         ).scalar_one()
         assert rejected >= 3
+
+
+async def test_a_type_mismatch_rejects_only_its_source_line(
+    seeded: dict[str, Any], importer: Any, engine: Any
+) -> None:
+    mapping = Mapping(
+        id=uuid4(),
+        name="typed-sessions",
+        version=1,
+        source_format="jsonl",
+        entities=(
+            EntityMapping(
+                target="session",
+                natural_key=("external_id",),
+                fields=(
+                    FieldRule(target="external_id", source="$.sid", required=True),
+                    FieldRule(target="duration_ms", source="$.duration_ms"),
+                ),
+            ),
+        ),
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            update(t.mapping)
+            .where(t.mapping.c.id == seeded["mapping_id"])
+            .values(document=mapping_to_document(mapping))
+        )
+    run_import, uow = importer(
+        [
+            {"sid": "good", "duration_ms": 12},
+            {"sid": "bad", "duration_ms": "twelve"},
+        ]
+    )
+
+    report = await run_import.execute(await _new_run(uow, seeded))
+
+    assert report.records_read == 2
+    assert report.records_rejected == 1
+    assert any(
+        issue.code == "TYPE_MISMATCH"
+        and issue.field_path == "entities[target=session].fields[target=duration_ms]"
+        and issue.line_number == 2
+        for issue in report.issues
+    )
+    with engine.connect() as conn:
+        assert conn.execute(select(t.session.c.external_id)).scalars().all() == ["good"]
 
 
 async def test_a_run_with_rejections_is_partial_not_succeeded(

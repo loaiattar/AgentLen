@@ -8,6 +8,7 @@ from typing import Any, Protocol
 from agentlen.domain.errors import InvalidOperatorParamError, OperatorFailedError
 from agentlen.domain.model.import_run import ImportIssue
 from agentlen.domain.model.mapping import EntityMapping, FieldRule, Mapping
+from agentlen.domain.model.target_schema import TARGET_FIELD_TYPES
 
 
 class RegexExtractor(Protocol):
@@ -96,6 +97,27 @@ class TransformationEngine:
             value, field_issues = self._apply_field(field_rule, row, entity.target, line_number)
             issues.extend(field_issues)
 
+            if value is not None and not self._has_target_type(
+                entity.target, field_rule.target, value
+            ):
+                rejected = True
+                expected_name = self._expected_type_name(entity.target, field_rule.target)
+                issues.append(
+                    ImportIssue(
+                        severity="rejected",
+                        code="TYPE_MISMATCH",
+                        message=(
+                            f"Field '{field_rule.target}' received {type(value).__name__}; "
+                            f"expected {expected_name}."
+                        ),
+                        field_path=(
+                            f"entities[target={entity.target}].fields[target={field_rule.target}]"
+                        ),
+                        line_number=line_number,
+                    )
+                )
+                continue
+
             if value is None and field_rule.required:
                 # A required field that failed → the whole entity is rejected.
                 # If it failed silently (absent from the source, no operator
@@ -118,6 +140,25 @@ class TransformationEngine:
                 data[field_rule.target] = value
 
         return (None if rejected else data), issues
+
+    @staticmethod
+    def _has_target_type(entity_target: str, field_target: str, value: object) -> bool:
+        expected = TARGET_FIELD_TYPES.get(entity_target, {}).get(field_target)
+        if expected is None:
+            return True
+        # bool is an int subclass in Python, but false/true are never valid
+        # token counts, durations or sequence indices.
+        if expected is int and isinstance(value, bool):
+            return False
+        return isinstance(value, expected)
+
+    @staticmethod
+    def _expected_type_name(entity_target: str, field_target: str) -> str:
+        expected = TARGET_FIELD_TYPES[entity_target][field_target]
+        assert expected is not None
+        if isinstance(expected, tuple):
+            return " or ".join(item.__name__ for item in expected)
+        return expected.__name__
 
     def _apply_field(
         self,
@@ -270,7 +311,7 @@ class TransformationEngine:
         parts = [str(v) for s in sources if (v := self._extract(row, s)) is not None]
         return separator.join(parts) if parts else None
 
-    def _hash(self, row: dict[str, Any], sources: list[str], algorithm: str) -> str:
+    def _hash(self, row: dict[str, Any], sources: list[str], algorithm: str) -> str | None:
         """SHA-256 of the resolved `sources` values, canonicalized the same way
         as Deduplicator.content_hash (sorted keys, stable regardless of the
         order values were collected in) — used as a synthetic natural key.
@@ -278,6 +319,8 @@ class TransformationEngine:
         if algorithm != "sha256":
             raise ValueError(f"Unsupported hash algorithm '{algorithm}'")
         values = {source: self._extract(row, source) for source in sources}
+        if all(value is None for value in values.values()):
+            return None
         canonical = json.dumps(values, sort_keys=True, ensure_ascii=False, default=str)
         return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -319,13 +362,18 @@ class TransformationEngine:
                 case "boolean":
                     if isinstance(value, bool):
                         return value
-                    return str(value).lower() in ("true", "1", "yes")
+                    normalized = str(value).strip().lower()
+                    if normalized in {"true", "1", "yes"}:
+                        return True
+                    if normalized in {"false", "0", "no"}:
+                        return False
+                    raise ValueError(f"Cannot cast {value!r} to boolean")
                 case _:
                     raise ValueError(f"Unknown cast target '{to}'")
         except (ValueError, TypeError) as exc:
             if on_error == "null":
                 return None
-            raise exc
+            raise OperatorFailedError(code="CAST_FAILED", message=str(exc)) from exc
 
     @staticmethod
     def _unit_convert(value: object, from_unit: str, to_unit: str) -> object:
@@ -344,7 +392,8 @@ class TransformationEngine:
         if factor is None:
             raise ValueError(f"Unknown unit conversion '{from_unit}' → '{to_unit}'")
         if isinstance(value, (int, float, str, bytes)):
-            return float(value) * factor
+            converted = float(value) * factor
+            return int(converted) if to_unit.lower() in {"ms", "b"} else converted
         raise ValueError(f"Cannot convert {type(value).__name__} to float for unit conversion")
 
     @staticmethod

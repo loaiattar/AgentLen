@@ -60,7 +60,7 @@ export function formatRatio(value: number | null | undefined): string {
 export function coverageHint(metric: Metric | undefined): string | undefined {
   if (!metric) return undefined
   if (metric.warning) return metric.warning
-  if (metric.coverage.total === 0 || metric.coverage.ratio >= 1) return undefined
+  if (metric.coverage.ratio == null || metric.coverage.ratio >= 1) return undefined
   return `Based on ${metric.coverage.present} of ${metric.coverage.total}`
 }
 

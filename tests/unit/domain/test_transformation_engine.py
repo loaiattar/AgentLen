@@ -75,7 +75,8 @@ def test_apply_succeeds_with_valid_cast():
     assert len(results) == 1
     assert results[0]["entity"] == "session"
     assert results[0]["data"]["external_id"] == "abc123"
-    assert results[0]["data"]["duration_ms"] == 2500.0
+    assert results[0]["data"]["duration_ms"] == 2500
+    assert isinstance(results[0]["data"]["duration_ms"], int)
 
 
 def test_apply_with_default_operator_fills_missing_value():

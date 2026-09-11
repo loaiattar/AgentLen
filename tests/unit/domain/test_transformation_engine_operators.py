@@ -234,6 +234,31 @@ def test_hash_unsupported_algorithm_is_rejected():
     assert issues[0].severity == "rejected"
 
 
+def test_hash_returns_none_when_every_source_is_absent():
+    results, issues = TransformationEngine().apply(_hash_mapping(["$.a", "$.b"]), {})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].code == "MISSING_REQUIRED_FIELD"
+
+
+def test_boolean_cast_rejects_an_unknown_string_instead_of_returning_false():
+    mapping = _make_mapping(
+        FieldRule(
+            target="external_id",
+            source="$.value",
+            required=True,
+            operators=[{"op": "cast", "to": "boolean"}],
+        )
+    )
+
+    results, issues = TransformationEngine().apply(mapping, {"value": "perhaps"})
+
+    assert results == []
+    assert len(issues) == 1
+    assert issues[0].code == "CAST_FAILED"
+
+
 # ---------------------------------------------------------------------------
 # regex_extract
 # ---------------------------------------------------------------------------

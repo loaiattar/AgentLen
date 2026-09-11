@@ -21,11 +21,12 @@ Fichier source ──► profilage ──► [IA] proposition ──► validati
                                         entités du domaine + rejets expliqués
 ```
 
-Trois règles non négociables :
+Quatre règles non négociables :
 
 1. **L'IA produit ce document, rien d'autre.** Elle n'écrit jamais en base, ne génère jamais de SQL, ne produit jamais de code.
 2. **Le document est validé avant toute application.** Schéma JSON strict + whitelist d'opérateurs + vérification des champs cibles contre le schéma réel de la base.
 3. **Le moteur n'exécute que des opérateurs déclarés.** Il n'y a ni `eval`, ni `exec`, ni import dynamique, ni expression arbitraire. Un opérateur inconnu est une **erreur de validation**, jamais une tentative d'exécution.
+4. **Une valeur inconnue reste `null`.** Elle ne devient jamais implicitement `0`, `false`, une date ou une clé synthétique. Un changement de type exige un opérateur explicite ; sinon l'entité est rejetée avec `TYPE_MISMATCH`.
 
 ---
 
@@ -116,12 +117,12 @@ Trois règles non négociables :
 | `parse_datetime` | `format` (ISO8601, `unix_seconds`, `unix_millis`, ou motif `strptime`), `timezone` | Produit un instant UTC |
 | `default` | `value` | Valeur si la source est absente ou `null` |
 | `coalesce` | `sources: [chemin, …]` | Premier chemin non nul (sources incohérentes entre versions) |
-| `unit_convert` | `from`, `to` (`s`→`ms`, `min`→`ms`, `ns`→`ms`, `KB`→`B`…) | Conversion d'unité déclarée |
+| `unit_convert` | `from`, `to` (`s`→`ms`, `min`→`ms`, `ns`→`ms`, `KB`→`B`…) | Conversion d'unité déclarée ; les unités cibles entières (`ms`, `B`) produisent un entier |
 | `map_values` | `table`, `on_unknown` ∈ `passthrough · null · reject · constant` | Table de correspondance fermée |
 | `trim`, `lower`, `upper` | — | Normalisation de chaîne |
 | `regex_extract` | `pattern`, `group` | Extraction bornée (motif compilé, **timeout imposé**) |
 | `concat` | `sources`, `separator` | Concaténation de chemins |
-| `hash` | `algorithm: sha256`, `sources` | Clé naturelle synthétique quand la source n'a pas d'identifiant |
+| `hash` | `algorithm: sha256`, `sources` | Clé naturelle synthétique ; renvoie `null` si toutes les sources sont absentes |
 | `json_passthrough` | `max_bytes` | Conserve un sous-arbre JSON tel quel (colonnes JSONB) |
 | `split_rows` | `path` | Un enregistrement source produit N lignes cibles |
 

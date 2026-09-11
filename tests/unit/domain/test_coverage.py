@@ -7,10 +7,9 @@ from agentlen.domain.model.metrics import Coverage, MetricValue
 
 
 class TestCoverage:
-    def test_ratio_is_zero_when_no_records(self):
-        """No records — ratio is 0.0, not a ZeroDivisionError."""
+    def test_ratio_is_unknown_when_no_records(self):
         cov = Coverage(present=0, total=0)
-        assert cov.ratio == 0.0
+        assert cov.ratio is None
 
     def test_ratio_is_one_when_all_present(self):
         cov = Coverage(present=100, total=100)
