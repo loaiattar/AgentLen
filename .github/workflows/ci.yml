@@ -157,7 +157,7 @@ jobs:
 
   # ── Frontend ───────────────────────────────────────────────────────────────
   frontend:
-    name: Frontend · lint & build
+    name: Frontend · lint, test & build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -181,7 +181,11 @@ jobs:
         run: npm run build --if-present
 
       - name: Test
-        run: npm test --if-present
+        # No `--if-present`. The flag makes a missing script a silent pass, and
+        # that is exactly what this step did until the suite existed: green,
+        # every run, testing nothing. Now that `test` is defined, removing it
+        # has to break the build rather than quietly stop checking.
+        run: npm test
 
   # ── Aggregate — this is the check to require in branch protection ──────────
   ci-success:
