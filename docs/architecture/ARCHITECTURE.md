@@ -276,7 +276,7 @@ class StructureAnalyzer(Protocol):
 |---|---|---|
 | `SessionRepository`, `ModelCallRepository`, `ToolCallRepository`, `ImportRunRepository`, `MappingRepository`, `DataSourceRepository` | Persistance des agrégats | SQLAlchemy · InMemory (tests) |
 | `UnitOfWork` | Transaction atomique par import | SQLAlchemy · InMemory |
-| `DataFileReader` / `FileProfiler` | Lecture paresseuse et profilage | Polars · Fake |
+| `DataFileReader` / `FileProfiler` | Lecture en une passe (JSONL décodé ligne à ligne et conservé tel quel, CSV/Parquet en flux) et profilage, avec la même inférence de schéma sur tout le fichier | Polars + `json` · Fake |
 | `FileStorage` | Dépôt du fichier brut + SHA-256 | Disque local · InMemory |
 | `StructureAnalyzer` | **Proposition de mapping par IA** | Anthropic · OpenAI · Fake |
 | `JobQueue` | File d'imports | Postgres · InProcess (tests) |
