@@ -385,6 +385,8 @@ Couche distincte de `X-API-Key` (§1) : ces routes identifient **une personne**,
 
 Ni `password` ni son hash n'apparaissent jamais dans une réponse. `409` si l'e-mail est déjà utilisé, `422` (`INVALID_EMAIL` / `WEAK_PASSWORD`) si l'e-mail ou le mot de passe échoue à la validation.
 
+**Longueurs maximales (`/auth/register` et `/auth/login`).** `email` : 254 caractères. `password` : 72 octets en UTF-8, la limite de bcrypt (un caractère accentué en compte deux). Au-delà, la requête est refusée avant tout traitement par `400` `MALFORMED_REQUEST`, avec `field_path` à `body.email` ou `body.password`, et non par `422` : ces routes répondent sans session, et une valeur non bornée permettrait à n'importe qui d'occuper le serveur.
+
 **`POST /auth/login` → `200`**
 
 ```json
