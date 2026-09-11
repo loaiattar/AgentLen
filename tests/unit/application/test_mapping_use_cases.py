@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -423,6 +424,50 @@ def test_profile_sanitizer_redacts_values_and_keeps_the_path_addressable() -> No
     assert "alice" not in str(sanitized.min_value)
     assert "secret-value-123" not in str(sanitized.max_value)
     assert sanitized.examples == ("[REDACTED_EMAIL]",)
+
+
+def test_profile_sanitizer_redacts_values_a_profiler_left_untyped() -> None:
+    """The class calls itself defense in depth for *any* profiler adapter.
+
+    `FieldProfile` annotates `examples` as `tuple[str, ...]` and the extrema as
+    `str | None`, but annotations bind nothing at runtime and `__post_init__`
+    only converts the containers. A profiler leaving a `datetime`, an `int` or
+    raw `bytes` in there used to reach `re2.sub` and raise `TypeError` — a 500
+    on the proposal route — instead of being redacted. `PolarsFileProfiler`
+    does `str(v)` upstream, so this guards the next adapter.
+    """
+    field = FieldProfile(
+        path="$.mixed",
+        types=("string",),
+        null_ratio=0,
+        min_value=datetime(2026, 9, 11, 8, 30, tzinfo=UTC),  # type: ignore[arg-type]
+        max_value=42,  # type: ignore[arg-type]
+        examples=(b"\x00\x01binaire", 7, "contact: alice@example.com"),  # type: ignore[arg-type]
+    )
+    profile = FileProfile(
+        file_id=1, format="jsonl", record_count=1, sampled_records=1, fields=(field,)
+    )
+
+    sanitized = ProfileExampleSanitizer().sanitize(profile).fields[0]
+
+    assert sanitized.min_value == "2026-09-11 08:30:00+00:00"
+    assert sanitized.max_value == "42"
+    assert sanitized.examples[0] == "[BINARY:9 bytes]"
+    assert sanitized.examples[1] == "7"
+    assert sanitized.examples[2] == "contact: [REDACTED_EMAIL]"
+
+
+def test_profile_sanitizer_leaves_absent_extrema_absent() -> None:
+    """`None` is not a value to redact — it means the profiler had nothing."""
+    field = FieldProfile(path="$.empty", types=("null",), null_ratio=1.0, examples=())
+    profile = FileProfile(
+        file_id=1, format="jsonl", record_count=1, sampled_records=1, fields=(field,)
+    )
+
+    sanitized = ProfileExampleSanitizer().sanitize(profile).fields[0]
+
+    assert sanitized.min_value is None
+    assert sanitized.max_value is None
 
 
 def test_profile_sanitizer_keeps_distinct_paths_distinct() -> None:

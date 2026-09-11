@@ -73,21 +73,44 @@ class ProfileExampleSanitizer:
             fields=tuple(
                 replace(
                     field,
-                    min_value=(
-                        sanitize_value(field.min_value)
-                        if isinstance(field.min_value, str)
-                        else field.min_value
-                    ),
-                    max_value=(
-                        sanitize_value(field.max_value)
-                        if isinstance(field.max_value, str)
-                        else field.max_value
-                    ),
-                    examples=tuple(sanitize_value(value) for value in field.examples),
+                    min_value=_sanitize_profile_value(field.min_value),
+                    max_value=_sanitize_profile_value(field.max_value),
+                    examples=tuple(_coerce(value) for value in field.examples),
                 )
                 for field in profile.fields
             ),
         )
+
+
+def _sanitize_profile_value(value: Any) -> str | None:
+    """`None` stays `None`; anything else is coerced to text and redacted."""
+    if value is None:
+        return None
+    return _coerce(value)
+
+
+def _coerce(value: Any) -> str:
+    """Redact a profile value whatever the profiler put there.
+
+    `FieldProfile` annotates `examples` as `tuple[str, ...]` and the extrema as
+    `str | None`, but annotations bind nothing at runtime and `__post_init__`
+    only converts the containers, not their items. This class is the module's
+    "defense in depth for profiles supplied by **any** profiler adapter", so a
+    profiler that leaves an `int`, a `datetime` or a `Decimal` in there has to
+    be redacted, not raise `TypeError` out of `re2.sub`.
+
+    `PolarsFileProfiler` does `str(v)` upstream, so this is the guard for the
+    next adapter rather than a live bug. `_sanitize_scalar` handles exactly the
+    same problem for sample records; the difference here is that a profile value
+    is always text by contract, so there is no type worth preserving.
+    """
+    if isinstance(value, str):
+        return sanitize_value(value)
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        # Never decoded — same reason as `_sanitize_scalar`: a binary blob has
+        # no shape worth showing and decoding it would be a new way to leak.
+        return f"[BINARY:{len(bytes(value))} bytes]"
+    return sanitize_value(str(value))
 
 
 # AGENT.md §"Taille max de l'échantillon envoyé au LLM" states 50.
