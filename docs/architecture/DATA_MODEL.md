@@ -175,8 +175,8 @@ CREATE TABLE model (
 CREATE TABLE agent (
     id      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     name    TEXT NOT NULL,                         -- 'claude-code', 'codex'
-    version TEXT,
-    UNIQUE (name, version)
+    version TEXT,                                  -- NULL : la source ne la donne pas
+    UNIQUE NULLS NOT DISTINCT (name, version)      -- une version inconnue compte pour une seule valeur
 );
 
 CREATE TABLE tool (
@@ -195,6 +195,8 @@ CREATE TABLE repository (
 ```
 
 Ces tables sont alimentées en **upsert** pendant l'import (`INSERT … ON CONFLICT DO NOTHING RETURNING id`). L'agent d'import n'a pas à les connaître : il fournit un *nom*, le normaliseur résout ou crée la référence.
+
+`agent` est la seule clé composite à colonne nullable : aucun mapping ne fournit de version aujourd'hui. Avec le `UNIQUE` par défaut, PostgreSQL tient deux `NULL` pour distincts, `ON CONFLICT` ne se déclenche jamais et chaque import recréait le même agent. D'où `NULLS NOT DISTINCT` (PostgreSQL 15+, migration 0004, qui fusionne aussi les doublons déjà stockés). Les clés de `provider`, `model`, `tool` et `repository` ne portent que des colonnes `NOT NULL` et ne sont pas concernées.
 
 ---
 
