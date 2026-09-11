@@ -7,7 +7,7 @@ import { DashboardPage } from '@/features/dashboard/pages/DashboardPage'
 import type { ActivityPoint, DashboardFilters, ModelPoint } from '@/features/dashboard/types'
 import { renderWithRouter } from '@/test/router'
 
-const state = vi.hoisted(() => ({ filters: {} as DashboardFilters }))
+const state = vi.hoisted(() => ({ filters: {} as DashboardFilters, removeFilter: vi.fn() }))
 
 function loaded<T>(data: T) {
   return { isPending: false, isError: false, error: null, data, refetch: vi.fn() }
@@ -44,7 +44,15 @@ function model(label: string, modelId: number | null, calls: number): ModelPoint
 }
 
 vi.mock('@/features/dashboard/hooks/useMetricsFilters', () => ({
-  useMetricsFilters: () => ({ filters: state.filters }),
+  useMetricsFilters: () => ({
+    filters: state.filters,
+    // Names come from `GET /data-sources`: none is hardcoded any more.
+    sources: [{ id: 1, name: 'TraceLab' }],
+    ignoredDates: [],
+    removeFilter: state.removeFilter,
+    clearExploration: vi.fn(),
+    dropIgnoredDates: vi.fn(),
+  }),
 }))
 
 vi.mock('@/features/dashboard/api/dashboard.queries', () => {
@@ -69,6 +77,7 @@ vi.mock('@/features/dashboard/api/dashboard.queries', () => {
 describe('DashboardPage drill-down', () => {
   beforeEach(() => {
     state.filters = {}
+    state.removeFilter.mockReset()
   })
 
   it('opens the sessions of a day from the activity chart', async () => {
@@ -114,6 +123,15 @@ describe('DashboardPage drill-down', () => {
     expect(screen.getByText('unknown · TraceLab')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /unknown/ })).not.toBeInTheDocument()
     expect(screen.getByText(/no model name/)).toBeInTheDocument()
+  })
+
+  it('shows a filter carried over from another page and lets it be removed', async () => {
+    state.filters = { status: 'error' }
+    renderWithRouter(DashboardPage)
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove filter Status error' }))
+
+    expect(state.removeFilter).toHaveBeenCalledWith('status')
   })
 
   it('drops the source from labels once a source is selected', async () => {

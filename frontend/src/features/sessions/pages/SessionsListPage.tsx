@@ -12,29 +12,18 @@ import { PageHeader } from '@/components/ui/PageHeader'
 import { SearchField } from '@/components/ui/SearchField'
 import { GlassSkeleton } from '@/components/ui/Skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/Table'
+import { IgnoredDatesNotice } from '@/features/dashboard/components/ActiveFilters'
+import { filterChipLabel } from '@/features/dashboard/lib/filters'
 import { useSessionsQuery } from '@/features/sessions/api/sessions.queries'
 import { useSessionIdSearch, useSessionsSearch } from '@/features/sessions/hooks/useSessionsSearch'
 import {
   formatCount,
   formatDurationMs,
-  formatFilterValue,
   formatInstant,
   formatOutcome,
   outcomeTone,
   STATUS_FILTERS,
 } from '@/features/sessions/lib/format'
-
-function filterChipLabel(key: string, value: string | number): string {
-  const labels: Record<string, string> = {
-    agent_id: 'Agent',
-    model_id: 'Model',
-    tool_id: 'Tool',
-    import_run_id: 'Import',
-    date_from: 'From',
-    date_to: 'To',
-  }
-  return `${labels[key] ?? key} ${formatFilterValue(key, value)}`
-}
 
 export function SessionsListPage() {
   const {
@@ -42,9 +31,12 @@ export function SessionsListPage() {
     filters,
     limit,
     offset,
+    hasActiveFilters,
+    ignoredDates,
     setStatus,
     clearKey,
-    clearExploration,
+    clearFilters,
+    dropIgnoredDates,
     setOffset,
     openSession,
     drillDownKeys,
@@ -94,7 +86,8 @@ export function SessionsListPage() {
   const total = page?.total ?? 0
   const from = total === 0 ? 0 : offset + 1
   const to = Math.min(offset + items.length, total)
-  const hasActiveFilters = drillDownKeys.some((key) => search[key] != null) || search.status != null
+  // An empty page past the end is not an empty list: `total` still counts the matches.
+  const pastLastPage = items.length === 0 && offset > 0
   const canPrev = offset > 0
   const canNext = offset + limit < total
 
@@ -113,6 +106,7 @@ export function SessionsListPage() {
         </BentoModule>
       </BentoGrid>
 
+      <IgnoredDatesNotice messages={ignoredDates} onDismiss={dropIgnoredDates} />
       <FilterBar>
         <form onSubmit={onSearchSubmit} className="min-w-48 flex-1">
           <SearchField
@@ -132,17 +126,32 @@ export function SessionsListPage() {
           </FilterChip>
         ))}
         {drillDownKeys.map((key) => {
-          const value = search[key]
+          const value = filters[key]
           if (value == null) return null
           return (
-            <FilterChip key={key} active onClick={() => clearKey(key)}>
+            <FilterChip
+              key={key}
+              active
+              aria-label={`Remove filter ${filterChipLabel(key, value)}`}
+              onClick={() => clearKey(key)}
+            >
               {filterChipLabel(key, value)}
             </FilterChip>
           )
         })}
       </FilterBar>
 
-      {items.length === 0 ? (
+      {pastLastPage ? (
+        <EmptyState
+          title="Past the last page"
+          description={`${formatCount(total)} sessions match, all on earlier pages.`}
+          action={
+            <Button variant="secondary" onClick={() => setOffset(0)}>
+              Back to first page
+            </Button>
+          }
+        />
+      ) : items.length === 0 ? (
         <EmptyState
           title={hasActiveFilters ? 'No matching sessions' : 'No sessions yet'}
           description={
@@ -152,7 +161,7 @@ export function SessionsListPage() {
           }
           action={
             hasActiveFilters ? (
-              <Button variant="secondary" onClick={clearExploration}>
+              <Button variant="secondary" onClick={clearFilters}>
                 Clear filters
               </Button>
             ) : undefined

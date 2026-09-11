@@ -24,6 +24,7 @@ export function AppLayout() {
       periodLabel={periodLabel}
       datasetItems={datasetOptions.map((option) => ({
         label: option.label,
+        disabled: option.disabled,
         onSelect: () => setDataSourceId(option.id),
       }))}
       periodItems={periodOptions.map((option) => ({
