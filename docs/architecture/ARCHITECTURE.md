@@ -203,7 +203,7 @@ agentlen/
 │
 ├── alembic/versions/
 ├── tests/{unit,integration,e2e}/
-├── docker/{Dockerfile,docker-compose.yml}
+├── docker/{Dockerfile,frontend.Dockerfile,nginx.conf.template,docker-compose.yml}
 ├── docs/architecture/
 └── pyproject.toml
 ```
@@ -476,9 +476,9 @@ CI GitHub Actions à chaque PR : `ruff` → `mypy` → `import-linter` → `pyte
 
 ## 12. Configuration et exécution
 
-`docker compose up` démarre trois services : `db` (Postgres 16), `api` (FastAPI + migrations Alembic au démarrage), `worker` (consommateur de jobs). Un `Makefile` expose `make up`, `make test`, `make lint`, `make migrate`, `make seed`.
+`docker compose up` démarre quatre services : `db` (Postgres 16), `api` (FastAPI + migrations Alembic au démarrage), `worker` (consommateur de jobs) et `frontend` (interface compilée, servie par nginx sur http://localhost:8080). nginx relaie `/api` vers `api` : le navigateur ne parle qu'à une seule origine, sans configuration CORS, et la clé d'API est reprise du même `.env` au moment du build. Un `Makefile` expose `make up`, `make test`, `make lint`, `make migrate`, `make seed`.
 
-Une personne extérieure doit pouvoir : cloner → `cp .env.example .env` → renseigner sa clé → `docker compose up` → importer un fichier → voir un indicateur. **C'est le critère de reproductibilité du sujet, et il est testé en conditions réelles au jour 4.**
+Une personne extérieure doit pouvoir : cloner → `cp .env.example .env` → renseigner sa clé → `make up` → ouvrir http://localhost:8080 → importer un fichier → voir un indicateur. **C'est le critère de reproductibilité du sujet, et il est testé en conditions réelles au jour 4.**
 
 ---
 

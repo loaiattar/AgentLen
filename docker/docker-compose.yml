@@ -1,5 +1,6 @@
 # Local reproduction stack: `db` (Postgres 16), `api` (FastAPI, migrations run
-# before uvicorn starts) and `worker` (the C6 import worker, #55).
+# before uvicorn starts), `worker` (the C6 import worker, #55) and `frontend`
+# (the web interface on http://localhost:8080, #117).
 #
 # Run via `make up` (from the repo root) rather than a bare `docker compose
 # up`, so relative paths below always resolve against the repo root and not
@@ -88,6 +89,31 @@ services:
     volumes:
       - agentlen_storage:/app/storage
     command: ["python", "-m", "agentlen.interfaces.cli", "worker"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        # Vite inlines it into the bundle at build time. Taken from the same
+        # `.env` as `api`, so the key the interface sends always matches.
+        VITE_API_KEY: ${API_KEY:?API_KEY must be set in .env}
+    # Only what nginx needs — not `env_file: .env`, which would hand the
+    # provider API keys to a container that has no use for them.
+    environment:
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-512}
+    depends_on:
+      api:
+        condition: service_healthy
+    # The interface reaches the API through its own origin (nginx proxies
+    # `/api` to `api`), so no CORS configuration is involved.
+    ports:
+      - "${FRONTEND_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
 
 volumes:
   agentlen_pgdata:
