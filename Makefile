@@ -51,7 +51,7 @@ test:
 test-all:
 	pytest -q
 
-## up: start db + api + worker (docker/docker-compose.yml), building images if needed
+## up: start db + api + worker + frontend (http://localhost:8080), building images if needed
 up:
 	@$(COMPOSE) up --build -d
 
