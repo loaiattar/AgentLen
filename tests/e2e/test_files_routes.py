@@ -66,6 +66,38 @@ async def test_uploading_a_file_returns_201_with_its_metadata(
 
 
 @requires_postgres
+async def test_neither_endpoint_claims_an_import_for_a_stored_never_imported_file(
+    live_client: AsyncClient,
+) -> None:
+    """`already_seen` never meant "imported", on either endpoint.
+
+    `GET /files/{id}` used to compute it as `len(runs) > 0`, which read as an
+    import history and contradicted `POST /files`, where the same flag comes
+    from the content hash. The wizard believed the GET and warned "this file
+    has already been imported" about an import that never happened.
+
+    The flag is scoped to an upload event — "was this content already stored
+    when you sent it" — so on a GET it is constant and carries no signal. What
+    both endpoints must agree on is the import history, and that is
+    `previous_import_run_ids`.
+    """
+    upload = await live_client.post(
+        "/api/v1/files",
+        files={"file": ("agree.jsonl", b'{"id": "a"}\n', "application/x-ndjson")},
+    )
+    assert upload.status_code == 201
+    file_id = upload.json()["id"]
+
+    fetched = await live_client.get(f"/api/v1/files/{file_id}")
+
+    assert fetched.status_code == 200
+    # The one fact that has to match, and the one the front reads.
+    assert upload.json()["previous_import_run_ids"] == []
+    assert fetched.json()["previous_import_run_ids"] == []
+    # Documented as constant on this route, rather than a disguised run count.
+    assert fetched.json()["already_seen"] is True
+
+
 async def test_uploading_the_same_content_twice_reports_already_seen(
     live_client_with_storage: AsyncClient,
 ) -> None:
