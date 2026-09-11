@@ -34,6 +34,24 @@ class NormalizationResult:
     reference_requests: tuple[ReferenceRequest, ...] = field(default_factory=tuple)
 
 
+def reference_name(value: object) -> str | None:
+    """The text form of a referential name: agent, provider, model or tool.
+
+    Names are resolved and stored as text, and a non-string handed to SQL used
+    to fail the whole import (#141). So a JSON number becomes its text (`123`
+    gives `"123"`, the narrowing TransformationEngine applies to any string
+    target), a blank string is no name at all (MAPPING_CONTRACT.md rule 4: an
+    unknown value stays null), and a boolean or a structure raises: `True` is
+    not a tool name.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError(f"expected text or a number, received {type(value).__name__}")
+    text = str(value)
+    return text if text.strip() else None
+
+
 class RecordNormalizer:
     """Assembles TransformationEngine's flat field values into linked domain entities.
 
@@ -143,6 +161,39 @@ class RecordNormalizer:
             line_number=line_number,
         )
 
+    @staticmethod
+    def _name(
+        target: str,
+        field_name: str,
+        data: dict[str, Any],
+        line_number: int | None,
+        *,
+        blank_is_error: bool = False,
+    ) -> tuple[str | None, ImportIssue | None]:
+        """A referential name from `data` as text, or the issue that stops it.
+
+        `blank_is_error` is for a name the row cannot do without: a tool call
+        must point at a `tool` row (`tool_id` is NOT NULL), so a blank name
+        rejects it with an explanation instead of the import dropping it.
+        """
+        field_path = f"entities[target={target}].fields[target={field_name}]"
+        raw = data.get(field_name)
+        try:
+            name = reference_name(raw)
+        except ValueError as exc:
+            message = f"'{field_name}' must be a name: {exc}."
+        else:
+            if name is not None or raw is None or not blank_is_error:
+                return name, None
+            message = f"'{field_name}' is blank: the {target} cannot be linked without it."
+        return None, ImportIssue(
+            severity="rejected",
+            code="REFERENCE_NAME_INVALID",
+            message=message,
+            field_path=field_path,
+            line_number=line_number,
+        )
+
     def _build_session(
         self,
         entity: EntityMapping,
@@ -174,12 +225,17 @@ class RecordNormalizer:
             issues.append(natural_key_issue)
             return None, issues
 
+        agent_name, name_issue = self._name(entity.target, "agent_name", data, line_number)
+        if name_issue is not None:
+            issues.append(name_issue)
+            return None, issues
+
         try:
             session = Session(
                 id=uuid4(),
                 data_source_id=data_source_id,
                 external_id=str(data["external_id"]),
-                agent_name=data.get("agent_name"),
+                agent_name=agent_name,
                 started_at=data.get("started_at"),
                 ended_at=data.get("ended_at"),
                 duration_ms=data.get("duration_ms"),
@@ -217,6 +273,15 @@ class RecordNormalizer:
                 issues.append(natural_key_issue)
                 continue
 
+            model_name, model_issue = self._name(entity.target, "model_name", data, line_number)
+            provider_name, provider_issue = self._name(
+                entity.target, "provider_name", data, line_number
+            )
+            name_issues = [issue for issue in (model_issue, provider_issue) if issue is not None]
+            if name_issues:
+                issues.extend(name_issues)
+                continue
+
             try:
                 token_usage = TokenUsage(**{key: data.get(key) for key in _TOKEN_USAGE_FIELDS})
                 model_calls.append(
@@ -226,8 +291,8 @@ class RecordNormalizer:
                         sequence_index=int(sequence_index),
                         token_usage=token_usage,
                         status=data.get("status", "unknown"),
-                        model_name=data.get("model_name"),
-                        provider_name=data.get("provider_name"),
+                        model_name=model_name,
+                        provider_name=provider_name,
                         started_at=data.get("started_at"),
                         duration_ms=data.get("duration_ms"),
                         stop_reason=data.get("stop_reason"),
@@ -238,10 +303,8 @@ class RecordNormalizer:
                 issues.append(self._construction_issue(entity.target, exc, line_number))
                 continue
 
-            provider_name = data.get("provider_name")
             if provider_name:
                 references.append(ReferenceRequest(kind="provider", name=provider_name))
-            model_name = data.get("model_name")
             if model_name:
                 # 'model' is unique on (provider_id, name) (DATA_MODEL.md §4) —
                 # without the provider in context, resolution has nothing to
@@ -278,13 +341,26 @@ class RecordNormalizer:
                 issues.append(natural_key_issue)
                 continue
 
+            tool_name, name_issue = self._name(
+                entity.target, "tool_name", data, line_number, blank_is_error=True
+            )
+            if name_issue is not None:
+                issues.append(name_issue)
+                continue
+            if tool_name is None:
+                # Absent altogether, from a mapping that did not mark it required.
+                issues.append(
+                    self._construction_issue(entity.target, KeyError("tool_name"), line_number)
+                )
+                continue
+
             try:
                 tool_calls.append(
                     ToolCall(
                         id=uuid4(),
                         session_id=session.id,
                         sequence_index=int(sequence_index),
-                        tool_name=str(data["tool_name"]),
+                        tool_name=tool_name,
                         status=data.get("status", "unknown"),
                         duration_ms=data.get("duration_ms"),
                         error_message=data.get("error_message"),
@@ -295,8 +371,6 @@ class RecordNormalizer:
                 issues.append(self._construction_issue(entity.target, exc, line_number))
                 continue
 
-            tool_name = data.get("tool_name")
-            if tool_name:
-                references.append(ReferenceRequest(kind="tool", name=tool_name))
+            references.append(ReferenceRequest(kind="tool", name=tool_name))
 
         return tool_calls, issues, references
