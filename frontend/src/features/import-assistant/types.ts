@@ -8,11 +8,6 @@ export type {
 } from '@/features/mappings/types'
 export type { FileProfile, FileUpload, ImportPreview } from '@/features/imports/types'
 
-export interface AiProvidersResponse {
-  active: { provider: string; model: string | null }
-  available: Array<{ provider: string; configured: boolean }>
-}
-
 export interface ValidationError {
   code?: string
   field_path?: string | null

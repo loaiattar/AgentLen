@@ -35,7 +35,7 @@ export interface FileUpload {
   format: FileFormat
   size_bytes: number
   content_hash: string
-  /** True when this exact content was already stored — warn before re-importing. */
+  /** True only on the `POST /files` that reused a stored file; false on `GET`. Not an import history. */
   already_seen: boolean
   previous_import_run_ids: number[]
 }

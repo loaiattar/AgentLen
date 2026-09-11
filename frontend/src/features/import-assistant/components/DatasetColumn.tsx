@@ -2,19 +2,20 @@ import type { FileProfile } from '@/features/import-assistant/types'
 
 export interface DatasetColumnProps {
   profile: FileProfile
-  alreadySeen?: boolean
+  /** A past run imported this content (`previous_import_run_ids`), not merely stored it. */
+  alreadyImported?: boolean
 }
 
-export function DatasetColumn({ profile, alreadySeen = false }: DatasetColumnProps) {
+export function DatasetColumn({ profile, alreadyImported = false }: DatasetColumnProps) {
   return (
     <section className="glass-module order-3 p-6 xl:order-1">
       <h2 className="text-meta font-medium tracking-[0.14em] text-foreground-subtle uppercase">Dataset</h2>
       <p className="mt-2 text-secondary text-foreground-muted">
         {profile.record_count} records · {profile.sampled_records} sampled
       </p>
-      {alreadySeen ? (
+      {alreadyImported ? (
         <p className="mt-2 text-secondary text-foreground-muted">
-          This content was already stored. Review before importing.
+          This content was already imported. Review before importing it again.
         </p>
       ) : null}
       {profile.fields.length === 0 ? (

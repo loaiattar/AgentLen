@@ -87,6 +87,40 @@ describe('useImportQuery', () => {
   })
 })
 
+describe('when a run reaches a terminal status', () => {
+  it('invalidates imports, files, sessions and the dashboard', async () => {
+    // The bug this pins: the cache was invalidated at launch only, so the run
+    // list kept showing `running` for a run that had finished.
+    get.mockResolvedValueOnce(run('running')).mockResolvedValue(run('succeeded'))
+    const client = createTestQueryClient()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+
+    renderHook(() => useImportQuery(5), { wrapper: withQueryClient(client) })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    expect(invalidate).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(IMPORT_POLL_INTERVAL_MS * 2)
+
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(4))
+    const keys = invalidate.mock.calls.map(([filters]) => filters?.queryKey)
+    expect(keys).toEqual(
+      expect.arrayContaining([['imports'], ['files', 'detail'], ['sessions'], ['dashboard']]),
+    )
+  })
+
+  it('invalidates nothing for a run that had already finished when first read', async () => {
+    get.mockResolvedValue(run('failed'))
+    const client = createTestQueryClient()
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+
+    renderHook(() => useImportQuery(5), { wrapper: withQueryClient(client) })
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(IMPORT_POLL_INTERVAL_MS * 3)
+
+    expect(invalidate).not.toHaveBeenCalled()
+  })
+})
+
 describe('useImportIssuesQuery', () => {
   it('polls while the run it belongs to is still moving', async () => {
     // The bug this pins: the issues query ran once, when the run had just been

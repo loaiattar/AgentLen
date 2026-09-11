@@ -1,5 +1,5 @@
 import type { AiInsight } from '@/components/ui/AiPanel'
-import { confidencePercent, rationaleBody } from '@/features/import-assistant/lib/mapping'
+import { confidenceLabel, rationaleBody } from '@/features/import-assistant/lib/mapping'
 import type { ProposalResponse } from '@/features/import-assistant/types'
 
 export function proposalInsights(proposal: ProposalResponse): AiInsight[] {
@@ -17,7 +17,7 @@ export function proposalInsights(proposal: ProposalResponse): AiInsight[] {
     insights.push({
       title: [item.target ?? `Proposed field ${index + 1}`, item.source].filter(Boolean).join(' ← '),
       body: rationaleBody(item),
-      confidence: confidencePercent(item.confidence),
+      confidence: confidenceLabel(item.confidence),
     })
   })
 

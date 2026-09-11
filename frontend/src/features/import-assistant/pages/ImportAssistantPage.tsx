@@ -13,7 +13,7 @@ import {
   useProposeMappingMutation,
   useRefineProposalMutation,
 } from '@/features/import-assistant/api/assistant.mutations'
-import { useAiProvidersQuery, useProposalQuery } from '@/features/import-assistant/api/assistant.queries'
+import { useProposalQuery } from '@/features/import-assistant/api/assistant.queries'
 import { DatasetColumn } from '@/features/import-assistant/components/DatasetColumn'
 import { FilePicker } from '@/features/import-assistant/components/FilePicker'
 import { MappingColumn } from '@/features/import-assistant/components/MappingColumn'
@@ -24,9 +24,11 @@ import { useImportAssistantStore } from '@/features/import-assistant/store/impor
 import { useFileProfileQuery, useFileQuery, usePreviewImportMutation } from '@/features/imports/api/imports.queries'
 import { PreviewPanel } from '@/features/imports/components/PreviewPanel'
 import { useCreateMappingMutation } from '@/features/mappings/api/mappings.queries'
+// The shell asks for `/ai/providers` too: one query key, one request.
+import { useAiProvidersQuery } from '@/features/system/api/system.queries'
 
 function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback
+  return error instanceof Error && error.message ? error.message : fallback
 }
 
 export function ImportAssistantPage() {
@@ -217,7 +219,10 @@ export function ImportAssistantPage() {
         <EmptyState title="No profile" description="This file could not be profiled." />
       ) : (
         <div className="grid gap-bento xl:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_minmax(0,0.9fr)]">
-          <DatasetColumn profile={profile.data} alreadySeen={file.data?.already_seen} />
+          <DatasetColumn
+            profile={profile.data}
+            alreadyImported={(file.data?.previous_import_run_ids.length ?? 0) > 0}
+          />
 
           {proposalId == null ? (
             <section className="glass-module order-1 flex min-h-72 flex-col justify-between p-6 xl:order-2">

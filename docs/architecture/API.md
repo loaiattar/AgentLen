@@ -107,7 +107,7 @@ puis afficher un indicateur de couverture partielle lorsque `ratio` est non
   "already_seen": false, "previous_import_run_ids": [] }
 ```
 
-`already_seen: true` signale que le même contenu a déjà été déposé — le front doit avertir l'utilisateur avant de relancer un import.
+`already_seen: true` signale que **ce dépôt** a réutilisé un fichier déjà stocké (même `content_hash`) ; il ne dit rien des imports. `GET /files/{id}` ne dépose rien et renvoie donc toujours `already_seen: false`, avec la même forme de réponse. Pour savoir si un import créerait des doublons, le front lit `previous_import_run_ids` (les runs qui ont déjà importé ce contenu) et avertit l'utilisateur quand la liste n'est pas vide.
 
 Refus :
 

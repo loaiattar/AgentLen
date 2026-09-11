@@ -76,10 +76,9 @@ async def test_neither_endpoint_claims_an_import_for_a_stored_never_imported_fil
     from the content hash. The wizard believed the GET and warned "this file
     has already been imported" about an import that never happened.
 
-    The flag is scoped to an upload event — "was this content already stored
-    when you sent it" — so on a GET it is constant and carries no signal. What
-    both endpoints must agree on is the import history, and that is
-    `previous_import_run_ids`.
+    The flag is scoped to an upload event — "did this upload reuse a stored
+    file" — so a GET, which uploads nothing, says false. What both endpoints
+    must agree on is the import history, and that is `previous_import_run_ids`.
     """
     upload = await live_client.post(
         "/api/v1/files",
@@ -94,8 +93,35 @@ async def test_neither_endpoint_claims_an_import_for_a_stored_never_imported_fil
     # The one fact that has to match, and the one the front reads.
     assert upload.json()["previous_import_run_ids"] == []
     assert fetched.json()["previous_import_run_ids"] == []
-    # Documented as constant on this route, rather than a disguised run count.
-    assert fetched.json()["already_seen"] is True
+    # A fresh upload reused nothing, and a GET uploads nothing.
+    assert upload.json()["already_seen"] is False
+    assert fetched.json()["already_seen"] is False
+
+
+@requires_postgres
+async def test_get_file_does_not_repeat_the_already_seen_of_a_reusing_upload(
+    live_client_with_storage: AsyncClient,
+) -> None:
+    """Only the upload that reused the stored file says `already_seen: true`.
+
+    `GET /files/{id}` used to answer true for every file, so a page reloaded on
+    a brand-new upload warned that it had been uploaded before.
+    """
+    content = b'{"session_id": "reuse-1"}\n'
+    first = await live_client_with_storage.post(
+        "/api/v1/files", files={"file": ("r1.jsonl", content, "application/octet-stream")}
+    )
+    fetched_new = await live_client_with_storage.get(f"/api/v1/files/{first.json()['id']}")
+    second = await live_client_with_storage.post(
+        "/api/v1/files", files={"file": ("r2.jsonl", content, "application/octet-stream")}
+    )
+    fetched_again = await live_client_with_storage.get(f"/api/v1/files/{second.json()['id']}")
+
+    assert second.json()["id"] == first.json()["id"]
+    assert [first.json()["already_seen"], second.json()["already_seen"]] == [False, True]
+    assert fetched_new.json()["already_seen"] is False
+    assert fetched_again.json()["already_seen"] is False
+    assert fetched_again.json()["previous_import_run_ids"] == []
 
 
 async def test_uploading_the_same_content_twice_reports_already_seen(
