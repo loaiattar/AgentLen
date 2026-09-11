@@ -1,8 +1,7 @@
-import { Bell, ChevronDown } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 
 import { Button } from '@/components/ui/Button'
 import { OverflowMenu, type OverflowMenuItem } from '@/components/ui/OverflowMenu'
-import { SearchField } from '@/components/ui/SearchField'
 
 export interface TopNavProps {
   datasetLabel: string
@@ -22,9 +21,7 @@ export function TopNav({
   accountItems,
 }: TopNavProps) {
   return (
-    <header className="flex h-[var(--header-height)] items-center gap-[var(--space-1)] px-[var(--space-2)] md:px-[var(--space-4)]">
-      <SearchField placeholder="Search sessions, imports, mappings…" aria-label="Global search" />
-
+    <header className="flex h-[var(--header-height)] items-center justify-end gap-[var(--space-1)] px-[var(--space-2)] md:px-[var(--space-4)]">
       <OverflowMenu
         label="Dataset"
         items={datasetItems}
@@ -55,10 +52,6 @@ export function TopNav({
           </Button>
         }
       />
-
-      <Button type="button" variant="ghost" size="icon" aria-label="Notifications">
-        <Bell />
-      </Button>
 
       {accountItems && accountItems.length > 0 ? (
         <OverflowMenu
