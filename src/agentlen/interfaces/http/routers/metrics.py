@@ -92,6 +92,20 @@ CACHE_CROSS_SOURCE_WARNING = (
 )
 
 
+#: Emitted when the scope holds sessions but none of them carries a date.
+#: `activity` groups by day, so an undated session produces no point at all —
+#: and an empty `points` list is then indistinguishable from "this scope has no
+#: data", which is a different statement and a worse one. Saying which of the
+#: two it is costs one sentence and saves the reader from concluding the import
+#: failed.
+ACTIVITY_UNDATED_WARNING = (
+    "Aucune session de ce périmètre ne porte de date : l'activité par jour ne "
+    "peut pas être calculée. Les sessions sont bien importées et les autres "
+    "indicateurs restent valables — c'est le mapping qui ne renseigne pas "
+    "started_at."
+)
+
+
 def _coverage(coverage: Coverage) -> CoverageOut:
     return CoverageOut(present=coverage.present, total=coverage.total, ratio=coverage.ratio)
 
@@ -105,8 +119,20 @@ async def activity(
     queries: DashboardQueriesDep, filters: FiltersDep
 ) -> PointsOut[ActivityPointOut]:
     points = await queries.activity(filters)
+
+    # Only asked when there is something to explain. `activity` and `overview`
+    # share `_session_predicates`; the single difference is
+    # `started_at IS NOT NULL`, so no point plus at least one session in scope
+    # means exactly one thing: none of them is dated.
+    warnings: list[str] = []
+    if not points:
+        totals = await queries.overview(filters)
+        if totals.session_count > 0:
+            warnings.append(ACTIVITY_UNDATED_WARNING)
+
     return PointsOut[ActivityPointOut](
         filters_applied=filters.as_drill_down(),
+        warnings=warnings,
         points=[
             ActivityPointOut(
                 day=p.day.isoformat(),
