@@ -33,6 +33,7 @@ import {
   hasKnownTokens,
   summarizeQuality,
 } from '@/features/dashboard/lib/format'
+import { ActiveFilters } from '@/features/dashboard/components/ActiveFilters'
 import { toSessionSearch } from '@/features/dashboard/lib/filters'
 import { useMetricsFilters } from '@/features/dashboard/hooks/useMetricsFilters'
 
@@ -49,7 +50,7 @@ const dayColumnClassName =
 const UNKNOWN_MODEL_HINT = '“unknown” counts calls with no model name. Sessions cannot be filtered on it, so it opens nothing.'
 
 export function DashboardPage() {
-  const { filters } = useMetricsFilters()
+  const { filters, sources, ignoredDates, removeFilter, clearExploration, dropIgnoredDates } = useMetricsFilters()
   const overview = useDashboardOverviewQuery(filters)
   const activity = useDashboardActivityQuery(filters)
   const tools = useDashboardToolsQuery(filters)
@@ -59,6 +60,16 @@ export function DashboardPage() {
 
   const isPending = overview.isPending || activity.isPending || tools.isPending || models.isPending
   const isError = overview.isError || activity.isError || tools.isError || models.isError
+  // Shown with the metrics and with their error: a filter that breaks the page must stay removable.
+  const activeFilters = (
+    <ActiveFilters
+      filters={filters}
+      ignoredDates={ignoredDates}
+      onRemove={removeFilter}
+      onClear={clearExploration}
+      onDropIgnoredDates={dropIgnoredDates}
+    />
+  )
 
   if (isPending) {
     return (
@@ -103,6 +114,7 @@ export function DashboardPage() {
             </Button>
           }
         />
+        {activeFilters}
       </div>
     )
   }
@@ -119,8 +131,8 @@ export function DashboardPage() {
   const dayLabels = days.map((bucket) => formatDay(bucket.day))
   // Without a source filter, the same tool or model name can come from several sources.
   const showSource = filters.data_source_id == null
-  const toolItems = aggregateTools(tools.data?.points ?? [], { showSource })
-  const modelItems = aggregateModels(models.data?.points ?? [], { showSource })
+  const toolItems = aggregateTools(tools.data?.points ?? [], { showSource, sources })
+  const modelItems = aggregateModels(models.data?.points ?? [], { showSource, sources })
 
   const dayDrillDown = (describe: (bucket: DayBucket) => string) => (index: number, content: ReactNode) => {
     const bucket = days[index]
@@ -148,6 +160,7 @@ export function DashboardPage() {
           ))}
         </ul>
       ) : null}
+      {activeFilters}
       <BentoGrid>
         <BentoModule cols={2} rows={2} className="flex min-h-72 flex-col justify-between xl:min-h-80">
           <BentoTitle>Agent activity</BentoTitle>

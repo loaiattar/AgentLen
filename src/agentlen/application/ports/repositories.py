@@ -256,14 +256,26 @@ class UserRepository(Protocol):
 
 
 class UserSessionRepository(Protocol):
+    """Sessions are keyed by the SHA-256 of their token
+    (`domain/services/session_tokens.py`): the token never reaches this port."""
+
     async def create(
-        self, *, user_id: int, token: str, expires_at: datetime | None
+        self, *, user_id: int, token_hash: str, expires_at: datetime | None
     ) -> UserSessionRecord: ...
 
-    async def get_by_token(self, token: str) -> UserSessionRecord | None: ...
+    async def get_active_by_token_hash(
+        self, token_hash: str, *, now: datetime
+    ) -> UserSessionRecord | None:
+        """`None` for an unknown digest and for a session expired at `now`
+        (`expires_at <= now`). A NULL `expires_at` never expires."""
+        ...
 
-    async def delete_by_token(self, token: str) -> None:
-        """No-op if the token is already gone — logout is idempotent."""
+    async def delete_by_token_hash(self, token_hash: str) -> None:
+        """No-op if the session is already gone — logout is idempotent."""
+        ...
+
+    async def delete_expired(self, *, now: datetime) -> int:
+        """Remove every session expired at `now`; return how many were removed."""
         ...
 
 

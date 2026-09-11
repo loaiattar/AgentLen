@@ -7,18 +7,8 @@ import pytest
 from agentlen.application.errors import ConflictError
 from agentlen.application.use_cases.register_user import RegisterUser
 from agentlen.domain.errors import InvalidEmailError, WeakPasswordError
+from tests.fakes.password_hasher import FakePasswordHasher
 from tests.fakes.repositories import InMemoryUnitOfWork
-
-
-class FakePasswordHasher:
-    """`hash` is deliberately not the identity function, so a test asserting
-    'the hash differs from the plain password' actually proves something."""
-
-    def hash(self, password: str) -> str:
-        return f"hashed:{password}"
-
-    def verify(self, password: str, password_hash: str) -> bool:
-        return password_hash == f"hashed:{password}"
 
 
 async def test_creates_a_user_with_a_hashed_password() -> None:
@@ -64,3 +54,15 @@ async def test_rejects_a_duplicate_email_case_insensitively() -> None:
 
     with pytest.raises(ConflictError):
         await use_case.execute(email="Alice@Example.com", password="another-passphrase")
+
+
+async def test_duplicate_email_error_does_not_echo_the_address() -> None:
+    uow = InMemoryUnitOfWork()
+    use_case = RegisterUser(uow, FakePasswordHasher())
+    await use_case.execute(email="alice@example.com", password="a-strong-passphrase")
+
+    with pytest.raises(ConflictError) as caught:
+        await use_case.execute(email="alice@example.com", password="another-passphrase")
+
+    assert "alice" not in caught.value.message
+    assert caught.value.details == {}

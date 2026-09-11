@@ -338,17 +338,19 @@ CREATE TABLE "user" (
 
 CREATE TABLE user_session (
     id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    token      TEXT        NOT NULL UNIQUE,      -- jeton opaque présenté en Bearer
+    token_hash TEXT        NOT NULL UNIQUE       -- SHA-256 du jeton, jamais le jeton
+               CHECK (token_hash ~ '^[0-9a-f]{64}$'),
     user_id    BIGINT      NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ                       -- fixé à la connexion (30 jours)
 );
 CREATE INDEX ON user_session (user_id);
+CREATE INDEX ON user_session (expires_at);       -- purge des sessions expirées
 ```
 
 **Le mot de passe n'est jamais stocké en clair.** `password_hash` est un hash bcrypt (salé automatiquement, une chaîne auto-suffisante) produit par l'adaptateur `BcryptPasswordHasher`, derrière le port `PasswordHasher` — remplaçable sans toucher aux use cases, comme `Clock` ou `StructureAnalyzer`.
 
-**Le jeton de session est opaque, pas un JWT.** Il est généré côté serveur (`secrets.token_urlsafe`), stocké dans `user_session`, et présenté par le client en `Authorization: Bearer <token>`. La révocation (`/auth/logout`) est un `DELETE` sur cette table plutôt qu'une liste de blocage à gérer en plus d'un mécanisme de signature.
+**Le jeton de session est opaque, pas un JWT.** Il est généré côté serveur (`secrets.token_urlsafe`) et présenté par le client en `Authorization: Bearer <token>`. `user_session` n'en garde que le SHA-256 : une lecture de la table ne donne aucune session valable. Un SHA-256 simple suffit, contrairement aux mots de passe, car le jeton est aléatoire (32 octets) : il n'y a rien à deviner. La recherche ignore les sessions expirées, purgées à chaque connexion. La révocation (`/auth/logout`) est un `DELETE` sur cette table plutôt qu'une liste de blocage à gérer en plus d'un mécanisme de signature.
 
 ---
 

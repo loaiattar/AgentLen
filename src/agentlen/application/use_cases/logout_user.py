@@ -8,6 +8,7 @@ token must not work any more") is already satisfied.
 from __future__ import annotations
 
 from agentlen.application.ports.unit_of_work import UnitOfWork
+from agentlen.domain.services.session_tokens import session_token_digest
 
 
 class LogoutUser:
@@ -16,5 +17,5 @@ class LogoutUser:
 
     async def execute(self, token: str) -> None:
         async with self._uow as uow:
-            await uow.user_sessions.delete_by_token(token)
+            await uow.user_sessions.delete_by_token_hash(session_token_digest(token))
             await uow.commit()

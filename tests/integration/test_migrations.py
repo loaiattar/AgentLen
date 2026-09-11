@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.migration import MigrationContext
 from sqlalchemy import Connection, Engine, insert, inspect, select, text
+from sqlalchemy.exc import IntegrityError
 
 from agentlen.infrastructure.persistence import tables as t
 from agentlen.infrastructure.persistence.tables import ALL_TABLES, metadata
@@ -132,3 +134,29 @@ def test_0004_merges_agents_duplicated_by_a_null_version(clean_db: Connection) -
         "s3": versioned,
         "s4": codex,
     }
+
+
+def test_0005_logs_out_sessions_stored_in_clear(clean_db: Connection) -> None:
+    """A token stored in clear before 0005 may already sit in a backup, so the
+    upgrade deletes it instead of hashing it (issue #151). Accounts stay, and
+    the new CHECK refuses a value that is not a SHA-256 digest."""
+    cfg = _config(clean_db.engine)
+    command.downgrade(cfg, "0004")
+    user_id = clean_db.execute(
+        insert(t.user).values(email="a@example.com", password_hash="h").returning(t.user.c.id)
+    ).scalar_one()
+    clean_db.execute(
+        text("INSERT INTO user_session (token, user_id) VALUES ('plaintext-token', :user_id)"),
+        {"user_id": user_id},
+    )
+    clean_db.commit()
+
+    command.upgrade(cfg, "head")
+
+    with clean_db.engine.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM user_session")).scalar_one() == 0
+        assert conn.execute(text("SELECT count(*) FROM users")).scalar_one() == 1
+        with pytest.raises(IntegrityError):
+            conn.execute(
+                insert(t.user_session).values(token_hash="plaintext-token", user_id=user_id)
+            )
