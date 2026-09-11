@@ -10,11 +10,23 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job only reads the repository. A step that is compromised (an action,
+# a downloaded binary, a dependency's install script) gets a token that cannot
+# push, open releases or edit the PR.
+permissions:
+  contents: read
+
 env:
   # The pipeline must never need a real provider key. Any job that touches the
   # AI port runs against the test double. See ADR-006.
   AI_PROVIDER: fake
   PYTHON_VERSION: '3.12'
+  # Same uv as the image build; the `images` job fails if docker/Dockerfile
+  # pins another one.
+  UV_VERSION: '0.12.10'
+
+# Actions are pinned by commit SHA: a tag can be moved to other code, a commit
+# cannot. The comment names the release the SHA belongs to.
 
 jobs:
   # ── Backend · style, types and the dependency rule ──────────────────────────
@@ -22,15 +34,27 @@ jobs:
     name: Backend · lint & types
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
+          persist-credentials: false
 
-      - name: Install project
-        run: pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: uv.lock matches pyproject.toml
+        # `uv sync --frozen` installs the lock as it is, even when it no longer
+        # matches pyproject.toml. This is the step that notices.
+        run: uv lock --check
+
+      - name: Install project from uv.lock
+        # The versions the Docker image ships, not the newest ones the open
+        # bounds in pyproject.toml allow on the day the job runs.
+        run: uv sync --frozen --extra dev
 
       - name: Format check
         run: ruff format --check .
@@ -60,15 +84,20 @@ jobs:
     name: Backend · unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
+          persist-credentials: false
 
-      - name: Install project
-        run: pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install project from uv.lock
+        run: uv sync --frozen --extra dev
 
       - name: pytest tests/unit tests/contract
         # Deliberately without a database service: if a domain or application
@@ -101,15 +130,20 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://agentlen:agentlen@localhost:5432/agentlen
       TEST_DATABASE_URL: postgresql+asyncpg://agentlen:agentlen@localhost:5432/agentlen
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
+          persist-credentials: false
 
-      - name: Install project
-        run: pip install -e ".[dev]"
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          activate-environment: true
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install project from uv.lock
+        run: uv sync --frozen --extra dev
 
       - name: Migration round trip
         # A migration that cannot be undone is a migration nobody dares to fix.
@@ -147,29 +181,62 @@ jobs:
     name: Guards · secrets & model ids
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The secret scan reads commits, not only the checked-out tree.
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Install gitleaks
+        # The archive is checked against a hash written here, not against the
+        # checksums file of the same release: whoever can replace the archive
+        # can replace that file too.
+        env:
+          VERSION: 8.30.1
+          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
         run: |
-          VERSION=8.28.0
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /usr/local/bin gitleaks
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl -sSfL -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
+          echo "${SHA256}  ${archive}" | sha256sum --check --strict -
+          tar -xzf "$archive" -C /usr/local/bin gitleaks
           gitleaks version
 
-      - name: Secret scan
-        # --no-git scans the tree as it stands, so a pre-existing finding in
-        # old history cannot make every future PR red.
-        run: gitleaks detect --no-git --no-banner --redact --exit-code 1 --source .
+      - name: Secret scan — the commits this run adds
+        # Commits, not the tree: a secret added and then deleted in the same PR
+        # is gone from the tree but still readable in its history. Only the
+        # commits this run adds are scanned, so a finding in old history (there
+        # is one, in a test fixture) does not turn every future PR red.
+        # A manual run has no range, and a push whose previous tip is unknown
+        # (new branch, rewritten history) cannot compute one: both scan the tree.
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.event.after }}
+        run: |
+          case "$EVENT" in
+            pull_request) from="$PR_BASE"; to="$PR_HEAD" ;;
+            push) from="$PUSH_BEFORE"; to="$PUSH_AFTER" ;;
+            *) from=""; to="" ;;
+          esac
+          if [[ -n "$from" ]] && git cat-file -e "${from}^{commit}" 2>/dev/null; then
+            gitleaks git --no-banner --redact --exit-code 1 --log-opts="${from}..${to}" .
+          else
+            gitleaks dir --no-banner --redact --exit-code 1 .
+          fi
 
       - name: No hardcoded model identifiers
         # ADR-006: provider and model come from configuration. An id written
-        # into src/ silently defeats the interchangeability requirement.
+        # into the backend or the web interface silently defeats the
+        # interchangeability requirement.
         # Matches model families only — "claude-code" is an agent name and is
         # legitimate in the data model.
         run: |
           PATTERN='claude-(opus|sonnet|haiku)|claude-[0-9]|gpt-[0-9]|text-davinci'
-          if grep -rnE "$PATTERN" src/; then
-            echo "::error::Hardcoded model identifier in src/. Model ids come from configuration (ADR-006)."
+          if grep -rnE "$PATTERN" src/ frontend/src/; then
+            echo "::error::Hardcoded model identifier in src/ or frontend/src/. Model ids come from configuration (ADR-006)."
             exit 1
           fi
           echo "No hardcoded model identifier."
@@ -182,39 +249,73 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           # jsdom 30 declares `^22.22.2 || ^24.15.0 || >=26.0.0`, and on Node 20
           # its undici calls `webidl.util.markAsUncloneable`, which does not
           # exist there — every worker fails to start and the suite reports
-          # "no tests". Kept in step with `engines` in frontend/package.json.
-          node-version: '22'
+          # "no tests". frontend/.nvmrc is the one place the version is set;
+          # the `images` job holds docker/frontend.Dockerfile to it.
+          node-version-file: frontend/.nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
+      # No `--if-present` on any script. The flag makes a missing script a
+      # silent pass: `test` stayed green that way, testing nothing, until the
+      # suite existed. Renaming or removing a script has to break the build
+      # rather than quietly stop checking.
       - name: Lint
-        run: npm run lint --if-present
+        run: npm run lint
 
       - name: Build
-        run: npm run build --if-present
+        run: npm run build
 
       - name: Test
-        # No `--if-present`. The flag makes a missing script a silent pass, and
-        # that is exactly what this step did until the suite existed: green,
-        # every run, testing nothing. Now that `test` is defined, removing it
-        # has to break the build rather than quietly stop checking.
         run: npm test
+
+  # ── Docker · the images `make up` builds ────────────────────────────────────
+  images:
+    name: Docker · build images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Images use the toolchain versions of CI
+        # Neither version can be read by a Dockerfile from the files CI uses,
+        # so they are written twice and compared here.
+        run: |
+          node_version="$(tr -d '[:space:]' < frontend/.nvmrc)"
+          if ! grep -qx "FROM node:${node_version}-alpine AS build" docker/frontend.Dockerfile; then
+            echo "::error file=docker/frontend.Dockerfile::The build stage must use node:${node_version}-alpine, the version in frontend/.nvmrc."
+            exit 1
+          fi
+          if ! grep -q "uv==${UV_VERSION}" docker/Dockerfile; then
+            echo "::error file=docker/Dockerfile::The builder stage must install uv==${UV_VERSION}, the version CI uses."
+            exit 1
+          fi
+
+      # Built with the same context and Dockerfiles as docker/docker-compose.yml,
+      # and never pushed: this job only proves the images still build.
+      - name: Build the API and worker image
+        run: docker build --file docker/Dockerfile --tag agentlen-api:ci .
+
+      - name: Build the frontend image
+        run: docker build --file docker/frontend.Dockerfile --tag agentlen-frontend:ci .
 
   # ── Aggregate — this is the check to require in branch protection ──────────
   ci-success:
     name: CI Passed
     runs-on: ubuntu-latest
-    needs: [backend-lint, backend-unit, backend-db, guards, frontend]
+    needs: [backend-lint, backend-unit, backend-db, guards, frontend, images]
     if: always()
     steps:
       - name: Verify every job succeeded
@@ -226,7 +327,7 @@ jobs:
         # 'failure' and 'cancelled' would let `skipped` through — which is
         # precisely the "every job skips, the pipeline is green" bug this
         # workflow exists to kill. It also stays correct when someone adds a
-        # sixth job or puts an `if:` on an existing one.
+        # job or puts an `if:` on an existing one.
         run: |
           failed=0
           for result in ${{ join(needs.*.result, ' ') }}; do
