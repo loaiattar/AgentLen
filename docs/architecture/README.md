@@ -27,7 +27,7 @@
 ## Encore à produire (livrables du sujet)
 
 - [ ] `docs/verification/ai-models-report.md` — compte rendu du parcours d'identification et d'import avec les **deux** modèles IA
-- [ ] `docs/datasets.md` — provenance, versions, dates de récupération et méthode de sélection des extraits
+- [x] [`docs/datasets.md`](../datasets.md) — provenance, versions, dates de récupération et méthode de sélection des extraits
 - [ ] `docs/observations.md` — **trois observations chiffrées** avec sources et filtres permettant de les retrouver
 - [ ] Mappings documentés pour **au moins deux sources distinctes**
 - [ ] README de prise en main, LICENSE, CONTRIBUTING, notes de version

@@ -45,7 +45,7 @@ Exceptions (sans clé) :
 - `GET /version` et `GET /api/v1/version` — version applicative seule, sans accès à la base
 - `GET /docs`, `GET /redoc` et `GET /openapi.json` — documentation interactive et schéma
 
-La documentation est publique par choix : un navigateur qui ouvre `/docs` ne peut pas joindre de header, donc une documentation protégée serait inutilisable ; elle ne décrit que des routes qui exigent toujours la clé, et la clé du front est de toute façon livrée au navigateur. Le schéma déclare les deux mécanismes, sans rien changer à leur application : `ApiKeyAuth` (header `X-API-Key`, exigé partout sauf ci-dessus) et `BearerAuth` (en plus de la clé, sur les routes qui exigent un jeton de session, §10). Chaque opération y documente l'enveloppe d'erreur pour `401`, `500` et, selon la route, `400`, `404`, `409`, `422` et `502`.
+La documentation est publique par choix : un navigateur qui ouvre `/docs` ne peut pas joindre de header, donc une documentation protégée serait inutilisable ; elle ne décrit que des routes qui exigent toujours la clé, et la lire ne donne pas cette clé, qui n'est jamais livrée au navigateur (le proxy l'ajoute, voir plus bas). Le schéma déclare les deux mécanismes, sans rien changer à leur application : `ApiKeyAuth` (header `X-API-Key`, exigé partout sauf ci-dessus) et `BearerAuth` (en plus de la clé, sur les routes qui exigent un jeton de session, §10). Chaque opération y documente l'enveloppe d'erreur pour `401`, `500` et, selon la route, `400`, `404`, `409`, `422` et `502`.
 
 Une clé absente ou invalide renvoie `401` :
 

@@ -3,8 +3,11 @@
 > Ce document répond à l'exigence du sujet : « documentez leur provenance,
 > leur version et la façon dont vous les avez sélectionnés ».
 >
-> Les fichiers bruts ne sont **pas versionnés** dans ce dépôt (`.gitignore` exclut
-> `data/` et `*.jsonl`). Ce document suffit à les retrouver et les reproduire.
+> Les extraits bruts ne sont **pas versionnés** (`.gitignore` exclut `data/` et
+> `*.jsonl`), **sauf l'échantillon TraceLab** `data/samples/tracelab_example_session.jsonl`,
+> suivi par git malgré ces règles : c'est le fichier que `make seed` importe
+> (`SAMPLE_FILE` dans `interfaces/cli/seed.py`). Ce document suffit à retrouver
+> et reproduire les autres.
 
 ---
 
@@ -19,7 +22,7 @@
 | **Date de récupération** | 2026-09-08 |
 | **Format** | JSONL — un objet JSON par ligne, une session par enregistrement |
 | **Taille de l'extrait** | 19 enregistrements (fichier d'exemple public fourni par le projet) |
-| **Licence** | MIT — redistribution autorisée, extrait non versionné par précaution de taille |
+| **Licence** | MIT — redistribution autorisée ; l'extrait est versionné dans `data/samples/tracelab_example_session.jsonl` |
 
 ### Méthode de sélection
 
@@ -33,9 +36,12 @@ d'utilisateurs) ont été remplacés par des placeholders par TraceLab.
 
 ### Reproduire l'extrait
 
+Le fichier est déjà dans le dépôt ; ces commandes ne servent qu'à le reconstituer
+depuis la source. Le nom de destination est celui qu'attend `make seed`.
+
 ```bash
 git clone https://github.com/uw-syfi/TraceLab.git
-cp TraceLab/example_sessions/sanitized/round_trace.jsonl data/samples/tracelab_sample.jsonl
+cp TraceLab/example_sessions/sanitized/round_trace.jsonl data/samples/tracelab_example_session.jsonl
 ```
 
 ### Structure d'un enregistrement (champs principaux)
@@ -102,11 +108,15 @@ modifier le code.
 
 ---
 
-## Pourquoi les fichiers ne sont pas dans le dépôt
+## Pourquoi les autres fichiers ne sont pas dans le dépôt
 
 1. **Taille** : les fichiers JSONL et Parquet peuvent dépasser les limites raisonnables de Git.
 2. **Licence** : certaines licences interdisent la redistribution des données brutes.
 3. **Reproductibilité** : les commandes ci-dessus suffisent à reconstituer les extraits.
+
+L'échantillon TraceLab fait exception : 19 lignes, licence MIT, nécessaire à
+`make seed`. Tout autre fichier placé sous `data/` reste ignoré tant qu'il n'est
+pas ajouté explicitement (`git add -f`).
 
 Les fixtures de test (`tests/fixtures/**/*.jsonl`) sont exemptées du `.gitignore`
 car elles sont petites, sanitisées, et nécessaires à la CI.

@@ -71,7 +71,7 @@ asyncio_mode = "auto"
 addopts = "--strict-markers"
 
 # ---------------------------------------------------------------------------
-# Mypy — strict on domain and application only
+# Mypy — strict on the whole src/agentlen package, as in CI and `make lint`
 # ---------------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.12"

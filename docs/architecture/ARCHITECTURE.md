@@ -44,7 +44,7 @@ importer  →  vérifier  →  normaliser  →  explorer
 
 | Rôle | Choix | Justification courte |
 |---|---|---|
-| Langage | Python 3.12 | POO, typage strict (`mypy --strict` sur `domain/` et `application/`) |
+| Langage | Python 3.12 | POO, typage strict (`mypy --strict` sur tout le paquet `src/agentlen`) |
 | API HTTP | **FastAPI** | Neutre vis-à-vis du domaine, OpenAPI auto (livrable pour l'équipe front) |
 | Persistance | **SQLAlchemy 2.0** (mapping impératif) + **Alembic** | Les entités du domaine restent des classes pures ; SQLAlchemy ne les contamine pas |
 | Base | **PostgreSQL 16** (Docker) | `JSONB` pour le brut, `SKIP LOCKED` pour la file de jobs, vues matérialisées pour le dashboard |
@@ -471,15 +471,15 @@ Tests explicitement exigés par le sujet, marqués `@pytest.mark.acceptance` :
 5. **Portabilité du mapping** — un mapping produit sous un fournisseur s'applique à l'identique après bascule vers l'autre.
 6. **Valeur absente ≠ zéro** — une source sans données de cache remonte `null` + `coverage: 0`, jamais `0`.
 
-CI GitHub Actions à chaque PR : `ruff` → `mypy` → `import-linter` → `pytest` (unit + intégration + e2e). **La PR est bloquée en cas d'échec.**
+CI GitHub Actions (`.github/workflows/ci.yml`) à chaque PR : `ruff`, `mypy --strict`, `import-linter`, `pytest` (unit, contrat, intégration, e2e sur un vrai Postgres), aller-retour des migrations Alembic, vérification de `uv.lock`, scan de secrets, lint, build et tests du frontend, construction des images Docker. Le job `CI Passed` agrège tous les autres ; c'est le check requis sur `develop` et `main` : **la PR est bloquée en cas d'échec.**
 
 ---
 
 ## 12. Configuration et exécution
 
-`docker compose up` démarre quatre services : `db` (Postgres 16), `api` (FastAPI + migrations Alembic au démarrage), `worker` (consommateur de jobs) et `frontend` (interface compilée, servie par nginx sur http://localhost:8080). nginx relaie `/api` vers `api` : le navigateur ne parle qu'à une seule origine, sans configuration CORS, et y ajoute `X-API-Key` depuis l'`API_KEY` du même `.env`, lue au démarrage du conteneur : la clé n'est ni dans l'image ni dans le JavaScript livré au navigateur. Un `Makefile` expose `make up`, `make test`, `make lint`, `make migrate`, `make seed`.
+`make up`, depuis la racine du dépôt, démarre quatre services : `db` (Postgres 16), `api` (FastAPI + migrations Alembic au démarrage), `worker` (consommateur de jobs) et `frontend` (interface compilée, servie par nginx sur http://localhost:8080). nginx relaie `/api` vers `api` : le navigateur ne parle qu'à une seule origine, sans configuration CORS, et y ajoute `X-API-Key` depuis l'`API_KEY` du même `.env`, lue au démarrage du conteneur : la clé n'est ni dans l'image ni dans le JavaScript livré au navigateur. Le fichier compose est `docker/docker-compose.yml`, pas à la racine : un `docker compose up` nu ne le trouve pas. `make up` exécute `docker compose -f docker/docker-compose.yml --project-directory . up --build -d`, pour que ses chemins relatifs (contexte de build, `env_file`) se résolvent depuis la racine. Le `Makefile` expose aussi `make down`, `make logs`, `make migrate`, `make seed`, `make lint` et `make test`.
 
-Une personne extérieure doit pouvoir : cloner → `cp .env.example .env` → renseigner sa clé → `make up` → ouvrir http://localhost:8080 → importer un fichier → voir un indicateur. **C'est le critère de reproductibilité du sujet, et il est testé en conditions réelles au jour 4.**
+Une personne extérieure doit pouvoir : cloner → `cp .env.example .env` (les valeurs par défaut suffisent, `AI_PROVIDER=fake` compris : aucune clé de fournisseur n'est requise) → `make up` → ouvrir http://localhost:8080 → importer un fichier → voir un indicateur. **C'est le critère de reproductibilité du sujet, et il est testé en conditions réelles au jour 4.**
 
 ---
 

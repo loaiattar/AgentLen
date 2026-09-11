@@ -98,82 +98,87 @@ sequenceDiagram
 
 ## 5. Tools disponibles
 
-L'agent dispose de cinq tools. Aucun autre ne peut être appelé
-(voir `ToolExecutor` §6).
+L'agent dispose de cinq tools, déclarés une seule fois et sans dépendre du
+fournisseur dans `infrastructure/ai/agent_tools.py` (`TOOL_NAMES`,
+`IMPORT_AGENT_TOOLS`). `to_anthropic()` et `to_openai()` les convertissent au
+format de chaque API : l'ensemble ne peut pas diverger d'un fournisseur à l'autre.
+Aucun autre tool n'est exécuté (voir §6). Les schémas ci-dessous sont recopiés du
+code, descriptions comprises.
+
+Aucun tool ne prend de `file_id` : l'exécuteur est construit sur le `FileProfile`
+du fichier, **déjà passé par le `ProfileSanitizer`**, et ne lit rien d'autre que
+ce profil et le validateur du domaine.
 
 ### `get_target_schema`
 
-Retourne la description complète du schéma cible : entités, champs, types,
-contraintes et opérateurs disponibles. À appeler **une seule fois** en début
-de boucle.
+Retourne les entités qu'un mapping peut cibler : `{"entities": [...]}`, triées,
+lues dans `mapping_validator.VALID_TARGETS`. Seuls les noms d'entités sont
+renvoyés aujourd'hui, pas leurs champs, même si la description les annonce.
 
 ```json
 {
   "name": "get_target_schema",
-  "description": "Retourne le schéma cible complet (entités, champs, types, contraintes) et la whitelist des opérateurs disponibles.",
-  "input_schema": { "type": "object", "properties": {} }
+  "description": "Return the AgentLen target entities and their fields. Call this before proposing any mapping: a field that is not in this schema will be rejected by the validator.",
+  "input_schema": { "type": "object", "properties": {}, "required": [] }
 }
 ```
 
 ### `get_field_profile`
 
-Statistiques détaillées d'un ou plusieurs champs du fichier source :
-types observés, taux de null, min/max, cardinalité, exemples sanitisés.
-À appeler avant de choisir un opérateur de conversion.
+Le profil d'**un** champ source, désigné par son chemin : types observés, taux
+de null, ratio de valeurs distinctes, min et max. Un chemin absent du profil
+renvoie `{"error": "Field not found"}`.
 
 ```json
 {
   "name": "get_field_profile",
-  "description": "Statistiques détaillées d'un ou plusieurs champs (types, null_ratio, min/max, exemples). Appeler avant de proposer un opérateur de conversion.",
+  "description": "Return detailed statistics for one source field: observed types, null ratio, distinct ratio, min and max. Use it to decide whether a field can serve as a natural key.",
   "input_schema": {
     "type": "object",
     "properties": {
-      "file_id":     { "type": "integer" },
-      "field_paths": { "type": "array", "items": { "type": "string" },
-                       "description": "JSONPath des champs, ex: ['$.duration', '$.usage.input_tokens']" }
+      "path": { "type": "string", "description": "JSONPath, e.g. $.usage.input_tokens" }
     },
-    "required": ["file_id", "field_paths"]
+    "required": ["path"]
   }
 }
 ```
 
 ### `get_sample_values`
 
-N valeurs réelles (sanitisées par `SampleSanitizer`) d'un champ précis.
-Utile pour lever une ambiguïté d'unité ou de format (secondes vs millisecondes,
-format de date…).
+Quelques valeurs d'un champ, prises dans les exemples du profil sanitisé, pour
+lever une ambiguïté d'unité ou de format (secondes ou millisecondes…). `limit`
+vaut 3 par défaut et l'exécuteur le plafonne à **10**, quoi que demande le modèle.
+Un chemin absent du profil renvoie `{"error": "Field not found"}`.
 
 ```json
 {
   "name": "get_sample_values",
-  "description": "Retourne N valeurs réelles sanitisées d'un champ pour lever une ambiguïté (unité, format de date, valeurs possibles).",
+  "description": "Return a few real, redacted values for one field, to settle an ambiguity the statistics cannot — seconds versus milliseconds, for instance.",
   "input_schema": {
     "type": "object",
     "properties": {
-      "file_id":    { "type": "integer" },
-      "field_path": { "type": "string" },
-      "n":          { "type": "integer", "default": 20, "maximum": 50 }
+      "path":  { "type": "string" },
+      "limit": { "type": "integer", "description": "At most 10." }
     },
-    "required": ["file_id", "field_path"]
+    "required": ["path"]
   }
 }
 ```
 
 ### `validate_mapping`
 
-Valide un document de mapping en quatre niveaux (syntaxique, sémantique,
-structurel, exécution à blanc). Retourne la liste complète des erreurs
-localisées. **Doit être appelé avant de produire la proposition finale.**
+Convertit le document en `Mapping` puis le valide avec `mapping_validator` du
+domaine. Retourne `{"valid": …, "errors": [{"code", "field_path", "message"}]}` ;
+un document qui ne se convertit même pas renvoie `valid: false` avec une erreur
+sur `mapping`. **À appeler avant de répondre.**
 
 ```json
 {
   "name": "validate_mapping",
-  "description": "Valide un document de mapping (schéma + whitelist + champs cibles + exécution à blanc). Retourne toutes les erreurs avec leur localisation. TOUJOURS appeler avant end_turn.",
+  "description": "Validate a complete mapping document. Returns the full list of errors with their codes and field paths. Call this before answering: an invalid mapping will be refused anyway.",
   "input_schema": {
     "type": "object",
-    "properties": {
-      "mapping": { "type": "object", "description": "Le document de mapping complet (voir MAPPING_CONTRACT.md §2)" }
-    },
+    "properties": { "mapping": { "type": "object" } },
     "required": ["mapping"]
   }
 }
@@ -181,22 +186,21 @@ localisées. **Doit être appelé avant de produire la proposition finale.**
 
 ### `preview_import`
 
-Dry-run du mapping sur un échantillon : retourne les entités qui seraient
-produites et les rejets détaillés. **Aucune écriture en base.** Permet à
-l'agent de vérifier le résultat concret avant de conclure.
+Déclaré, mais **pas encore branché** pendant la proposition : l'exécuteur répond
+toujours `{"error": "Preview requires a saved mapping"}`. Le dry-run réel passe
+par `POST /imports/preview`, sur un mapping enregistré (§9).
 
 ```json
 {
   "name": "preview_import",
-  "description": "Dry-run du mapping sur N lignes. Retourne les entités produites et les rejets détaillés. Aucune écriture en base.",
+  "description": "Dry-run the mapping over a few records and report what it would produce and what it would reject. Writes nothing.",
   "input_schema": {
     "type": "object",
     "properties": {
-      "file_id":     { "type": "integer" },
       "mapping":     { "type": "object" },
-      "sample_size": { "type": "integer", "default": 20, "maximum": 100 }
+      "sample_size": { "type": "integer" }
     },
-    "required": ["file_id", "mapping"]
+    "required": ["mapping"]
   }
 }
 ```
@@ -205,36 +209,34 @@ l'agent de vérifier le résultat concret avant de conclure.
 
 ## 6. ToolExecutor — isolation et sécurité
 
-`ImportAgentToolExecutor` vit dans `application/use_cases/`. C'est le seul
-point d'exécution des tools : le LLM demande, le ToolExecutor décide si
-c'est autorisé et comment l'exécuter.
+Le LLM demande un tool, l'exécuteur décide s'il existe et comment l'exécuter.
+Trois fichiers, un par rôle :
+
+| Fichier | Rôle |
+|---|---|
+| `application/ports/tool_executor.py` | Port `ImportAgentToolExecutor` : `execute(tool_name, tool_input) -> dict`, ne lève jamais |
+| `application/use_cases/propose_mapping.py` | `MappingValidationTools`, la seule implémentation, construite sur le profil sanitisé ; utilisée par `ProposeMapping` et par `RefineMapping` (`refine_mapping.py`) |
+| `infrastructure/ai/base.py` | Boucle agentique commune aux adaptateurs : chaque appel demandé par le modèle part vers `tool_executor.execute(...)` |
 
 ```
-application/use_cases/agent_tool_executor.py
-
-ALLOWED_TOOLS = {
-    "get_target_schema",
-    "get_field_profile",
-    "get_sample_values",
-    "validate_mapping",
-    "preview_import",
-}
-
-execute(tool_name, tool_input) -> dict
-  └── tool_name ∉ ALLOWED_TOOLS  →  {"error": "Tool not available"}
-  └── tool_name == "validate_mapping"  →  MappingValidator.validate(...)
-  └── tool_name == "preview_import"    →  PreviewImport use case
-  └── tool_name == "get_field_profile" →  FileProfiler port
-  └── ...
+MappingValidationTools.execute(tool_name, tool_input) -> dict
+  └── "get_field_profile"  →  FieldProfile du chemin, ou {"error": "Field not found"}
+  └── "get_sample_values"  →  exemples du profil (limit ≤ 10), ou {"error": "Field not found"}
+  └── "get_target_schema"  →  {"entities": sorted(mapping_validator.VALID_TARGETS)}
+  └── "validate_mapping"   →  mapping_validator.validate(document_to_mapping(...))
+  └── "preview_import"     →  {"error": "Preview requires a saved mapping"}
+  └── tout autre nom       →  {"error": "Tool not available"}
 ```
 
 **Garanties :**
 
-- Un tool non déclaré retourne une erreur JSON — jamais une exception non gérée.
-- Les tools accèdent aux données via les **ports existants** et les **use cases existants**,
-  jamais directement à SQLAlchemy ou au système de fichiers.
-- `import-linter` vérifie que `agent_tool_executor.py` n'importe pas
-  `sqlalchemy`, `polars` ou tout SDK IA.
+- La whitelist est la suite de branches explicites de `execute` : un tool non
+  déclaré retourne `{"error": "Tool not available"}`, jamais une exception.
+- Les tools ne lisent que le profil sanitisé reçu à la construction et le
+  validateur du domaine : ni base, ni système de fichiers, ni réseau.
+- `import-linter` (contrat « Application depends on ports, never on adapters »)
+  interdit à tout `agentlen.application`, donc à `propose_mapping.py`, d'importer
+  `agentlen.infrastructure`, `sqlalchemy`, `polars`, `anthropic` ou `openai`.
 
 ---
 
