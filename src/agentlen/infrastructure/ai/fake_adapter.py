@@ -26,6 +26,15 @@ FIXTURES = Path(__file__).resolve().parents[4] / "tests" / "fixtures" / "ai_resp
 DEFAULT_FIXTURE = "tracelab_proposal.json"
 
 
+def fixtures_available() -> bool:
+    """Whether this copy of the code has anything to replay.
+
+    The fixtures live under `tests/`: a source checkout has them, the Docker
+    image deliberately does not ship them. There, `fake` cannot answer at all.
+    """
+    return (FIXTURES / DEFAULT_FIXTURE).is_file()
+
+
 class FakeAnalyzer(BaseAnalyzerAdapter):
     provider_name = "fake"
 

@@ -10,19 +10,26 @@
 services:
   db:
     image: postgres:16-alpine
+    # Read from .env, with the values every existing .env was written against.
+    # Postgres applies them only when the volume is first created: changing
+    # them afterwards means recreating the volume (`docker compose down -v`,
+    # which deletes the data).
     environment:
-      POSTGRES_USER: agentlen
-      POSTGRES_PASSWORD: agentlen
-      POSTGRES_DB: agentlen
+      POSTGRES_USER: ${POSTGRES_USER:-agentlen}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentlen}
+      POSTGRES_DB: ${POSTGRES_DB:-agentlen}
     volumes:
       - agentlen_pgdata:/var/lib/postgresql/data
-    # Optional and overridable: a host already running Postgres on 5432 must
-    # not block the stack — `api`/`worker` only ever reach `db` over the
-    # internal compose network, never through this mapping.
+    # Loopback only: the host keeps its access (psql, a host-run test suite),
+    # the local network gets none — this database holds session tokens and
+    # imported traces. The port is overridable so a host already running
+    # Postgres on 5432 does not block the stack; `api`/`worker` only ever reach
+    # `db` over the internal compose network, never through this mapping.
     ports:
-      - "${DB_HOST_PORT:-5432}:5432"
+      - "127.0.0.1:${DB_HOST_PORT:-5432}:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U agentlen -d agentlen"]
+      # `$$`: expanded by the container's shell, from the environment above.
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -41,7 +48,7 @@ services:
       # Overrides whatever DATABASE_URL is in .env: inside the compose
       # network Postgres is reachable at the service name `db`, never at
       # localhost.
-      DATABASE_URL: postgresql+asyncpg://agentlen:agentlen@db:5432/agentlen
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agentlen}:${POSTGRES_PASSWORD:-agentlen}@db:5432/${POSTGRES_DB:-agentlen}
     depends_on:
       db:
         condition: service_healthy
@@ -82,7 +89,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://agentlen:agentlen@db:5432/agentlen
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-agentlen}:${POSTGRES_PASSWORD:-agentlen}@db:5432/${POSTGRES_DB:-agentlen}
     depends_on:
       db:
         condition: service_healthy

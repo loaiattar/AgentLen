@@ -144,13 +144,17 @@ Refus :
 **`GET /ai/providers` → `200`** — permet au front de proposer un sélecteur sans rien coder en dur :
 
 ```json
-{ "active": { "provider": "anthropic", "model": "claude-opus-4-8" },
+{ "active": { "provider": "anthropic", "model": "claude-opus-4-8",
+              "configured": true, "missing": [] },
   "available": [
-    { "provider": "anthropic", "configured": true },
-    { "provider": "openai",    "configured": true },
-    { "provider": "fake",      "configured": true }
+    { "provider": "anthropic",         "configured": true },
+    { "provider": "fake",              "configured": false },
+    { "provider": "openai",            "configured": true },
+    { "provider": "openai_compatible", "configured": true }
   ] }
 ```
+
+`active.missing` liste les variables d'environnement à renseigner avant que le fournisseur actif puisse répondre : `["AI_PROVIDER"]` quand le fournisseur est vide, inconnu, ou `fake` dans l'image Docker (qui n'embarque pas ses fixtures), ou par exemple `["ANTHROPIC_API_KEY", "AI_MODEL"]`. `configured` vaut alors `false`. Jamais de clé, ni sa longueur. `fake` n'est configuré que là où ses fixtures de test existent, jamais dans l'image Docker.
 
 **`POST /mappings/proposals`** — corps : `{ "file_id": 12, "data_source_id": 3, "provider": null, "model": null, "hint": null }`. `provider`/`model` à `null` = configuration active du serveur.
 

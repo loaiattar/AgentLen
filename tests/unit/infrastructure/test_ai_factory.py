@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agentlen.application.errors import AnalyzerError
 from agentlen.infrastructure.ai.factory import (
     UnsupportedProviderError,
     build_structure_analyzer,
+    missing_configuration,
     provider_status,
     settings_for_request,
     supported_providers,
@@ -142,7 +145,12 @@ def test_provider_status_never_exposes_a_key() -> None:
 
     assert "sk-ant-test" not in text
     assert "gsk-test" not in text
-    assert status["active"] == {"provider": "anthropic", "model": "m"}
+    assert status["active"] == {
+        "provider": "anthropic",
+        "model": "m",
+        "configured": True,
+        "missing": [],
+    }
     configured = {p["provider"]: p["configured"] for p in status["available"]}  # type: ignore[index]
     assert configured["anthropic"] is True
     assert configured["fake"] is True
@@ -155,6 +163,64 @@ def test_provider_status_reports_unconfigured_providers() -> None:
     assert configured["anthropic"] is False
     assert configured["openai"] is False
     assert configured["fake"] is True
+
+
+# ---------------------------------------------------------------------------
+# What is missing before the active provider can answer (#195)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("settings", "keys", "missing"),
+    [
+        (AISettings(provider="", model="m"), KEYS, ["AI_PROVIDER"]),
+        (AISettings(provider="gemini", model="m"), KEYS, ["AI_PROVIDER"]),
+        (
+            AISettings(provider="anthropic", model=""),
+            ProviderKeys(),
+            ["ANTHROPIC_API_KEY", "AI_MODEL"],
+        ),
+        (AISettings(provider="openai", model="m"), ProviderKeys(), ["OPENAI_API_KEY"]),
+        (AISettings(provider="openai_compatible", model="m"), ProviderKeys(), ["AI_BASE_URL"]),
+        (AISettings(provider="openai", model="m"), KEYS, []),
+        (AISettings(provider="fake", model=""), ProviderKeys(), []),
+    ],
+)
+def test_the_missing_variables_are_named(
+    settings: AISettings, keys: ProviderKeys, missing: list[str]
+) -> None:
+    assert missing_configuration(settings, keys) == missing
+
+
+def test_fake_without_its_fixtures_is_not_a_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Docker image has no `tests/`: there the fake can only fail, so it
+    must not be reported as configured."""
+    monkeypatch.setattr("agentlen.infrastructure.ai.factory.fixtures_available", lambda: False)
+
+    status = provider_status(AISettings(provider="fake", model="m"), ProviderKeys())
+    configured = {p["provider"]: p["configured"] for p in status["available"]}  # type: ignore[index]
+
+    assert status["active"]["configured"] is False  # type: ignore[index]
+    assert status["active"]["missing"] == ["AI_PROVIDER"]  # type: ignore[index]
+    assert configured["fake"] is False
+
+
+def test_the_example_configuration_in_the_image_names_the_variable_to_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`cp .env.example .env && make up` must give a clear "set AI_PROVIDER",
+    not a provider that fails at the first analysis on a missing fixture."""
+    monkeypatch.setattr("agentlen.infrastructure.ai.factory.fixtures_available", lambda: False)
+    example = Path(__file__).resolve().parents[3] / ".env.example"
+    for line in example.read_text(encoding="utf-8").splitlines():
+        name, separator, value = line.partition("=")
+        if separator and not line.lstrip().startswith("#"):
+            monkeypatch.setenv(name.strip(), value.strip())
+
+    status = provider_status()
+
+    assert status["active"]["configured"] is False  # type: ignore[index]
+    assert status["active"]["missing"] == ["AI_PROVIDER"]  # type: ignore[index]
 
 
 def test_the_descriptor_carries_no_key() -> None:

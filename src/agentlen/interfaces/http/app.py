@@ -7,14 +7,17 @@ them. Run it with `uvicorn agentlen.interfaces.http.app:create_app --factory`.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from agentlen.infrastructure.config.settings import Settings, load_settings
+from agentlen.infrastructure.ai.factory import missing_configuration
+from agentlen.infrastructure.config.settings import Settings, load_ai_settings, load_settings
 from agentlen.interfaces.http.auth import ApiKeyMiddleware
 from agentlen.interfaces.http.errors import register_error_handlers
 from agentlen.interfaces.http.openapi import install_openapi
@@ -33,6 +36,8 @@ from agentlen.interfaces.http.routers import (
 
 API_PREFIX = "/api/v1"
 
+logger = logging.getLogger("agentlen.api")
+
 DESCRIPTION = """
 Ingestion et exploration de traces d'agents de développement IA.
 
@@ -48,13 +53,41 @@ Conventions transverses :
 """
 
 
+def _warn_if_no_ai_provider() -> None:
+    """Said once at startup rather than discovered at the first analysis.
+
+    A stack started from `.env.example` has no usable AI provider until someone
+    sets one (`fake` has no fixtures in the image). The API still starts:
+    everything but the import assistant works without one, and
+    `GET /ai/providers` repeats what is missing.
+    """
+    try:
+        settings = load_ai_settings()
+    except ValidationError as exc:
+        # Not raised: the analysis endpoints report it on use, as before. The
+        # message is left out, since pydantic echoes the rejected input.
+        logger.warning(
+            "Configuration IA invalide (%s) : vérifier les variables AI_*.", type(exc).__name__
+        )
+        return
+    missing = missing_configuration(settings)
+    if missing:
+        logger.warning(
+            "Aucun fournisseur IA utilisable (AI_PROVIDER=%r) : renseigner %s.",
+            settings.provider,
+            ", ".join(missing),
+        )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Dispose the connection pool on shutdown.
+    """Report a missing AI provider on startup; dispose the connection pool on
+    shutdown.
 
-    Without this, a reloading dev server leaks a pool per restart until
+    Without the disposal, a reloading dev server leaks a pool per restart until
     Postgres refuses new connections.
     """
+    _warn_if_no_ai_provider()
     yield
     engine: AsyncEngine | None = getattr(app.state, "engine", None)
     if engine is not None:

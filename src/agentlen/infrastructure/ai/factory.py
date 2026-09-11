@@ -9,7 +9,7 @@ from __future__ import annotations
 from agentlen.application.errors import AnalyzerError
 from agentlen.application.ports.structure_analyzer import StructureAnalyzer
 from agentlen.infrastructure.ai.anthropic_adapter import AnthropicAnalyzer
-from agentlen.infrastructure.ai.fake_adapter import FakeAnalyzer
+from agentlen.infrastructure.ai.fake_adapter import FakeAnalyzer, fixtures_available
 from agentlen.infrastructure.ai.openai_adapter import OpenAIAnalyzer, OpenAICompatibleAnalyzer
 from agentlen.infrastructure.config.settings import (
     AISettings,
@@ -104,27 +104,59 @@ def build_structure_analyzer(
     return analyzer
 
 
+def _has_what_it_needs(name: str, keys: ProviderKeys) -> bool:
+    if name == "fake":
+        return fixtures_available()
+    attribute = _KEY_FOR.get(name, "")
+    return not attribute or name in _KEY_OPTIONAL or bool(getattr(keys, attribute, ""))
+
+
+def missing_configuration(
+    settings: AISettings | None = None, keys: ProviderKeys | None = None
+) -> list[str]:
+    """The environment variables to set before the active provider can answer.
+
+    Empty when nothing is missing. `AI_PROVIDER` comes alone when the provider
+    is unset, unknown, or `fake` without its fixtures (the Docker image): what
+    else is needed depends on the provider chosen.
+    """
+    settings = settings or load_ai_settings()
+    keys = keys or load_provider_keys()
+    provider = settings.provider
+    if provider not in _REGISTRY or (provider == "fake" and not fixtures_available()):
+        return ["AI_PROVIDER"]
+    missing: list[str] = []
+    if not _has_what_it_needs(provider, keys):
+        missing.append(_KEY_FOR[provider].upper())
+    if provider != "fake" and not settings.model:
+        missing.append("AI_MODEL")
+    if provider == "openai_compatible" and not settings.base_url:
+        missing.append("AI_BASE_URL")
+    return missing
+
+
 def provider_status(
     settings: AISettings | None = None, keys: ProviderKeys | None = None
 ) -> dict[str, object]:
     """What `GET /ai/providers` needs (#54).
 
     Reports whether each provider is configured — **never the key**, not even
-    its length or prefix.
+    its length or prefix — and, for the active one, which variables are still
+    missing, so an unconfigured stack says what to set instead of failing at
+    the first analysis.
     """
     settings = settings or load_ai_settings()
     keys = keys or load_provider_keys()
+    missing = missing_configuration(settings, keys)
     return {
-        "active": {"provider": settings.provider, "model": settings.model or None},
+        "active": {
+            "provider": settings.provider,
+            "model": settings.model or None,
+            "configured": not missing,
+            "missing": missing,
+        },
         "available": [
-            {
-                "provider": name,
-                "configured": (
-                    not _KEY_FOR.get(name)
-                    or name in _KEY_OPTIONAL
-                    or bool(getattr(keys, _KEY_FOR[name], ""))
-                ),
-            }
+            {"provider": name, "configured": _has_what_it_needs(name, keys)}
             for name in supported_providers()
         ],
     }
